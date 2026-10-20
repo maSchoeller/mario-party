@@ -73,13 +73,14 @@ test('host reload resumes the running game and phones reconnect (SAVE-03)', asyn
 });
 
 test('pause stops the game for everybody (SAVE-04)', async ({ browser }) => {
+  test.setTimeout(300_000);
   const { host, code } = await openHost(browser);
   const anna = await joinPhone(browser, code, 'Anna');
   await joinPhone(browser, code, 'Ben');
   await anna.click('text=Spiel starten');
-  await expect(anna.locator('.ctrl-big.roll')).toBeVisible({ timeout: 30000 });
+  await expect(anna.locator('.ctrl-big.roll')).toBeVisible({ timeout: 60000 });
   await anna.click('.ctrl-big.roll');
-  await anna.locator('.chief-tools button').first().click({ timeout: 30000 });
+  await anna.locator('.chief-tools button').first().click({ timeout: 60000 });
   await expect(host.locator('.pause')).toBeVisible();
   await expect(anna.locator('.pause-overlay')).toBeVisible();
   await anna.click('.pause-overlay .primary');

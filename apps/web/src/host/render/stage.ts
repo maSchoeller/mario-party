@@ -92,10 +92,13 @@ export class Stage {
     // ?quality=0 forces the lowest quality (software rendering in automated tests)
     const q = new URLSearchParams(location.search).get('quality');
     if (q === '0') {
+      // automated tests on software rendering (CI): render as little as possible so the
+      // main thread stays free for the game logic and timers
       this.quality = 0;
       this.shadows.getShadowMap()!.refreshRate = 0;
       this.glow.isEnabled = false;
-      this.engine.setHardwareScalingLevel(1.5);
+      scene.imageProcessingConfiguration.vignetteEnabled = false;
+      this.engine.setHardwareScalingLevel(3);
     }
     scene.onBeforeRenderObservable.add(() => this.update());
     this.engine.runRenderLoop(() => scene.render());

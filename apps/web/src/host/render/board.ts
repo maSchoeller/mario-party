@@ -641,6 +641,8 @@ export class BoardView {
     const s = this.stage;
     const tr = this.terrain;
     const b = tr.bounds;
+    // test mode (software rendering): no vegetation at all
+    if (s.qualityLevel === 0 && new URLSearchParams(location.search).get('quality') === '0') return;
     const lowQ = s.qualityLevel === 0;
     tr.def.scatter.forEach((rule, ri) => {
       if (!s.assets.hasProp(rule.kind)) return;
