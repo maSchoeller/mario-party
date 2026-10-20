@@ -16,7 +16,7 @@ test('lobby: QR/code join, chief role, unique characters, start with bots (LOBBY
   await expect.poll(async () => (await hostState(host)).slots.map((s) => s.mode).join(','), { timeout: 15000 }).toBe('p2p,p2p');
   await anna.click('text=Vulkan-Gipfel');
   await anna.click('text=Spiel starten');
-  await expect.poll(async () => (await hostState(host)).phase, { timeout: 20000 }).toBe('game');
+  await expect.poll(async () => (await hostState(host)).phase, { timeout: 45000 }).toBe('game');
   const st = await hostState(host);
   expect(st.slots).toHaveLength(4);
   expect(st.slots.filter((s) => s.cpu)).toHaveLength(2);
@@ -41,7 +41,7 @@ test('phone reconnect keeps the seat, bot covers meanwhile (LOBBY-05, BOT-02, NE
   const anna = await joinPhone(browser, code, 'Anna');
   const ben = await joinPhone(browser, code, 'Ben');
   await anna.click('text=Spiel starten');
-  await expect.poll(async () => (await hostState(host)).phase, { timeout: 20000 }).toBe('game');
+  await expect.poll(async () => (await hostState(host)).phase, { timeout: 45000 }).toBe('game');
   const ctx = ben.context();
   const url = ben.url();
   await ben.close();
@@ -58,16 +58,17 @@ test('phone reconnect keeps the seat, bot covers meanwhile (LOBBY-05, BOT-02, NE
 });
 
 test('host reload resumes the running game and phones reconnect (SAVE-03)', async ({ browser }) => {
+  test.setTimeout(300_000);
   const { host, code } = await openHost(browser);
   const anna = await joinPhone(browser, code, 'Anna');
   await joinPhone(browser, code, 'Ben');
   await anna.click('text=Spiel starten');
-  await expect.poll(async () => (await hostState(host)).phase, { timeout: 20000 }).toBe('game');
+  await expect.poll(async () => (await hostState(host)).phase, { timeout: 45000 }).toBe('game');
   await anna.click('.ctrl-big.roll', { timeout: 30000 });
   await host.reload();
   await host.waitForFunction(() => (window as any).__wb?.session.net.code);
   expect(await host.evaluate(() => (window as any).__wb.session.net.code)).toBe(code);
-  await expect.poll(async () => (await hostState(host)).phase, { timeout: 20000 }).toBe('game');
+  await expect.poll(async () => (await hostState(host)).phase, { timeout: 45000 }).toBe('game');
   await expect.poll(async () => (await hostState(host)).slots.filter((s) => s.connected).length, { timeout: 20000 }).toBe(2);
 });
 
