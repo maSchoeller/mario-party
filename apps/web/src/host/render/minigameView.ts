@@ -7,7 +7,7 @@ import { SceneryBuilder } from './mgScenery';
 import { box, coin, cone, cyl, labelPlane, palm, rock, sphere, starMesh } from './props';
 import type { Stage } from './stage';
 import { surfaceMat, worldUvs } from './surfaces';
-import { lavaTexture, waterNormals } from './terrain';
+import { copyTexture, lavaTexture, waterNormals } from './terrain';
 
 /**
  * Generic renderer for minigame views (MINI-07): minigames only describe entities,
@@ -31,7 +31,7 @@ const LIBRARY: Partial<Record<MgEntity['kind'], { id: string; scale: number; yaw
   palm: { id: 'palm', scale: 0.95 },
   // the library boat and loco point along z, minigames expect x
   boat: { id: 'boat', scale: 1, yaw: Math.PI / 2 },
-  train: { id: 'loco', scale: 1, yaw: -Math.PI / 2 },
+  train: { id: 'loco', scale: 1, yaw: Math.PI / 2 },
 };
 
 interface Item {
@@ -161,7 +161,7 @@ export class MinigameView {
     let tex: Texture | undefined;
     const translucent = e.alpha !== undefined && e.alpha < 1;
     const mat = (c: string) =>
-      e.mat ? surfaceMat(s, c, e.mat, { emissive: e.glow ? 0.6 : 0, alpha: translucent ? 0.55 : undefined }) : s.mat(c, { emissive: e.glow ? 0.8 : 0, alpha: translucent ? 0.55 : 1 });
+      e.mat ? surfaceMat(s, c, e.mat, { emissive: e.glow ? 0.3 : 0, alpha: translucent ? 0.55 : undefined }) : s.mat(c, { emissive: e.glow ? 0.8 : 0, alpha: translucent ? 0.55 : 1 });
     const lib = LIBRARY[e.kind];
     const libNode = lib && !translucent ? s.assets.prop(lib.id, e.id, undefined, e.kind === 'train' ? color : e.color) : null;
     if (libNode) {
@@ -338,7 +338,7 @@ export class MinigameView {
           const m = MeshBuilder.CreateGround(e.id, { width: w, height: d }, s.scene);
           const wm = new StandardMaterial(`${e.id}_wm`, s.scene);
           if (e.mat === 'lava') {
-            tex = lavaTexture(s.scene).clone();
+            tex = copyTexture(s.scene, lavaTexture(s.scene, true), `${e.id}_lava`);
             tex.uScale = w / 12;
             tex.vScale = d / 12;
             wm.emissiveTexture = tex;
@@ -349,7 +349,7 @@ export class MinigameView {
             wm.alpha = translucent ? (e.alpha ?? 0.7) : 0.78;
             wm.specularColor = new Color3(0.6, 0.65, 0.7);
             wm.specularPower = 110;
-            tex = waterNormals(s.scene).clone();
+            tex = copyTexture(s.scene, waterNormals(s.scene), `${e.id}_wn`);
             tex.uScale = w / 5;
             tex.vScale = d / 5;
             tex.level = 0.25;
@@ -371,7 +371,10 @@ export class MinigameView {
       }
     }
     node.parent = this.root;
-    if (e.kind !== 'plane' && e.kind !== 'water') for (const m of [node, ...node.getChildMeshes()]) if (m instanceof Mesh) s.castShadow(m, false);
+    // parts hidden below the backdrop's ground would still darken it (soft-shadow bleeding)
+    const sc = this.scenery;
+    const buried = !!sc && !sc.def.water && e.y + Math.abs(e.sy ?? 1) / 2 < sc.g - 0.05 && e.kind !== 'player';
+    if (e.kind !== 'plane' && e.kind !== 'water' && !buried) for (const m of [node, ...node.getChildMeshes()]) if (m instanceof Mesh) s.castShadow(m, false);
     for (const m of node.getChildMeshes()) m.receiveShadows = true;
     return { node, kind: e.kind === 'player' ? `player${e.player ?? 0}` : e.kind, key, rig, light, base, tex };
   }
@@ -433,6 +436,8 @@ export class MinigameView {
         if (text) {
           it.label = labelPlane(this.stage.scene, `${e.id}_label`, text, { size: 1.6, bg: 'rgba(255,255,255,0.85)', font: text.length > 3 ? 70 : 120 });
           it.label.parent = this.root;
+          // white emissive labels would bloom into blobs in the glow layer
+          this.stage.glow.addExcludedMesh(it.label);
         }
       }
       if (it.label) it.label.position.set(e.x, e.y + (e.kind === 'player' ? 2.6 : (sy || 1) / 2 + 1.1), e.z);

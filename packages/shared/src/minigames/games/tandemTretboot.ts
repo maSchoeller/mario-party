@@ -1,7 +1,7 @@
 import type { BotLevel } from '../../config';
 import type { Rng } from '../../rng';
 import type { ControllerLayout, MgEntity, MgInput, MgPlayer, MinigameDef } from '../types';
-import { TEAM_COLORS, clamp, faceAngle, teamRanks } from '../util';
+import { TEAM_COLORS, ageFx, clamp, emitFx, faceAngle, teamRanks, viewFx, type FxState } from '../util';
 
 /**
  * #10 Tandem-Tretboot (2v2, Rhythmus-Tippen): each team pedals one boat. The two team
@@ -18,6 +18,8 @@ const STALL = 0.6;
 /** after this pause the rhythm starts over and either player may begin */
 const RESET_AFTER = 1.5;
 const LANE_Z = [2.4, -2.4];
+/** lagoon water level (visual) */
+const WATER = 0.25;
 
 interface Boat {
   team: number;
@@ -35,7 +37,7 @@ interface Boat {
   finishedAt: number | null;
 }
 
-export interface TandemTretbootState {
+export interface TandemTretbootState extends FxState {
   t: number;
   duration: number;
   practice: boolean;
@@ -47,6 +49,8 @@ export interface TandemTretbootState {
   /** bot memory per player */
   botPlan: (number | null)[];
   botOops: (number | null)[];
+  /** good strokes per boat (only for throttling the paddle splashes) */
+  strokeFx: number[];
 }
 
 function stroke(s: TandemTretbootState, i: number, t: number): void {
@@ -70,12 +74,17 @@ function stroke(s: TandemTretbootState, i: number, t: number): void {
     b.lastT = tp;
     b.next = b.members.length < 2 ? -1 : 1 - role;
     b.strokeVis[role] = 0.3;
+    // every third good stroke: a splash of the paddle wheel
+    const k = s.boatOf[i];
+    s.strokeFx[k] = (s.strokeFx[k] ?? 0) + 1;
+    if (s.strokeFx[k] % 3 === 0) emitFx(s, { kind: 'splash', sfx: 'paddle', x: b.pos - 1.7, y: WATER + 0.1, z: LANE_Z[k] ?? 0, s: 0.35 + 0.35 * q });
   } else {
     // same player twice in a row: the pedals jam
     b.v *= 0.35;
     b.stall = STALL;
     b.quality = 0;
     b.lastInterval = null;
+    emitFx(s, { kind: 'smoke', sfx: 'buzz', x: b.pos, y: 1.6, z: LANE_Z[s.boatOf[i]] ?? 0, s: 0.8 });
   }
 }
 
@@ -112,6 +121,9 @@ export const tandemTretboot: MinigameDef<TandemTretbootState> = {
       roleOf,
       botPlan: players.map(() => null),
       botOops: players.map(() => null),
+      strokeFx: boats.map(() => 0),
+      fx: [],
+      fxN: 0,
     };
   },
   layout(s, i): ControllerLayout {
@@ -126,7 +138,8 @@ export const tandemTretboot: MinigameDef<TandemTretbootState> = {
   },
   tick(s, dt) {
     s.t += dt;
-    for (const b of s.boats) {
+    ageFx(s, dt);
+    for (const [k, b] of s.boats.entries()) {
       b.strokeVis = b.strokeVis.map((v) => Math.max(0, v - dt));
       b.stall = Math.max(0, b.stall - dt);
       if (b.finishedAt !== null) {
@@ -136,6 +149,10 @@ export const tandemTretboot: MinigameDef<TandemTretbootState> = {
       b.v *= Math.exp(-DRAG * dt);
       const before = b.pos;
       b.pos += b.v * dt;
+      // every quarter of the course: a chime for the boat passing it
+      if (Math.floor(b.pos / (COURSE / 4)) > Math.floor(before / (COURSE / 4)) && b.pos < COURSE) {
+        emitFx(s, { kind: 'sparkle', sfx: 'ding', x: b.pos + 1, y: 2.2, z: LANE_Z[k] ?? 0, color: TEAM_COLORS[b.team] }, 0.5);
+      }
       if (b.lastT !== null && s.t - b.lastT > RESET_AFTER) {
         b.next = -1;
         b.lastT = null;
@@ -209,24 +226,48 @@ export const tandemTretboot: MinigameDef<TandemTretbootState> = {
     const gap = lead - trail;
     const cx = clamp((lead + trail) / 2 + 3, 6, COURSE - 2);
     const entities: MgEntity[] = [];
-    // lane buoys every 10 m along both outer sides
+    // lane buoys every 10 m along both outer sides, a float line between the lanes
     for (let x = 10; x < COURSE; x += 10) {
       for (const side of [1, -1]) {
-        entities.push({ id: `buoy${x}_${side}`, kind: 'sphere', x, y: 0.2, z: side * 5.2, sx: 0.7, sy: 0.7, sz: 0.7, color: (x / 10) % 2 ? '#ffffff' : '#ff8a3d' });
+        const bob = Math.sin(s.t * 1.8 + x * 0.7 + side) * 0.05;
+        entities.push({ id: `buoy${x}_${side}`, kind: 'prop', prop: 'buoy', x, y: WATER - 0.02 + bob, z: side * 5.2, rz: Math.sin(s.t * 1.3 + x) * 0.07, sx: 0.6, color: (x / 10) % 2 ? '#ffffff' : '#ff8a3d' });
       }
-      entities.push({ id: `mid${x}`, kind: 'sphere', x, y: 0.1, z: 0, sx: 0.4, sy: 0.4, sz: 0.4, color: '#ffffff', alpha: 0.7 });
+      entities.push({ id: `mid${x}`, kind: 'sphere', x, y: WATER, z: 0, sx: 0.45, sy: 0.4, sz: 0.45, color: (x / 10) % 2 ? '#ffffff' : '#e8676b' });
     }
-    // start pier and finish gate with the big goal buoys
-    entities.push({ id: 'pier', kind: 'box', x: -3.5, y: 0.2, z: 0, sx: 3, sy: 0.4, sz: 11, color: '#b98350' });
-    entities.push({ id: 'finishLine', kind: 'plane', x: COURSE, y: 0.05, z: 0, sx: 0.8, sz: 11, color: '#ffffff' });
+    entities.push({ id: 'floatLine', kind: 'box', x: COURSE / 2 + 2.5, y: WATER + 0.02, z: 0, sx: COURSE - 5, sy: 0.06, sz: 0.06, color: '#e8d4a8', mat: 'rope' });
+    // start pier with posts, barrels and a lantern
+    entities.push({ id: 'pier', kind: 'box', x: -3.5, y: WATER + 0.35, z: 0, sx: 3, sy: 0.24, sz: 11, color: '#c99a66', mat: 'planks' });
+    for (const [k, pz] of [-5.2, 0, 5.2].entries()) {
+      for (const px of [-4.8, -2.2]) entities.push({ id: `pierPost${k}_${px}`, kind: 'cylinder', x: px, y: WATER - 0.2, z: pz, sx: 0.3, sy: 1.6, sz: 0.3, color: '#7a5233', mat: 'wood' });
+    }
+    entities.push({ id: 'pierBarrel1', kind: 'prop', prop: 'barrel', x: -4.3, y: WATER + 0.47, z: -4.4, ry: 0.5 });
+    entities.push({ id: 'pierBarrel2', kind: 'prop', prop: 'barrel', x: -4.4, y: WATER + 0.47, z: -3.5, ry: 1.7, sx: 0.85 });
+    entities.push({ id: 'pierCrate', kind: 'prop', prop: 'crate', x: -4.2, y: WATER + 0.47, z: 4.3, ry: 0.4 });
+    entities.push({ id: 'pierLamp', kind: 'prop', prop: 'torch', x: -2.4, y: WATER + 0.47, z: 5.2 });
+    entities.push({ id: 'pierLamp2', kind: 'prop', prop: 'torch', x: -2.4, y: WATER + 0.47, z: -5.2 });
+    // finish gate: two posts with a glowing banner, the big goal buoys behind it
+    entities.push({ id: 'finishLine', kind: 'plane', x: COURSE, y: WATER + 0.04, z: 0, sx: 0.8, sz: 11, color: '#ffffff', glow: true });
     for (const side of [1, -1]) {
-      entities.push({ id: `goalPost${side}`, kind: 'cylinder', x: COURSE, y: 2, z: side * 5.6, sx: 0.4, sy: 4, sz: 0.4, color: '#ffffff' });
+      entities.push({ id: `goalPost${side}`, kind: 'cylinder', x: COURSE, y: WATER + 1.8, z: side * 5.6, sx: 0.4, sy: 4.4, sz: 0.4, color: '#f4efe6', mat: 'wood' });
+      entities.push({ id: `goalFlag${side}`, kind: 'prop', prop: 'flag', x: COURSE, y: WATER + 4, z: side * 5.6, ry: Math.PI / 2, sx: 0.5, color: '#f2c14e' });
     }
-    entities.push({ id: 'goalBanner', kind: 'box', x: COURSE, y: 4.2, z: 0, sx: 0.3, sy: 0.8, sz: 11.6, color: '#f2c14e', glow: true });
+    entities.push({ id: 'goalBanner', kind: 'box', x: COURSE, y: WATER + 3.9, z: 0, sx: 0.3, sy: 0.8, sz: 11.6, color: '#f2c14e', glow: true, mat: 'cloth' });
+    // lagoon dressing beside the course: stilt huts and moored boats behind it, low sandbars in front
+    for (const [k, x] of [58, 118].entries()) {
+      entities.push({ id: `stilt${k}`, kind: 'prop', prop: 'stilthut', x, y: WATER - 0.7, z: 12.5, ry: Math.PI + 0.3 - k * 0.6, color: k ? '#5fa8d6' : '#e8767a' });
+      entities.push({ id: `stiltBoat${k}`, kind: 'boat', x: x + 4.5, y: WATER - 0.12 + Math.sin(s.t * 1.1 + k) * 0.04, z: 10, ry: 0.3, color: k ? '#f2c14e' : '#5f8fe0' });
+    }
+    for (let k = 0; k < 5; k++) {
+      const x = 18 + k * 30;
+      const z = -10.5 - (k % 2) * 1.2;
+      entities.push({ id: `bar${k}`, kind: 'cylinder', x, y: WATER - 0.25, z, sx: 6 + (k % 3), sy: 0.6, sz: 3.6, color: '#efe0b8', mat: 'sand', taper: 0.7 });
+      entities.push({ id: `barRock${k}`, kind: 'prop', prop: 'rocksmall', x: x + 1.2, y: WATER - 0.1, z: z + 0.3, sx: 1.6, ry: k });
+      entities.push({ id: `barShell${k}`, kind: 'prop', prop: k % 2 ? 'shell' : 'driftwood', x: x - 1, y: WATER - 0.08, z: z - 0.2, ry: k * 1.7 });
+    }
     s.boats.forEach((b, k) => {
       const z = LANE_Z[k] ?? 0;
-      entities.push({ id: `goalBuoy${k}`, kind: 'sphere', x: COURSE + 2.5, y: 0.6, z, sx: 1.8, sy: 1.8, sz: 1.8, color: '#f2c14e', glow: true });
-      const bob = Math.sin(s.t * 2 + k) * 0.05;
+      entities.push({ id: `goalBuoy${k}`, kind: 'prop', prop: 'buoy', x: COURSE + 2.5, y: WATER - 0.25, z, sx: 1.3, color: '#f2c14e' });
+      const bob = WATER - 0.3 + Math.sin(s.t * 2 + k) * 0.05;
       entities.push({
         id: `boat${k}`,
         kind: 'boat',
@@ -239,7 +280,7 @@ export const tandemTretboot: MinigameDef<TandemTretbootState> = {
         color: TEAM_COLORS[b.team] ?? '#ffffff',
         labelKey: b.stall > 0 ? 'mg.tandemTretboot.stall' : undefined,
       });
-      if (b.v > 1) entities.push({ id: `wake${k}`, kind: 'sphere', x: b.pos - 3, y: 0, z, sx: 1.5 + b.v * 0.3, sy: 0.15, sz: 1.6, color: '#ffffff', alpha: clamp(b.v / VMAX, 0.2, 0.7) });
+      if (b.v > 1) entities.push({ id: `wake${k}`, kind: 'sphere', x: b.pos - 3, y: WATER + 0.02, z, sx: 1.5 + b.v * 0.3, sy: 0.12, sz: 1.6, color: '#ffffff', alpha: clamp(b.v / VMAX, 0.2, 0.7) });
       b.members.forEach((pi, role) => {
         const px = b.pos + (role === 0 ? 0.9 : -0.9);
         entities.push({
@@ -259,6 +300,8 @@ export const tandemTretboot: MinigameDef<TandemTretbootState> = {
     });
     return {
       env: 'water',
+      scenery: { set: 'lagoon', clear: { x: COURSE / 2, w: COURSE + 16, d: 14 }, water: WATER },
+      fx: viewFx(s),
       camera: { alpha: -Math.PI / 2, beta: 1.0, radius: clamp(17 + gap * 0.6, 17, 52), target: [cx, 0, 0] },
       entities,
       hud: {

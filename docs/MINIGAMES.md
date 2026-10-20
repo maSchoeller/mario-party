@@ -94,6 +94,24 @@ Entity-IDs müssen über die Zeit stabil sein (der Renderer diffed per `id`).
 Lesbarkeit aus 3 m (Säule 3): wenige, große, kontrastreiche Objekte, Kamera so, dass alle
 Spieler gleichzeitig sichtbar sind.
 
+### Premium-Darstellung (v0.4)
+
+Alles optional, aber jedes Minispiel nutzt es:
+
+| Feld | Wirkung |
+|---|---|
+| `view.scenery = { set, clear, ground?, water?, seed? }` | Kulisse rund um die Spielfläche (`apps/web/src/host/render/mgScenery.ts`): Höhenfeld wie auf den Brettern, Wasser/Lava, Vegetation und Props aus der Bibliothek, Landmarken, Vögel, Wolken, Partikel, Licht und ein Ambient-Loop. `clear` (Kreis `r` oder Rechteck `w × d`) bleibt frei. Sets: `lagoon`, `beach`, `volcano`, `summit`, `meadow`, `garden`, `city`, `ice`, `clouds`, `studio`, `desert`, `nightwood`. Ohne `scenery` gilt der alte `env`-Hintergrund. |
+| `entity.mat` | Oberfläche für box/cylinder/plane/sphere/cone: `wood`, `planks`, `stone`, `tiles`, `metal`, `ice`, `snow`, `sand`, `grass`, `cloth`, `rope`, `lava` (leuchtet), `paper`, `gold`, `basalt`. Kachelnde Detail-Textur in Weltgröße + weiche Schattierung nach unten. Die Geometrie wird in der **ersten** Größe gebaut, spätere Skalierung streckt die Textur. |
+| `entity.taper` | Zylinder mit `mat`: oberer Durchmesser relativ zum unteren (z. B. abfallender Strand). |
+| `kind: 'prop'`, `prop: '<id>'` | Modell aus der Prop-Bibliothek (Basis bei `y`, Größe über `sx`, `color` = Tönung). Vorschau mit Maßen: `assets-src/previews/props/*.png`. |
+| `kind: 'water'` | Animierte Wasserfläche `sx × sz` (mit `mat: 'lava'`: Lava). |
+| `view.fx` | Einmalige Effekte + Ton: `emitFx(s, { kind, sfx, x, y, z, color?, s? })` aus `util.ts` im `tick()`/`input()`, `ageFx(s, dt)` im `tick()`, `fx: viewFx(s)` in `view()`; State erweitert `FxState` (`fx: []`, `fxN: 0`). Der Host spielt jede id einmal (mit Stereo-Position nach Bildschirm-x). **Nie `rng` dafür verwenden.** |
+
+Ablauf, Iris-Blende, Kamera-Anflug, Countdown-Töne, Abpfiff, Jubel der Sieger und Konfetti
+macht der Host – Minispiele kümmern sich nur um ihre eigenen Momente.
+Screenshots aller Minispiele (Bot-Demo): `node scripts/mg-screenshots.mjs [baseUrl] [outDir] [id,id]`,
+`WIDE=1` zusätzlich eine weite Einstellung; im Dev-Modus zeigt `&mgset=<set>` eine andere Kulisse.
+
 ## Texte
 
 Alle Texte über i18n-Keys (TECH-05): `mg.<id>.name`, `mg.<id>.desc` (Erklär-Screen, 1–2 Sätze),

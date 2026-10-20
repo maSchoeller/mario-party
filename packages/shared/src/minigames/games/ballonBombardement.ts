@@ -1,7 +1,7 @@
 import { PLAYER_COLOR_HEX } from '../../config';
 import type { Rng } from '../../rng';
 import type { MgEntity, MgInput, MgPlayer, MinigameDef } from '../types';
-import { clamp, faceAngle, lerp, skill, teamRanks } from '../util';
+import { ageFx, clamp, emitFx, faceAngle, lerp, skill, teamRanks, viewFx, type FxState } from '../util';
 
 /**
  * #17 Ballon-Bombardement (1 vs 3, Schütteln vs. Tippen): every trio member pumps up a
@@ -45,7 +45,7 @@ interface Dart {
   eta: number;
 }
 
-export interface BallonBombardementState {
+export interface BallonBombardementState extends FxState {
   t: number;
   duration: number;
   practice: boolean;
@@ -60,25 +60,34 @@ export interface BallonBombardementState {
   done: number;
   pops: number;
   /** floating finished balloons / pop effects for the view */
-  fx: { id: number; slot: number; t: number; kind: 'done' | 'pop' | 'miss' }[];
+  floats: { id: number; slot: number; t: number; kind: 'done' | 'pop' | 'miss' }[];
   /** bot memory */
   botAcc: number[];
   botWait: number;
   botPick: number | null;
 }
 
+const BALLOON_Z = 2.2;
+const balloonSize = (fill: number) => 0.5 + fill * 2.4;
+const balloonY = (fill: number) => 2.4 + balloonSize(fill) / 2;
+const slotColor = (s: BallonBombardementState, slot: number) => PLAYER_COLOR_HEX[s.players[s.trio[slot]].color];
+
 function pump(s: BallonBombardementState, slot: number, power: number): void {
   const b = s.balloons[slot];
   if (b.phase !== 'pump' || s.t - b.lastPump < PUMP_MIN_GAP) return;
   b.lastPump = s.t;
+  const before = b.fill;
   b.fill += PUMP_BASE + PUMP_POWER * clamp(power, 0, 1);
   b.wobble = 1;
+  // a puff of air from the pump every quarter of a balloon (silent: pumping is constant)
+  if (Math.floor(b.fill * 4) > Math.floor(before * 4) && b.fill < 1) emitFx(s, { kind: 'smoke', x: STATION_X[slot] + 1.1, y: 1.3, z: 1.4, s: 0.35 });
   if (b.fill >= 1) {
     b.fill = 1;
     b.phase = 'done';
     b.pause = DONE_PAUSE;
     s.done++;
-    s.fx.push({ id: s.nextId++, slot, t: 1.6, kind: 'done' });
+    s.floats.push({ id: s.nextId++, slot, t: 1.6, kind: 'done' });
+    emitFx(s, { kind: 'sparkle', sfx: 'ding', x: STATION_X[slot], y: balloonY(1), z: BALLOON_Z, color: slotColor(s, slot) }, 0.5);
   }
 }
 
@@ -105,7 +114,9 @@ export const ballonBombardement: MinigameDef<BallonBombardementState> = {
       cooldown: 1,
       done: 0,
       pops: 0,
+      floats: [],
       fx: [],
+      fxN: 0,
       botAcc: players.map(() => 0),
       botWait: 0,
       botPick: null,
@@ -129,6 +140,7 @@ export const ballonBombardement: MinigameDef<BallonBombardementState> = {
       if (slot < 0 || slot > 2) return;
       s.darts.push({ id: s.nextId++, slot, eta: DART_FLIGHT });
       s.cooldown = DART_COOLDOWN;
+      emitFx(s, { sfx: 'whoosh', x: 0.5, y: 1.9, z: SOLO_Z });
       return;
     }
     if (input.type !== 'shake') return;
@@ -149,9 +161,11 @@ export const ballonBombardement: MinigameDef<BallonBombardementState> = {
         b.phase = 'popped';
         b.pause = POP_PAUSE;
         s.pops++;
-        s.fx.push({ id: s.nextId++, slot: d.slot, t: 0.6, kind: 'pop' });
+        s.floats.push({ id: s.nextId++, slot: d.slot, t: 0.6, kind: 'pop' });
+        emitFx(s, { kind: 'pop', sfx: 'pop', x: STATION_X[d.slot], y: balloonY(b.fill), z: BALLOON_Z, color: slotColor(s, d.slot), s: 0.6 + b.fill }, 0.4);
       } else {
-        s.fx.push({ id: s.nextId++, slot: d.slot, t: 0.6, kind: 'miss' });
+        s.floats.push({ id: s.nextId++, slot: d.slot, t: 0.6, kind: 'miss' });
+        emitFx(s, { kind: 'dust', sfx: 'thud', x: STATION_X[d.slot] + 1.8, y: 0.1, z: 2.6, s: 0.5 }, 0.4);
       }
     }
     s.darts = s.darts.filter((d) => d.eta > 0);
@@ -165,7 +179,8 @@ export const ballonBombardement: MinigameDef<BallonBombardementState> = {
         b.gen++;
       }
     }
-    s.fx = s.fx.filter((f) => (f.t -= dt) > 0);
+    s.floats = s.floats.filter((f) => (f.t -= dt) > 0);
+    ageFx(s, dt);
     if (s.practice && s.done >= GOAL) s.done = 0;
   },
   isOver: (s) => !s.practice && (s.done >= GOAL || s.t >= s.duration),
@@ -207,10 +222,24 @@ export const ballonBombardement: MinigameDef<BallonBombardementState> = {
   },
   view(s) {
     const entities: MgEntity[] = [
-      { id: 'ground', kind: 'box', x: 0, y: -0.25, z: 0, sx: 18, sy: 0.5, sz: 13, color: '#9fd47a' },
-      { id: 'fence', kind: 'box', x: 0, y: 0.4, z: 4.5, sx: 17, sy: 0.8, sz: 0.3, color: '#c99a6b' },
-      { id: 'soloMat', kind: 'cylinder', x: 0, y: 0.02, z: SOLO_Z, sx: 2.6, sy: 0.04, sz: 2.6, color: '#e8676b' },
+      // fairground on the meadow: a wooden fence, bunting, hay bales and the solo's throwing stage
+      { id: 'soloMat', kind: 'cylinder', x: 0, y: 0.03, z: SOLO_Z, sx: 2.6, sy: 0.06, sz: 2.6, color: '#e8676b', mat: 'planks' },
+      { id: 'bunting1', kind: 'prop', prop: 'bunting', x: -3.05, y: 0, z: 5 },
+      { id: 'bunting2', kind: 'prop', prop: 'bunting', x: 3.05, y: 0, z: 5 },
+      { id: 'hay1', kind: 'prop', prop: 'haybale', x: -8.2, y: 0, z: 2.4, ry: 0.3 },
+      { id: 'hay2', kind: 'prop', prop: 'haybale', x: -8.1, y: 0, z: 0.9, ry: -0.2 },
+      { id: 'hay3', kind: 'prop', prop: 'haybale', x: 8.3, y: 0, z: 1.6, ry: 1.7 },
+      { id: 'crate', kind: 'prop', prop: 'crate', x: -2.2, y: 0, z: SOLO_Z - 0.6, ry: 0.4 },
+      { id: 'barrel', kind: 'prop', prop: 'barrel', x: 2.1, y: 0, z: SOLO_Z - 0.4 },
+      { id: 'stall', kind: 'prop', prop: 'marketstall', x: -11.5, y: 0, z: 7, ry: 0.5 },
+      { id: 'flow1', kind: 'prop', prop: 'flowers', x: -6.5, y: 0, z: -5.8 },
+      { id: 'flow2', kind: 'prop', prop: 'flowers', x: 6.2, y: 0, z: -5.6, ry: 2 },
+      { id: 'flow3', kind: 'prop', prop: 'flowers', x: -4.6, y: 0, z: 3.4, ry: 1 },
+      { id: 'flow4', kind: 'prop', prop: 'flowers', x: 7.6, y: 0, z: 3.6, ry: 3 },
+      { id: 'bushL', kind: 'prop', prop: 'bushround', x: -8.6, y: 0, z: -4.6, sx: 0.9 },
+      { id: 'bushR', kind: 'prop', prop: 'bushround', x: 8.5, y: 0, z: -3.6, sx: 0.8 },
     ];
+    for (let k = 0; k < 8; k++) entities.push({ id: `fence${k}`, kind: 'prop', prop: 'fence', x: -7 + k * 2, y: 0, z: 4.5 });
     const soloThrow = s.cooldown > DART_COOLDOWN - 0.35;
     entities.push({ id: `p${s.solo}`, kind: 'player', player: s.solo, x: 0, y: 0, z: SOLO_Z, ry: faceAngle(0, 1), anim: soloThrow ? 'jump' : 'idle' });
     // dart in the solo's hand while reloading is done
@@ -229,7 +258,10 @@ export const ballonBombardement: MinigameDef<BallonBombardementState> = {
         ry: 0,
         anim: b.phase === 'popped' ? 'sad' : b.phase === 'done' ? 'cheer' : b.wobble > 0.2 ? 'jump' : 'idle',
       });
-      entities.push({ id: `pump${slot}`, kind: 'cylinder', x: x + 1.1, y: 0.6 - b.wobble * 0.2, z: 1.4, sx: 0.4, sy: 1.2, sz: 0.4, color: '#5a6170' });
+      entities.push({ id: `pumpBase${slot}`, kind: 'box', x: x + 1.1, y: 0.06, z: 1.4, sx: 0.9, sy: 0.12, sz: 0.5, color: '#8a5a3c', mat: 'wood' });
+      entities.push({ id: `pump${slot}`, kind: 'cylinder', x: x + 1.1, y: 0.6, z: 1.4, sx: 0.4, sy: 1.0, sz: 0.4, color: '#c9534f', mat: 'metal' });
+      entities.push({ id: `pumpRod${slot}`, kind: 'cylinder', x: x + 1.1, y: 1.3 - b.wobble * 0.25, z: 1.4, sx: 0.08, sy: 0.5, sz: 0.08, color: '#9aa0aa', mat: 'metal' });
+      entities.push({ id: `pumpGrip${slot}`, kind: 'box', x: x + 1.1, y: 1.55 - b.wobble * 0.25, z: 1.4, sx: 0.7, sy: 0.09, sz: 0.12, color: '#3d3a4a' });
       if (b.phase === 'pump') {
         const size = 0.5 + b.fill * 2.4;
         entities.push({
@@ -265,20 +297,22 @@ export const ballonBombardement: MinigameDef<BallonBombardementState> = {
         color: '#ffd23f',
       });
     }
-    for (const f of s.fx) {
+    for (const f of s.floats) {
       const x = STATION_X[f.slot];
       const color = PLAYER_COLOR_HEX[s.players[s.trio[f.slot]].color];
       if (f.kind === 'done') {
-        entities.push({ id: `fx${f.id}`, kind: 'balloon', x, y: 4 + (1.6 - f.t) * 5, z: 2.2, sx: 2.9, sy: 2.9, sz: 2.9, color, alpha: Math.min(0.95, f.t) });
-        entities.push({ id: `fxs${f.id}`, kind: 'star', x, y: 6.5 + (1.6 - f.t) * 2, z: 2, sx: 1.2, sy: 1.2, sz: 1.2, color: '#ffd23f', alpha: Math.min(0.95, f.t) });
+        entities.push({ id: `fl${f.id}`, kind: 'balloon', x, y: 4 + (1.6 - f.t) * 5, z: 2.2, sx: 2.9, sy: 2.9, sz: 2.9, color, alpha: Math.min(0.95, f.t) });
+        entities.push({ id: `fls${f.id}`, kind: 'star', x, y: 6.5 + (1.6 - f.t) * 2, z: 2, sx: 1.2, sy: 1.2, sz: 1.2, color: '#ffd23f', alpha: Math.min(0.95, f.t) });
       } else if (f.kind === 'miss') {
-        entities.push({ id: `fx${f.id}`, kind: 'cone', x: x + 1.8, y: 1 - (0.6 - f.t) * 1.5, z: 2.6, rx: Math.PI / 2, sx: 0.25, sy: 0.8, sz: 0.25, color: '#ffd23f', alpha: f.t * 1.6 });
+        entities.push({ id: `fl${f.id}`, kind: 'cone', x: x + 1.8, y: 1 - (0.6 - f.t) * 1.5, z: 2.6, rx: Math.PI / 2, sx: 0.25, sy: 0.8, sz: 0.25, color: '#ffd23f', alpha: f.t * 1.6 });
       } else {
-        entities.push({ id: `fx${f.id}`, kind: 'star', x, y: 3.5, z: 2.2, sx: 2.2 - f.t, sy: 2.2 - f.t, sz: 2.2 - f.t, color: '#ff5a3d', alpha: f.t * 1.6 });
+        entities.push({ id: `fl${f.id}`, kind: 'star', x, y: 3.5, z: 2.2, sx: 2.2 - f.t, sy: 2.2 - f.t, sz: 2.2 - f.t, color: '#ff5a3d', alpha: f.t * 1.6 });
       }
     }
     return {
       env: 'sky',
+      scenery: { set: 'meadow', clear: { x: 0, z: 0, w: 22, d: 16 } },
+      fx: viewFx(s),
       camera: { alpha: -Math.PI / 2, beta: 1.2, radius: 20, target: [0, 2.4, 0.5] },
       entities,
       hud: {

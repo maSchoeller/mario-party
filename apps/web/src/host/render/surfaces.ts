@@ -157,7 +157,7 @@ export function surfaceTexture(scene: Scene, surface: MgSurface): Texture {
     case 'paper':
       return paint(scene, surface, (u, v) => 0.94 + tileFbm(u, v, 32, 3, 19) * 0.06);
     case 'lava':
-      return lavaTexture(scene);
+      return lavaTexture(scene, true);
   }
 }
 

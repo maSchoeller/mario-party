@@ -174,11 +174,11 @@ export function labelPlane(scene: Scene, name: string, text: string, opts: { siz
   }
   ctx.fillStyle = opts.color ?? '#3d3a55';
   let fontSize = opts.font ?? 150;
-  ctx.font = `900 ${fontSize}px Nunito, sans-serif`;
+  ctx.font = `900 ${fontSize}px Nunito, "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", sans-serif`;
   // shrink long texts so they always fit (e.g. "Team Rot")
   while (fontSize > 28 && ctx.measureText(text).width > 236) {
     fontSize -= 6;
-    ctx.font = `900 ${fontSize}px Nunito, sans-serif`;
+    ctx.font = `900 ${fontSize}px Nunito, "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", sans-serif`;
   }
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';

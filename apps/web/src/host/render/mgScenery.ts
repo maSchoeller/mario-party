@@ -18,7 +18,7 @@ import { ambient, type AmbientKind } from './mgFx';
 import { fbm, noise2, prng, smoothstep } from './noise';
 import type { Stage } from './stage';
 import { surfaceMat, surfaceTexture } from './surfaces';
-import { detailTexture, lavaTexture, waterNormals } from './terrain';
+import { copyTexture, detailTexture, lavaTexture, waterNormals } from './terrain';
 
 /**
  * Minigame backdrops (v0.4): the same landscape language as the boards – a faceted height
@@ -90,7 +90,7 @@ const SETS: Record<MgSet, SetDef> = {
     hemi: { intensity: 0.52, color: '#ffffff', ground: '#9bb8c6' },
     colors: { grass: '#8fcb6e', grass2: '#a9d67a', sand: '#efe0b8', rock: '#b9b2a8', seabed: '#2f86a8' },
     surface: 'grass',
-    water: { kind: 'water', color: '#46c3e0', alpha: 0.62 },
+    water: { kind: 'water', color: '#2c9fc9', alpha: 0.7 },
     height: (x, z, d, w) => {
       // islets around the lagoon, a long island in the back, open sea in front
       const isl = [
@@ -140,7 +140,7 @@ const SETS: Record<MgSet, SetDef> = {
     hemi: { intensity: 0.5, color: '#ffffff', ground: '#c9b99a' },
     colors: { grass: '#9fcf74', grass2: '#b5d985', sand: '#f0dfb4', rock: '#bdb3a6', seabed: '#4aa3c4' },
     surface: 'sand',
-    water: { kind: 'water', color: '#3fb5da' },
+    water: { kind: 'water', color: '#2ea3cc', alpha: 0.72 },
     height: (x, z, d, w) => {
       // sand all around, the sea behind the play area, dunes left/right/in front
       const shore = z - 16 - Math.max(0, d - 10) * 0.15 - (fbm(x * 0.05, 3, 2, 8) - 0.5) * 14;
@@ -328,7 +328,7 @@ const SETS: Record<MgSet, SetDef> = {
     hemi: { intensity: 0.56, color: '#eaf6ff', ground: '#8fb6c8' },
     colors: { snow: '#f4f8fb', rock: '#b9c6d6', grass: '#e6eef5', sand: '#dfe9f0', seabed: '#2c6f8f' },
     surface: 'snow',
-    water: { kind: 'water', color: '#2f9fc4' },
+    water: { kind: 'water', color: '#2788ad', alpha: 0.76 },
     height: (x, z, d, w) => {
       // icebergs and floes in a cold sea, snowy mountains far behind
       const berg = smoothstep(0.58, 0.72, fbm(x * 0.03, z * 0.03, 3, 44)) * smoothstep(10, 22, d);
@@ -358,7 +358,7 @@ const SETS: Record<MgSet, SetDef> = {
     height: () => -100,
     scatter: [],
     birds: 5,
-    clouds: { n: 46, y: [-16, -7], d: [-30, 150], s: [4, 8] },
+    clouds: { n: 28, y: [-24, -12], d: [-30, 150], s: [3, 6] },
     ambient: [{ kind: 'motes', y: 4, size: [60, 10, 40] }],
     sound: 'wind',
     extra: (b) => b.floatingIslands(),
@@ -506,7 +506,11 @@ export class SceneryBuilder {
   private rawHeight(x: number, z: number): number {
     const d = this.dist(x, z);
     const y = this.def.height(x - this.cx, z - this.cz, d, this.w - this.g) + this.g;
-    return d < 0 ? Math.min(y, this.def.water ? y : this.g - 0.04) : y;
+    if (!this.def.water) return d < 0 ? Math.min(y, this.g - 0.04) : y;
+    // water sets: land reaching into the play area is levelled to the ground (beach games),
+    // with a short blend; water inside the play area stays water
+    if (d < 4 && y > this.w + 0.05) return this.g - 0.04 + (y - (this.g - 0.04)) * smoothstep(0, 4, d);
+    return y;
   }
 
   /** Grid coordinate → world (dense near the play area, coarse at the horizon). */
@@ -661,7 +665,7 @@ export class SceneryBuilder {
     w.isPickable = false;
     const mat = this.own(new StandardMaterial(`mgWaterMat_${this.sc.set}`, s.scene));
     if (wd.kind === 'lava') {
-      const tex = lavaTexture(s.scene).clone();
+      const tex = copyTexture(s.scene, lavaTexture(s.scene, true), 'mgLava');
       tex.uScale = tex.vScale = 700 / 30;
       mat.emissiveTexture = tex;
       mat.diffuseColor = new Color3(0.12, 0.04, 0.03);
@@ -669,11 +673,10 @@ export class SceneryBuilder {
       this.waterTex = tex;
     } else {
       mat.diffuseColor = Color3.FromHexString(wd.color);
-      mat.emissiveColor = Color3.FromHexString(wd.color).scale(0.22);
       mat.alpha = wd.alpha ?? 0.76;
       mat.specularColor = new Color3(0.6, 0.65, 0.7);
       mat.specularPower = 110;
-      const bump = waterNormals(s.scene).clone();
+      const bump = copyTexture(s.scene, waterNormals(s.scene), 'mgWaterN');
       bump.uScale = bump.vScale = 700 / 5;
       bump.level = 0.25;
       mat.bumpTexture = bump;
@@ -757,6 +760,8 @@ export class SceneryBuilder {
           const y = this.height(px, pz);
           if (this.def.water && y < this.w + (rule.dry ?? 0.1)) continue;
           if (!rule.on.includes(this.ground(px, pz, y))) continue;
+          // nothing perches on cliffs and mesa walls
+          if (this.slope(px, pz) > 0.65) continue;
           const big = rule.r ?? 0;
           if (!this.isFree(px, pz, big || 0.3)) continue;
           const [lo, hi] = rule.scale ?? [0.8, 1.2];
@@ -791,7 +796,7 @@ export class SceneryBuilder {
     m.setVerticesData('color', col);
     const mat = this.own(new StandardMaterial('cloudMat', this.stage.scene));
     mat.diffuseColor = Color3.White();
-    mat.emissiveColor = new Color3(0.3, 0.32, 0.36);
+    mat.emissiveColor = new Color3(0.2, 0.22, 0.26);
     mat.specularColor = Color3.Black();
     m.material = mat;
     m.parent = this.root;
@@ -808,7 +813,7 @@ export class SceneryBuilder {
       const a = rnd() * Math.PI * 2;
       const r = c.d[0] + rnd() * (c.d[1] - c.d[0]);
       const x = this.cx + Math.cos(a) * r;
-      const z = this.cz + Math.abs(Math.sin(a)) * r * (rnd() < 0.85 ? 1 : -0.4);
+      const z = this.cz + Math.abs(Math.sin(a)) * r * (c.y[1] > 0 || rnd() < 0.85 ? 1 : -0.4);
       if (this.dist(x, z) < 4 && c.y[1] > -2) continue;
       const sc = c.s[0] + rnd() * (c.s[1] - c.s[0]);
       Matrix.Compose(new Vector3(sc * 1.6, sc, sc), Quaternion.FromEulerAngles(0, rnd() * 0.6 - 0.3, 0), new Vector3(x, this.g + c.y[0] + rnd() * (c.y[1] - c.y[0]), z)).copyToArray(buf, n * 16);

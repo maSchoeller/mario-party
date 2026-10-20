@@ -1,4 +1,4 @@
-# Umsetzungsstand je Anforderung (Stand 20.10.2026, v0.3)
+# Umsetzungsstand je Anforderung (Stand 20.10.2026, v0.4)
 
 Legende: ✅ umgesetzt & lokal getestet · 🟡 umgesetzt mit Platzhalter/Einschränkung · ⛔ offen (externer Dienst/Gerät nötig, siehe [OPEN_POINTS.md](OPEN_POINTS.md))
 
@@ -62,6 +62,7 @@ Legende: ✅ umgesetzt & lokal getestet · 🟡 umgesetzt mit Platzhalter/Einsch
 | MINI-07 | ✅ | Einheitliches Modul (Setup/Input/Tick/Ergebnis/Bot/View/Layout) |
 | MINI-08 | ✅ | Steuerungsmix ≤ 40 % je Art (Test) |
 | MINI-09 | ✅ | thematisch (Insel/Vulkan/Stadt), auf jeder Map spielbar |
+| MINI-10 (v0.4) | ✅ | Premium-Darstellung: Kulisse je Spiel aus 12 Sets (`mgScenery.ts`), Oberflächen-Texturen, Bibliotheks-Props, animiertes Wasser/Lava, Effekte mit Ton und Stereo-Position; Ablauf mit Iris-Blende, Kamera-Anflug, Countdown-Tönen, Abpfiff, Siegerjubel. Spiellogik unverändert (Ränge/Dauer mit festen Seeds identisch zu v0.3) |
 
 ## Controller, Grafik, Audio
 
@@ -83,6 +84,7 @@ Legende: ✅ umgesetzt & lokal getestet · 🟡 umgesetzt mit Platzhalter/Einsch
 | ASSET-05 | ✅ | `docs/ASSETS_LICENSES.md` |
 | AUDIO-01..03 | ✅ | Suno-Musik + Jingles, ElevenLabs-SFX + Moderator; prozeduraler Fallback |
 | AUDIO-04/05/06 | ✅ | Gebrabbel, Audio nur am Host, getrennte Lautstärken (gespeichert) |
+| AUDIO-08 (v0.4) | ✅ | Minispiele: 22 Effekte, 5 Ablauf-Stinger, 9 Ambient-Loops je Kulisse; Musik leiser unter der Erklärung, Tiefpass beim Abpfiff, Stereo-Panorama der Effekte |
 | AUDIO-07 | 🟡 | Tarife dokumentiert (ElevenLabs Free = nicht-kommerziell, Suno über Drittanbieter = unklar) – Klärung vor Veröffentlichung ⛔ |
 
 ## Technik

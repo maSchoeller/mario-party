@@ -31,6 +31,9 @@ for (const id of only ?? IDS) {
     continue;
   }
   await page.waitForTimeout(Number(process.env.WAIT ?? 6000));
+  // a reload (e.g. HMR) restarts the demo: wait for play again before the shot
+  await page.waitForFunction(() => window.__wb?.session?.debugState?.()?.minigamePhase === 'play', null, { timeout: 90000 }).catch(() => {});
+  await page.waitForTimeout(500);
   await page.screenshot({ path: `${out}/${id.replace(":", "-")}.jpg`, type: 'jpeg', quality: 85 });
   // WIDE=1: a second, wider shot of the backdrop (camera pulled back and lowered)
   if (process.env.WIDE) {

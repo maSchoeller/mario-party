@@ -1,7 +1,7 @@
 import { PLAYER_COLOR_HEX } from '../../config';
 import type { Rng } from '../../rng';
 import type { MgEntity, MgHud, MgPlayer, MinigameDef } from '../types';
-import { clamp, ranksFromScores, rowSpawn } from '../util';
+import { ageFx, clamp, emitFx, ranksFromScores, rowSpawn, viewFx, type FxState } from '../util';
 
 /**
  * #6 Strich-Künstler (FFA, Zeichnen): trace a given shape on the phone in one stroke.
@@ -25,6 +25,20 @@ const COVER_R = 0.07;
 const ACC_R = 0.12;
 
 const r4 = (v: number) => Math.round(v * 1e4) / 1e4;
+
+// TV layout: big tilted easel board with the shape, one drawing desk per player
+const BW = 9;
+const BZ = 6;
+const TILT = 0.35;
+const BOARD_Y = 1.95;
+const SW = 4.2;
+const SZ = -4.2;
+const DESK_H = 0.6;
+const sheetX = (n: number, i: number) => rowSpawn(n, 5.2, i);
+/** world position of a point on the tilted board (lx right, lz up the board, ly off the surface) */
+function onBoard(lx: number, lz: number, ly: number): { x: number; y: number; z: number } {
+  return { x: lx, y: BOARD_Y + ly * Math.cos(TILT) + lz * Math.sin(TILT), z: BZ - ly * Math.sin(TILT) + lz * Math.cos(TILT) };
+}
 
 function makeShape(id: ShapeId): Pt[] {
   const pts: Pt[] = [];
@@ -133,7 +147,7 @@ interface P {
   botAt: number | null;
 }
 
-export interface StrichKuenstlerState {
+export interface StrichKuenstlerState extends FxState {
   t: number;
   practice: boolean;
   n: number;
@@ -152,6 +166,18 @@ function finishDraw(s: StrichKuenstlerState): void {
     if (p.pts === null) p.pts = 0;
     p.total += p.pts;
   }
+  // round scored: confetti over good drawings (one sound for the best), smoke for empty sheets
+  const best = Math.max(...s.ps.map((p) => p.pts ?? 0));
+  let sounded = false;
+  s.ps.forEach((p, i) => {
+    const x = sheetX(s.n, i);
+    if ((p.pts ?? 0) >= 70) {
+      const sfx = !sounded && p.pts === best ? 'correct' : undefined;
+      if (sfx) sounded = true;
+      emitFx(s, { kind: 'confetti', sfx, x, y: 2.2, z: SZ, color: s.colors[i], s: 0.8 }, 0.6);
+    } else if (!p.pts) emitFx(s, { kind: 'smoke', x, y: 1.2, z: SZ, color: '#b9b3c4', s: 0.7 }, 0.6);
+  });
+  if (!sounded) emitFx(s, { sfx: best > 0 ? 'ding' : 'aww', x: 0, y: 2, z: SZ });
   s.phase = 'score';
   s.phaseAt = s.t;
 }
@@ -161,6 +187,7 @@ function submit(s: StrichKuenstlerState, i: number, stroke: Pt[]): void {
   const q = strokeQuality(SHAPES[shapeOf(s)], stroke);
   p.pts = strokePoints(q.quality, s.t - s.phaseAt);
   p.stroke = resample(stroke, 20).map(([x, y]) => [r4(x), r4(y)]);
+  emitFx(s, { kind: 'sparkle', sfx: 'scribble', x: sheetX(s.n, i), y: DESK_H + 0.8, z: SZ, color: s.colors[i] });
 }
 
 export const strichKuenstler: MinigameDef<StrichKuenstlerState> = {
@@ -180,6 +207,8 @@ export const strichKuenstler: MinigameDef<StrichKuenstlerState> = {
       phase: 'show',
       phaseAt: 0,
       ps: players.map(() => ({ total: 0, pts: null, stroke: null, botAt: null })),
+      fx: [],
+      fxN: 0,
     };
   },
   layout(s, i) {
@@ -201,6 +230,7 @@ export const strichKuenstler: MinigameDef<StrichKuenstlerState> = {
   },
   tick(s, dt) {
     s.t += dt;
+    ageFx(s, dt);
     if (s.phase === 'show' && s.t >= s.phaseAt + SHOW) {
       s.phase = 'draw';
       s.phaseAt = s.t;
@@ -215,6 +245,8 @@ export const strichKuenstler: MinigameDef<StrichKuenstlerState> = {
       s.round++;
       s.phase = 'show';
       s.phaseAt = s.t;
+      const c = onBoard(0, 0, 0.6);
+      emitFx(s, { kind: 'sparkle', sfx: 'magic', x: c.x, y: c.y, z: c.z, color: '#ffe08a', s: 1.6 });
       for (const p of s.ps) {
         p.pts = null;
         p.stroke = null;
@@ -247,26 +279,49 @@ export const strichKuenstler: MinigameDef<StrichKuenstlerState> = {
   },
   view(s) {
     const shape = shapeOf(s);
-    const entities: MgEntity[] = [];
-    // big board with the shape to trace
-    const BW = 9;
-    const BZ = 6;
-    entities.push({ id: 'board', kind: 'box', x: 0, y: 0.1, z: BZ, sx: BW + 1, sy: 0.2, sz: BW + 1, color: '#fdf6e3' });
-    resample(SHAPES[shape], 40).forEach(([px, py], k) =>
-      entities.push({ id: `sh${k}`, kind: 'sphere', x: (px - 0.5) * BW, y: 0.35, z: BZ + (0.5 - py) * BW, sx: 0.45, sy: 0.25, sz: 0.45, color: '#3b2f4f' }),
-    );
-    // one small board per player showing the drawn stroke and the points
-    const SW = 4.2;
-    const SZ = -4.2;
+    const nrm = onBoard(0, 0, 1);
+    const ctr = onBoard(0, 0, 0);
+    const ny = nrm.y - ctr.y;
+    const nz = nrm.z - ctr.z;
+    const top = onBoard(0, BW / 2 + 0.5, 0);
+    const bottom = onBoard(0, -BW / 2 - 0.5, 0);
+    const entities: MgEntity[] = [
+      // big easel: wooden frame, paper sheet tilted towards the TV, legs and a chalk ledge
+      { id: 'boardFrame', kind: 'box', x: 0, y: ctr.y - ny * 0.14, z: ctr.z - nz * 0.14, rx: -TILT, sx: BW + 1.7, sy: 0.22, sz: BW + 1.7, color: '#9a6a44', mat: 'wood' },
+      { id: 'board', kind: 'box', x: 0, y: ctr.y, z: ctr.z, rx: -TILT, sx: BW + 1, sy: 0.12, sz: BW + 1, color: '#fdf6e3', mat: 'paper' },
+      { id: 'legL', kind: 'box', x: -4.4, y: top.y / 2, z: top.z + 0.25, sx: 0.32, sy: top.y, sz: 0.32, color: '#8a5d3b', mat: 'wood' },
+      { id: 'legR', kind: 'box', x: 4.4, y: top.y / 2, z: top.z + 0.25, sx: 0.32, sy: top.y, sz: 0.32, color: '#8a5d3b', mat: 'wood' },
+      { id: 'ledge', kind: 'box', x: 0, y: Math.max(0.15, bottom.y - 0.05), z: bottom.z - 0.3, sx: BW + 1.8, sy: 0.3, sz: 0.5, color: '#8a5d3b', mat: 'wood' },
+      // garden atelier dressing
+      { id: 'easelL', kind: 'prop', prop: 'easel', x: -7.4, y: 0, z: 6.4, ry: 0.35, sx: 1.25 },
+      { id: 'easelR', kind: 'prop', prop: 'easel', x: 7.4, y: 0, z: 6.2, ry: -0.35, sx: 1.25 },
+      { id: 'bunting', kind: 'prop', prop: 'bunting', x: 0, y: 0, z: 11.9, sx: 1.9 },
+      { id: 'bushL', kind: 'prop', prop: 'bushround', x: -9.6, y: 0, z: 9.2 },
+      { id: 'bushR', kind: 'prop', prop: 'bushround', x: 9.8, y: 0, z: 9.6, ry: 2 },
+      { id: 'flowL', kind: 'prop', prop: 'flowers', x: -6.2, y: 0, z: 9.6 },
+      { id: 'flowR', kind: 'prop', prop: 'flowers', x: 6.4, y: 0, z: 9.8, ry: 2 },
+      { id: 'flowM', kind: 'prop', prop: 'flowers', x: -10.4, y: 0, z: 2.2, ry: 1 },
+      { id: 'flowN', kind: 'prop', prop: 'flowers', x: 10.6, y: 0, z: 1.4, ry: 3 },
+      { id: 'lampL', kind: 'prop', prop: 'streetlamp', x: -11, y: 0, z: -2.6 },
+      { id: 'lampR', kind: 'prop', prop: 'streetlamp', x: 11, y: 0, z: -2.6 },
+    ];
+    // the shape to trace, painted onto the big board
+    resample(SHAPES[shape], 40).forEach(([px, py], k) => {
+      const p = onBoard((px - 0.5) * BW, (0.5 - py) * BW, 0.12);
+      entities.push({ id: `sh${k}`, kind: 'sphere', x: p.x, y: p.y, z: p.z, rx: -TILT, sx: 0.45, sy: 0.22, sz: 0.45, color: '#3b2f4f' });
+    });
+    // one drawing desk per player: wooden desk, paper sheet, template dots, drawn stroke
     const small = resample(SHAPES[shape], 14);
     s.ps.forEach((p, i) => {
-      const cx = rowSpawn(s.n, 5.2, i);
-      entities.push({ id: `sb${i}`, kind: 'box', x: cx, y: 0.1, z: SZ, sx: SW + 0.6, sy: 0.2, sz: SW + 0.6, color: '#ffffff' });
+      const cx = sheetX(s.n, i);
+      entities.push({ id: `desk${i}`, kind: 'box', x: cx, y: DESK_H / 2 - 0.02, z: SZ, sx: SW + 0.8, sy: DESK_H, sz: SW + 0.8, color: '#b0835a', mat: 'planks' });
+      entities.push({ id: `sb${i}`, kind: 'box', x: cx, y: DESK_H + 0.02, z: SZ, sx: SW + 0.5, sy: 0.06, sz: SW + 0.5, color: '#ffffff', mat: 'paper' });
+      entities.push({ id: `pen${i}`, kind: 'box', x: cx + SW / 2 + 0.05, y: DESK_H + 0.1, z: SZ - SW / 2 + 0.2, ry: 0.5, sx: 0.12, sy: 0.12, sz: 1.1, color: s.colors[i] });
       small.forEach(([px, py], k) =>
-        entities.push({ id: `st${i}_${k}`, kind: 'sphere', x: cx + (px - 0.5) * SW, y: 0.3, z: SZ + (0.5 - py) * SW, sx: 0.22, sy: 0.12, sz: 0.22, color: '#c9c3d6' }),
+        entities.push({ id: `st${i}_${k}`, kind: 'sphere', x: cx + (px - 0.5) * SW, y: DESK_H + 0.08, z: SZ + (0.5 - py) * SW, sx: 0.22, sy: 0.1, sz: 0.22, color: '#c9c3d6' }),
       );
       p.stroke?.forEach(([px, py], k) =>
-        entities.push({ id: `dr${i}_${k}`, kind: 'sphere', x: cx + (px - 0.5) * SW, y: 0.4, z: SZ + (0.5 - py) * SW, sx: 0.32, sy: 0.2, sz: 0.32, color: s.colors[i], player: i }),
+        entities.push({ id: `dr${i}_${k}`, kind: 'sphere', x: cx + (px - 0.5) * SW, y: DESK_H + 0.12, z: SZ + (0.5 - py) * SW, sx: 0.32, sy: 0.16, sz: 0.32, color: s.colors[i], player: i }),
       );
       const showPts = p.pts !== null && (s.phase === 'score' || s.phase === 'done' || p.stroke !== null);
       entities.push({
@@ -285,8 +340,10 @@ export const strichKuenstler: MinigameDef<StrichKuenstlerState> = {
     if (s.phase === 'draw') hud.timer = Math.max(0, s.phaseAt + DRAW - s.t);
     return {
       env: 'grass',
-      camera: { alpha: -Math.PI / 2, beta: 0.62, radius: 27, target: [0, 0, 1] },
+      scenery: { set: 'garden', clear: { w: 24, d: 21, z: 1.6 } },
+      camera: { alpha: -Math.PI / 2, beta: 0.66, radius: 27.5, target: [0, 0.6, 1.4] },
       entities,
+      fx: viewFx(s),
       hud,
     };
   },

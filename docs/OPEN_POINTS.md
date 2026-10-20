@@ -2,7 +2,17 @@
 
 Stand 20.10.2026 (v0.3). Alles andere ist lokal lauffähig und getestet, siehe [STATUS.md](STATUS.md).
 
-## 0. Neu in v0.3 (Feature-Branch, zur Abnahme)
+## 0a. Neu in v0.4 (Feature-Branch, zur Abnahme)
+
+| Thema | Ergebnis | Zur Abstimmung |
+|---|---|---|
+| **Minispiel-Kulissen** | Jedes Minispiel steht in einer Landschaft wie die Maps: 12 Sets (Lagune, Strand, Vulkan, Gipfel, Wiese, Garten, Stadt, Eismeer, Wolken, Studio, Wüste, Nachtwald) mit Gelände, Wasser/Lava, Vegetation, Licht und Partikeln. | Zuordnung Spiel → Kulisse (z. B. Schnick-Schnack am Strand, Weichen-Chaos auf der Wiese). |
+| **Detail im Spielfeld** | Holz-, Planken-, Stein-, Eis-, Sand-Texturen; echte Modelle statt Klötzchen (Kanone, Lok, Kisten, Fahnen, Staffeleien …); 8 neue Blender-Props. | – |
+| **Ton & Übergänge** | Iris-Blende Brett ↔ Minispiel, Kamera-Anflug, Musik leiser unter der Erklärung, Countdown-Ticks, Startsignal, Abpfiff mit gedämpfter Musik, Jubel + Konfetti über den Siegern, Ergebnis über der Szene; Effekt-Töne im Stereo-Panorama, Ambient-Loop je Kulisse. | Lautstärke der Ambient-Loops (derzeit deutlich unter den Effekten). |
+| **Zeit** | Der Wechsel Brett → Minispiel → Brett dauert durch Blenden und Jubel ≈ 3 s länger. | – |
+| **Prüfen am echten TV** | Lesbarkeit aus 3 m und 60 fps mit Kulisse auf dem Referenz-Laptop; Emoji-Beschriftungen (✊✋✌️) im Browser des TV-Laptops. | – |
+
+## 0. Neu in v0.3
 
 | Thema | Ergebnis | Zur Abstimmung |
 |---|---|---|

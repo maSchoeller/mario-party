@@ -1,6 +1,6 @@
 import type { Rng } from '../../rng';
 import type { MgEntity, MgInput, MgPlayer, MinigameDef } from '../types';
-import { clamp, dist, dist2, faceAngle, moveWithStick, skill, steerTo, teamRanks } from '../util';
+import { ageFx, clamp, dist, dist2, emitFx, faceAngle, moveWithStick, skill, steerTo, teamRanks, viewFx, type FxState } from '../util';
 
 /**
  * #16 Laternen-Jagd (1 vs 3, Joystick, Nacht): the solo player hides in a dark garden,
@@ -52,6 +52,10 @@ const SIDE_W = 1.5;
 const FLEE_KEEP = 1.5;
 /** head start for the solo: the trio waits at the gate (not in practice) */
 const HIDE_TIME = 5;
+/** decor: garden fence segments (the gap at the front is the gate) */
+const FENCE_N = 32;
+/** "spotted!" sound at most every … seconds (beam edges flicker) */
+const SPOT_COOLDOWN = 1.5;
 
 interface P {
   x: number;
@@ -75,8 +79,10 @@ interface Step {
   t: number;
 }
 
-export interface LaternenJagdState {
+export interface LaternenJagdState extends FxState {
   t: number;
+  /** time of the last "spotted" effect */
+  spotT: number;
   duration: number;
   practice: boolean;
   players: MgPlayer[];
@@ -197,6 +203,9 @@ export const laternenJagd: MinigameDef<LaternenJagdState> = {
     });
     const s: LaternenJagdState = {
       t: 0,
+      spotT: -9,
+      fx: [],
+      fxN: 0,
       duration: DURATION,
       practice: opts.practice,
       players,
@@ -223,6 +232,9 @@ export const laternenJagd: MinigameDef<LaternenJagdState> = {
   },
   tick(s, dt, rng) {
     s.t += dt;
+    ageFx(s, dt);
+    // the garden gate opens: the trio may start searching
+    if (!s.practice && s.t >= HIDE_TIME && s.t - dt < HIDE_TIME) emitFx(s, { kind: 'dust', sfx: 'creak', x: 0, y: 0.3, z: -R, s: 1.2 }, 0.5);
     s.ps.forEach((p, i) => {
       const before = { x: p.x, z: p.z };
       // head start: the trio waits at the gate while the solo hides
@@ -256,14 +268,26 @@ export const laternenJagd: MinigameDef<LaternenJagdState> = {
     if (s.sparkIn <= 0) {
       s.sparkIn = s.practice ? SPARK_EVERY : SPARK_EVERY + (SPARK_LATE - SPARK_EVERY) * clamp(s.t / s.duration, 0, 1);
       s.spark = SPARK_TIME;
+      // the hint everybody sees anyway – now with a chime
+      const sp = s.ps[s.solo];
+      emitFx(s, { kind: 'sparkle', sfx: 'magic', x: sp.x, y: 2.2, z: sp.z, color: '#b8f0ff' }, 0.4);
     }
     // light
+    const wasLit = s.litBy > 0;
     s.litBy = litCount(s);
+    if (!wasLit && s.litBy > 0 && s.t - s.spotT > SPOT_COOLDOWN) {
+      s.spotT = s.t;
+      const sp = s.ps[s.solo];
+      emitFx(s, { kind: 'hit', sfx: 'ding', x: sp.x, y: 2, z: sp.z, color: '#ffe9a0' });
+    }
     const catchTime = s.practice ? CATCH_TIME : CATCH_TIME + (CATCH_LATE - CATCH_TIME) * clamp(s.t / s.duration, 0, 1);
     if (s.litBy > 0) s.caught += (dt / catchTime) * Math.min(1.5, s.litBy);
     else s.caught = Math.max(0, s.caught - CATCH_DECAY * dt);
     if (s.caught >= 1) {
       s.catches++;
+      const sp = s.ps[s.solo];
+      emitFx(s, { kind: 'ring', sfx: 'catch', x: sp.x, y: 1.2, z: sp.z, color: '#ffd23f', s: 1.4 }, 0.5);
+      emitFx(s, { kind: 'sparkle', x: sp.x, y: 2.4, z: sp.z, color: '#ffd23f', s: 1.4 }, 0.5);
       if (s.practice) {
         s.caught = 0;
         placeSolo(s, rng);
@@ -413,11 +437,26 @@ export const laternenJagd: MinigameDef<LaternenJagdState> = {
   },
   view(s) {
     const entities: MgEntity[] = [
-      { id: 'garden', kind: 'cylinder', x: 0, y: -0.25, z: 0, sx: R * 2 + 1, sy: 0.5, sz: R * 2 + 1, color: '#2c4a3a' },
-      { id: 'moon', kind: 'sphere', x: -R + 1, y: 9, z: R + 4, sx: 2.5, sy: 2.5, sz: 2.5, color: '#f4f1d0', glow: true },
+      // night garden: lawn inside a wooden fence, the gate (gap) at the front with two torches
+      { id: 'garden', kind: 'cylinder', x: 0, y: -0.1, z: 0, sx: R * 2 + 1, sy: 0.2, sz: R * 2 + 1, color: '#2f5a43', mat: 'grass' },
+      { id: 'gateL', kind: 'prop', prop: 'torch', x: -1.1, y: 0, z: -R - 0.35 },
+      { id: 'gateR', kind: 'prop', prop: 'torch', x: 1.1, y: 0, z: -R - 0.35 },
+      // flat dressing only (nothing that looks like a hiding place): stepping stones from the gate, flowerbeds and mushrooms along the fence, a bench
+      ...[-8.6, -7.2, -5.8].map((z, k): MgEntity => ({ id: `stone${k}`, kind: 'cylinder', x: (k % 2) * 0.5 - 0.25, y: 0.02, z, sx: 0.8, sy: 0.06, sz: 0.65, ry: k, color: '#6c7270', mat: 'stone' })),
+      { id: 'flowers1', kind: 'prop', prop: 'flowers', x: -6.6, y: 0, z: -6.9, sx: 1.2 },
+      { id: 'flowers2', kind: 'prop', prop: 'flowers', x: 7.1, y: 0, z: -6.4, sx: 1.1, ry: 1 },
+      { id: 'flowers3', kind: 'prop', prop: 'flowers', x: 9.1, y: 0, z: 1.6, ry: 2 },
+      { id: 'shroom1', kind: 'prop', prop: 'mushroom', x: -9.2, y: 0, z: 1.2, sx: 0.32 },
+      { id: 'shroom2', kind: 'prop', prop: 'mushroom', x: 4.4, y: 0, z: 8.7, sx: 0.28, ry: 1.4 },
+      { id: 'bench', kind: 'prop', prop: 'bench', x: -3.6, y: 0, z: 9.1, ry: Math.PI + 0.36, sx: 1.1 },
     ];
+    for (let k = 0; k < FENCE_N; k++) {
+      const a = (k / FENCE_N) * Math.PI * 2 - Math.PI / 2;
+      if (k === 0) continue; // the gate
+      entities.push({ id: `fence${k}`, kind: 'prop', prop: 'fence', x: Math.cos(a) * (R + 0.35), y: 0, z: Math.sin(a) * (R + 0.35), ry: -a - Math.PI / 2 });
+    }
     s.bushes.forEach((b, k) =>
-      entities.push({ id: `bush${k}`, kind: 'sphere', x: b.x, y: 0.7, z: b.z, sx: BUSH_R * 2.1, sy: 1.6, sz: BUSH_R * 2.1, color: '#3d7d47' }),
+      entities.push({ id: `bush${k}`, kind: 'prop', prop: 'bushround', x: b.x, y: 0, z: b.z, ry: k * 2.3, sx: 2.3 }),
     );
     for (const i of s.trio) {
       const p = s.ps[i];
@@ -466,8 +505,10 @@ export const laternenJagd: MinigameDef<LaternenJagdState> = {
     const seconds = Math.max(0, s.duration - s.t);
     return {
       env: 'night',
+      scenery: { set: 'nightwood', clear: { r: R + 1.5 } },
       camera: { alpha: -Math.PI / 2, beta: 0.7, radius: 27, target: [0, 0, 0.5] },
       entities,
+      fx: viewFx(s),
       hud: {
         timer: s.practice ? undefined : seconds,
         teams: [

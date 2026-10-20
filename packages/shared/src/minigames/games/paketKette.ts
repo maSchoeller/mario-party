@@ -1,7 +1,7 @@
 import type { BotLevel } from '../../config';
 import type { Rng } from '../../rng';
 import type { ControllerLayout, MgEntity, MgInput, MgPlayer, MinigameDef } from '../types';
-import { TEAM_COLORS, clamp, skill, teamRanksFromScores } from '../util';
+import { TEAM_COLORS, ageFx, clamp, emitFx, faceAngle, skill, teamRanksFromScores, viewFx, type FxState } from '../util';
 
 /**
  * #11 Paket-Kette (2v2, Wischen): parcels arrive on a conveyor belt at the thrower (first
@@ -40,7 +40,7 @@ interface TeamState {
   sortVis: number;
 }
 
-export interface PaketKetteState {
+export interface PaketKetteState extends FxState {
   t: number;
   duration: number;
   practice: boolean;
@@ -55,12 +55,23 @@ export interface PaketKetteState {
 
 const chuteOf = (dir: string) => CHUTE_DIRS.indexOf(dir as (typeof CHUTE_DIRS)[number]);
 
+// layout of one team area (view + effects)
+const THROWER_Z = -3.4;
+const SORTER_Z = 1.4;
+const beltStart = (k: number) => (AREA_X[k] ?? 0) + (k === 0 ? -1 : 1) * 5.5;
+const beltEnd = (k: number) => (AREA_X[k] ?? 0) + (k === 0 ? -1 : 1) * 1.2;
+function chutePos(k: number, ci: number): { x: number; z: number } {
+  const cx = AREA_X[k] ?? 0;
+  return ci === 0 ? { x: cx - 2.8, z: SORTER_Z } : ci === 1 ? { x: cx, z: SORTER_Z + 3 } : { x: cx + 2.8, z: SORTER_Z };
+}
+
 function throwParcel(s: PaketKetteState, ts: TeamState): boolean {
   const front = ts.belt[0];
   if (!front || front.pos < 0.9) return false;
   ts.belt.shift();
   ts.flying.push({ id: front.id, color: front.color, t: 0 });
   ts.throwVis = 0.3;
+  emitFx(s, { sfx: 'whoosh', x: beltEnd(s.teams.indexOf(ts)), y: 1.6, z: THROWER_Z });
   return true;
 }
 
@@ -73,6 +84,9 @@ function sortParcel(s: PaketKetteState, ts: TeamState, chute: number): void {
   if (ts.score !== before) ts.scoreAt = s.t;
   ts.fx.push({ id: p.id, color: p.color, chute, ok, t: 0.6 });
   ts.sortVis = 0.3;
+  const c = chutePos(s.teams.indexOf(ts), chute);
+  if (ok) emitFx(s, { kind: 'sparkle', sfx: 'correct', x: c.x, y: 2, z: c.z, color: PARCEL_COLORS[p.color], s: 1.2 });
+  else emitFx(s, { kind: 'smoke', sfx: 'buzz', x: c.x, y: 1.9, z: c.z, color: '#8a8f99', s: 0.8 });
 }
 
 /** score plus a fraction < 1 that is bigger the earlier the score was reached */
@@ -104,6 +118,8 @@ export const paketKette: MinigameDef<PaketKetteState> = {
       spawnIn: 1,
       nextId: 1,
       botCd: players.map(() => 0),
+      fx: [],
+      fxN: 0,
     };
   },
   layout(s, i): ControllerLayout {
@@ -132,8 +148,10 @@ export const paketKette: MinigameDef<PaketKetteState> = {
       for (const ts of s.teams) {
         const last = ts.belt[ts.belt.length - 1];
         // belt jammed at the start: the parcel falls off (lost)
-        if (last && last.pos < GAP) ts.fx.push({ id: s.nextId, color, chute: -1, ok: null, t: 0.6 });
-        else ts.belt.push({ id: s.nextId, color, pos: 0 });
+        if (last && last.pos < GAP) {
+          ts.fx.push({ id: s.nextId, color, chute: -1, ok: null, t: 0.6 });
+          emitFx(s, { kind: 'dust', sfx: 'thud', x: beltStart(s.teams.indexOf(ts)), y: 0.3, z: THROWER_Z, s: 0.7 });
+        } else ts.belt.push({ id: s.nextId, color, pos: 0 });
         s.nextId++;
       }
     }
@@ -148,13 +166,19 @@ export const paketKette: MinigameDef<PaketKetteState> = {
       for (const f of ts.flying) f.t += dt;
       for (const f of ts.flying.filter((f) => f.t >= FLIGHT)) {
         // partner's hands full: the parcel drops to the floor
-        if (ts.hand.length >= HAND_MAX) ts.fx.push({ id: f.id, color: f.color, chute: -2, ok: null, t: 0.6 });
-        else ts.hand.push({ id: f.id, color: f.color });
+        if (ts.hand.length >= HAND_MAX) {
+          ts.fx.push({ id: f.id, color: f.color, chute: -2, ok: null, t: 0.6 });
+          emitFx(s, { kind: 'dust', sfx: 'thud', x: (AREA_X[s.teams.indexOf(ts)] ?? 0) + 0.8, y: 0.2, z: SORTER_Z - 0.8, s: 0.8 });
+        } else {
+          ts.hand.push({ id: f.id, color: f.color });
+          emitFx(s, { kind: 'pop', x: AREA_X[s.teams.indexOf(ts)] ?? 0, y: 2.6, z: SORTER_Z, color: PARCEL_COLORS[f.color], s: 0.5 });
+        }
       }
       ts.flying = ts.flying.filter((f) => f.t < FLIGHT);
       ts.fx = ts.fx.filter((e) => (e.t -= dt) > 0);
       if (s.practice && ts.score >= 99) ts.score = 0;
     }
+    ageFx(s, dt);
   },
   isOver: (s) => !s.practice && s.t >= s.duration,
   result: (s) => teamRanksFromScores(s.players, (team) => tieBreakScore(s, s.teams.find((ts) => ts.team === team))),
@@ -185,43 +209,62 @@ export const paketKette: MinigameDef<PaketKetteState> = {
   },
   view(s) {
     const entities: MgEntity[] = [
-      { id: 'wall', kind: 'box', x: 0, y: 0.8, z: 0.5, sx: 0.4, sy: 1.6, sz: 11, color: '#c9c3d6' },
+      // low brick wall between the two depots, bunting over the back of each area
+      { id: 'wall', kind: 'box', x: 0, y: 0.5, z: 0.5, sx: 0.5, sy: 1, sz: 11, color: '#c98f74', mat: 'stone' },
+      { id: 'wallCap', kind: 'box', x: 0, y: 1.06, z: 0.5, sx: 0.66, sy: 0.12, sz: 11.2, color: '#e3dccf', mat: 'stone' },
     ];
     s.teams.forEach((ts, k) => {
       const cx = AREA_X[k] ?? 0;
       const side = k === 0 ? -1 : 1;
       const color = TEAM_COLORS[ts.team] ?? '#ffffff';
-      const tz = -3.4; // thrower
-      const sz = 1.4; // sorter
-      entities.push({ id: `floor${k}`, kind: 'plane', x: cx, y: 0.02, z: 0.5, sx: 12, sz: 11, color, alpha: 0.35 });
-      // conveyor belt from the outer side to the thrower
-      const xs = cx + side * 5.5;
-      const xe = cx + side * 1.2;
-      entities.push({ id: `belt${k}`, kind: 'box', x: (xs + xe) / 2, y: 0.45, z: tz, sx: Math.abs(xs - xe) + 1.2, sy: 0.3, sz: 1.3, color: '#4a4f5c' });
+      const tz = THROWER_Z;
+      const sz = SORTER_Z;
+      // tiled depot floor in a light team tint with a darker border
+      entities.push({ id: `rim${k}`, kind: 'plane', x: cx, y: 0.015, z: 0.5, sx: 12.4, sz: 11.4, color: ts.team === 0 ? '#b5655f' : '#5f78b5', mat: 'tiles' });
+      entities.push({ id: `floor${k}`, kind: 'plane', x: cx, y: 0.03, z: 0.5, sx: 11.8, sz: 10.8, color: ts.team === 0 ? '#f2c9bf' : '#c6d5f0', mat: 'tiles' });
+      // conveyor belt from the outer side to the thrower: steel frame, rubber belt, rollers
+      const xs = beltStart(k);
+      const xe = beltEnd(k);
+      const bx = (xs + xe) / 2;
+      const bl = Math.abs(xs - xe) + 1.2;
+      entities.push({ id: `beltFrame${k}`, kind: 'box', x: bx, y: 0.28, z: tz, sx: bl, sy: 0.5, sz: 1.5, color: '#8d96a3', mat: 'metal' });
+      entities.push({ id: `belt${k}`, kind: 'box', x: bx, y: 0.56, z: tz, sx: bl + 0.1, sy: 0.08, sz: 1.2, color: '#3b3f48', mat: 'cloth' });
+      for (const [r, rx] of [
+        [0, xs + side * 0.6],
+        [1, xe - side * 0.6],
+      ] as [number, number][]) {
+        entities.push({ id: `roller${k}_${r}`, kind: 'cylinder', x: rx, y: 0.5, z: tz, rx: Math.PI / 2, sx: 0.36, sy: 1.6, sz: 0.36, color: '#f2c14e', mat: 'metal' });
+      }
+      // parcel source: the post office counter at the outer end, crates waiting
+      entities.push({ id: `crateA${k}`, kind: 'prop', prop: 'crate', x: xs + side * 1.7, y: 0, z: tz - 0.9, ry: 0.2 });
+      entities.push({ id: `crateB${k}`, kind: 'prop', prop: 'crate', x: xs + side * 1.75, y: 0.8, z: tz - 0.85, ry: -0.3, sx: 0.85 });
+      entities.push({ id: `crateC${k}`, kind: 'prop', prop: 'crate', x: xs + side * 1.6, y: 0, z: tz + 0.6, ry: 0.5, sx: 0.9 });
+      entities.push({ id: `mail${k}`, kind: 'prop', prop: 'mailbox', x: cx + side * 5.4, y: 0, z: sz + 2.2, ry: faceAngle(-side, -0.3) });
+      entities.push({ id: `lamp${k}`, kind: 'prop', prop: 'streetlamp', x: cx + side * 5.6, y: 0, z: 5.4 });
+      entities.push({ id: `bunting${k}`, kind: 'prop', prop: 'bunting', x: cx, y: 0, z: 6.6, sx: 1.45 });
+      entities.push({ id: `fbox${k}`, kind: 'prop', prop: 'flowerbox', x: cx - side * 1.6, y: 0, z: 6.4, sx: 1.1 });
       for (const p of ts.belt) {
-        entities.push({ id: `pk${p.id}`, kind: 'box', x: xs + (xe - xs) * p.pos, y: 0.95, z: tz, sx: 0.85, sy: 0.7, sz: 0.85, color: PARCEL_COLORS[p.color] });
+        entities.push({ id: `pk${p.id}`, kind: 'box', x: xs + (xe - xs) * p.pos, y: 0.95, z: tz, sx: 0.85, sy: 0.7, sz: 0.85, color: PARCEL_COLORS[p.color], mat: 'paper' });
       }
       for (const f of ts.flying) {
         const u = f.t / FLIGHT;
-        entities.push({ id: `pk${f.id}`, kind: 'box', x: xe + (cx - xe) * u, y: 1.6 + Math.sin(u * Math.PI) * 2.2 + u, z: tz + (sz - tz) * u, ry: u * 4, sx: 0.9, sy: 0.75, sz: 0.9, color: PARCEL_COLORS[f.color] });
+        entities.push({ id: `pk${f.id}`, kind: 'box', x: xe + (cx - xe) * u, y: 1.6 + Math.sin(u * Math.PI) * 2.2 + u, z: tz + (sz - tz) * u, ry: u * 4, sx: 0.9, sy: 0.75, sz: 0.9, color: PARCEL_COLORS[f.color], mat: 'paper' });
       }
       ts.hand.forEach((p, h) => {
-        entities.push({ id: `pk${p.id}`, kind: 'box', x: h === 0 ? cx : cx + (h === 1 ? -0.7 : 0.7), y: h === 0 ? 2.9 : 2.2, z: sz, sx: h === 0 ? 1.15 : 0.6, sy: h === 0 ? 0.95 : 0.5, sz: h === 0 ? 1.15 : 0.6, color: PARCEL_COLORS[p.color], glow: h === 0 });
+        entities.push({ id: `pk${p.id}`, kind: 'box', x: h === 0 ? cx : cx + (h === 1 ? -0.7 : 0.7), y: h === 0 ? 2.9 : 2.2, z: sz, sx: h === 0 ? 1.15 : 0.6, sy: h === 0 ? 0.95 : 0.5, sz: h === 0 ? 1.15 : 0.6, color: PARCEL_COLORS[p.color], glow: h === 0, mat: 'paper' });
       });
-      // three colored chutes around the sorter: left, back, right
-      const chutePos = [
-        { x: cx - 2.8, z: sz },
-        { x: cx, z: sz + 3 },
-        { x: cx + 2.8, z: sz },
-      ];
-      chutePos.forEach((c, ci) => {
+      // three colored chutes around the sorter: left, back, right – metal bins with a funnel
+      for (let ci = 0; ci < 3; ci++) {
+        const c = chutePos(k, ci);
         const hit = ts.fx.find((e) => e.chute === ci);
-        entities.push({ id: `chute${k}_${ci}`, kind: 'box', x: c.x, y: 0.7, z: c.z, sx: 1.7, sy: 1.4, sz: 1.7, color: PARCEL_COLORS[ci], glow: !!hit });
-        entities.push({ id: `chuteTop${k}_${ci}`, kind: 'cylinder', x: c.x, y: 1.5, z: c.z, sx: 1.3, sy: 0.25, sz: 1.3, color: '#3b3f4a' });
-      });
+        entities.push({ id: `chute${k}_${ci}`, kind: 'box', x: c.x, y: 0.7, z: c.z, sx: 1.7, sy: 1.4, sz: 1.7, color: PARCEL_COLORS[ci], glow: !!hit, mat: 'metal' });
+        entities.push({ id: `chuteBand${k}_${ci}`, kind: 'box', x: c.x, y: 0.12, z: c.z, sx: 1.78, sy: 0.24, sz: 1.78, color: '#4a4f5c', mat: 'metal' });
+        entities.push({ id: `chuteTop${k}_${ci}`, kind: 'cylinder', x: c.x, y: 1.58, z: c.z, sx: 1.4, sy: 0.36, sz: 1.4, color: '#5d6470', mat: 'metal', taper: 1.3 });
+        entities.push({ id: `chuteHole${k}_${ci}`, kind: 'cylinder', x: c.x, y: 1.77, z: c.z, sx: 1.5, sy: 0.04, sz: 1.5, color: '#23262d' });
+      }
       for (const e of ts.fx) {
         if (e.chute >= 0) {
-          const c = chutePos[e.chute];
+          const c = chutePos(k, e.chute);
           entities.push({ id: `pk${e.id}`, kind: 'box', x: c.x, y: 1.5 + e.t, z: c.z, sx: 0.6, sy: 0.5, sz: 0.6, color: PARCEL_COLORS[e.color], alpha: e.t * 1.6 });
           entities.push({ id: `fx${e.id}`, kind: e.ok ? 'star' : 'rock', x: c.x, y: 3 + (0.6 - e.t) * 2, z: c.z, sx: 0.8, sy: 0.8, sz: 0.8, color: e.ok ? undefined : '#e05a5a', alpha: e.t * 1.6 });
         } else {
@@ -236,14 +279,16 @@ export const paketKette: MinigameDef<PaketKetteState> = {
         [ts.sorter, sz - 0.2, ts.sortVis],
       ] as [number, number, number][]) {
         if (ts.thrower === ts.sorter && z !== tz - 1.2) continue;
-        entities.push({ id: `p${pi}`, kind: 'player', player: pi, x: cx, y: 0, z, anim: vis > 0 ? 'jump' : 'idle' });
-        entities.push({ id: `ring${pi}`, kind: 'torus', x: cx, y: 0.05, z, sx: 1.4, sy: 1, sz: 1.4, color });
+        entities.push({ id: `p${pi}`, kind: 'player', player: pi, x: cx, y: 0.03, z, anim: vis > 0 ? 'jump' : 'idle' });
+        entities.push({ id: `ring${pi}`, kind: 'torus', x: cx, y: 0.08, z, sx: 1.4, sy: 1, sz: 1.4, color });
       }
     });
     return {
       env: 'city',
-      camera: { alpha: -Math.PI / 2, beta: 0.8, radius: 25, target: [0, 0, 0.3] },
+      scenery: { set: 'city', clear: { w: 30, d: 14, z: 0.5 } },
+      camera: { alpha: -Math.PI / 2, beta: 0.8, radius: 26, target: [0, 0, 0.6] },
       entities,
+      fx: viewFx(s),
       hud: {
         timer: s.practice ? undefined : Math.max(0, s.duration - s.t),
         teams: s.teams.map((ts) => ({ team: ts.team, labelKey: ts.team === 0 ? 'team.red' : 'team.blue', value: `📦 ${ts.score}` })),

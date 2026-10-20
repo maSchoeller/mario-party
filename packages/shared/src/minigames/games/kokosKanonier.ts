@@ -1,6 +1,6 @@
 import type { Rng } from '../../rng';
 import type { MgEntity, MgInput, MgPlayer, MinigameDef } from '../types';
-import { clamp, dist2, faceAngle, lerp, moveWithStick, skill, steerTo, teamRanks } from '../util';
+import { ageFx, clamp, dist2, emitFx, faceAngle, lerp, moveWithStick, skill, steerTo, teamRanks, viewFx, type FxState } from '../util';
 
 /**
  * #14 Kokos-Kanonier (1 vs 3, Neigen vs. Joystick): the solo player aims a coconut cannon
@@ -22,6 +22,10 @@ const LIVES = 2;
 const INVULN = 1.2;
 const CANNON = { x: 0, z: AZ + 3.2 };
 const DURATION = 40;
+/** height of the cannon mound (visual) */
+const HILL = 0.6;
+/** lagoon water level (visual) */
+const WATER = -0.5;
 /** trio bots: reaction to a new shell, chance to overlook it, running speed */
 const DODGER = {
   easy: { delay: 0.4, miss: 0.44, speed: 0.92 },
@@ -57,7 +61,7 @@ interface P {
   target: { x: number; z: number } | null;
 }
 
-export interface KokosKanonierState {
+export interface KokosKanonierState extends FxState {
   t: number;
   duration: number;
   practice: boolean;
@@ -76,6 +80,14 @@ export interface KokosKanonierState {
   botTarget: number;
   botThink: number;
   botAim: { x: number; z: number };
+}
+
+/** cannon muzzle (visual): the barrel turns towards the crosshair */
+function muzzle(s: KokosKanonierState): { x: number; y: number; z: number } {
+  const dx = s.cross.x - CANNON.x;
+  const dz = s.cross.z - CANNON.z;
+  const l = Math.hypot(dx, dz) || 1;
+  return { x: CANNON.x + (dx / l) * 1.4, y: HILL + 1.3, z: CANNON.z + (dz / l) * 1.4 };
 }
 
 function alive(s: KokosKanonierState): number[] {
@@ -133,6 +145,8 @@ export const kokosKanonier: MinigameDef<KokosKanonierState> = {
       botTarget: -1,
       botThink: 0,
       botAim: { x: 0, z: 0 },
+      fx: [],
+      fxN: 0,
     };
   },
   layout(s, i) {
@@ -149,6 +163,7 @@ export const kokosKanonier: MinigameDef<KokosKanonierState> = {
   },
   tick(s, dt, _rng: Rng) {
     s.t += dt;
+    ageFx(s, dt);
     // crosshair: tilt = velocity (works for gyro and slider fallback alike)
     const dz = (v: number) => (Math.abs(v) < 0.08 ? 0 : v);
     s.cross.x = clamp(s.cross.x + dz(s.tilt.x) * CROSS_SPEED * dt, -AX, AX);
@@ -158,6 +173,9 @@ export const kokosKanonier: MinigameDef<KokosKanonierState> = {
     if (s.fireIn <= 0) {
       s.fireIn = lerp(FIRE_START, FIRE_END, clamp(s.t / s.duration, 0, 1));
       s.shells.push({ id: s.nextId++, x: s.cross.x, z: s.cross.z, eta: FLIGHT });
+      // muzzle blast
+      const m = muzzle(s);
+      emitFx(s, { kind: 'smoke', sfx: 'cannon', x: m.x, y: m.y, z: m.z, s: 0.8 });
     }
     // trio movement
     for (const i of s.trio) {
@@ -167,6 +185,7 @@ export const kokosKanonier: MinigameDef<KokosKanonierState> = {
           p.out = false;
           p.lives = LIVES;
           p.inv = INVULN;
+          emitFx(s, { kind: 'sparkle', sfx: 'magic', x: p.x, y: 1.2, z: p.z });
         }
         continue;
       }
@@ -189,14 +208,18 @@ export const kokosKanonier: MinigameDef<KokosKanonierState> = {
         p.hits++;
         p.inv = INVULN;
         s.hits++;
+        emitFx(s, { kind: 'hit', sfx: 'thud', x: p.x, y: 1.3, z: p.z, s: 1.1 });
         if (p.lives <= 0) {
           p.out = true;
           p.revive = 2;
           p.vx = 0;
           p.vz = 0;
+          emitFx(s, { kind: 'smoke', sfx: 'aww', x: p.x, y: 0.8, z: p.z, s: 1.1 }, 0.5);
         }
       }
       s.booms.push({ id: sh.id, x: sh.x, z: sh.z, t: 0.6, hit });
+      // the coconut smacks into the sand
+      emitFx(s, { kind: hit ? 'pop' : 'dust', sfx: hit ? undefined : 'land', x: sh.x, y: 0.15, z: sh.z, s: hit ? 0.8 : 1.2, color: hit ? '#f2c14e' : undefined });
     }
     s.shells = s.shells.filter((sh) => sh.eta > 0);
     s.booms = s.booms.filter((b) => (b.t -= dt) > 0);
@@ -291,33 +314,57 @@ export const kokosKanonier: MinigameDef<KokosKanonierState> = {
   view(s) {
     const aimDx = s.cross.x - CANNON.x;
     const aimDz = s.cross.z - CANNON.z;
+    // sandy island (slightly oval, reaching back to the cannon mound) sloping into the lagoon
+    const IZ = 1.5;
     const entities: MgEntity[] = [
-      { id: 'sand', kind: 'box', x: 0, y: -0.25, z: 0, sx: AX * 2 + 1.5, sy: 0.5, sz: AZ * 2 + 1.5, color: '#efe2c0' },
-      { id: 'hill', kind: 'cylinder', x: CANNON.x, y: 0.3, z: CANNON.z + 0.6, sx: 5, sy: 0.6, sz: 3.6, color: '#b9a27a' },
-      { id: 'cannonBase', kind: 'box', x: CANNON.x, y: 0.9, z: CANNON.z, sx: 1.6, sy: 0.7, sz: 1.4, color: '#7a5c45' },
-      {
-        id: 'cannon',
-        kind: 'cylinder',
-        x: CANNON.x,
-        y: 1.6,
-        z: CANNON.z,
-        sx: 0.9,
-        sy: 2.2,
-        sz: 0.9,
-        rx: Math.PI / 2 - 0.35,
-        ry: Math.atan2(aimDx, aimDz),
-        color: '#3b3b46',
-      },
-      { id: 'palm1', kind: 'palm', x: -AX - 2, y: 0, z: AZ - 1 },
-      { id: 'palm2', kind: 'palm', x: AX + 2, y: 0, z: AZ - 2 },
-      { id: 'palm3', kind: 'palm', x: -AX - 1.5, y: 0, z: -AZ + 1 },
+      { id: 'beach', kind: 'cylinder', x: 0, y: -0.3, z: IZ, sx: 25, sy: 0.6, sz: 20, color: '#f0e0b6', mat: 'sand', taper: 0.88 },
+      { id: 'rim', kind: 'cylinder', x: 0, y: -1.1, z: IZ, sx: 31, sy: 1, sz: 25, color: '#d6c08c', mat: 'sand', taper: 25 / 31 },
+      // roped-off arena
+      { id: 'ropeN', kind: 'box', x: 0, y: 0.32, z: AZ + 0.7, sx: AX * 2 + 1.4, sy: 0.07, sz: 0.07, color: '#d9bd86', mat: 'rope' },
+      { id: 'ropeS', kind: 'box', x: 0, y: 0.32, z: -AZ - 0.7, sx: AX * 2 + 1.4, sy: 0.07, sz: 0.07, color: '#d9bd86', mat: 'rope' },
+      { id: 'ropeW', kind: 'box', x: -AX - 0.7, y: 0.32, z: 0, sx: 0.07, sy: 0.07, sz: AZ * 2 + 1.4, color: '#d9bd86', mat: 'rope' },
+      { id: 'ropeE', kind: 'box', x: AX + 0.7, y: 0.32, z: 0, sx: 0.07, sy: 0.07, sz: AZ * 2 + 1.4, color: '#d9bd86', mat: 'rope' },
+      // grassy mound with the coconut cannon
+      { id: 'hill', kind: 'cylinder', x: CANNON.x + 0.6, y: HILL / 2, z: CANNON.z + 0.5, sx: 6.8, sy: HILL, sz: 4.4, color: '#8fcb6e', mat: 'grass', taper: 0.8 },
+      { id: 'cannon', kind: 'prop', prop: 'cannon', x: CANNON.x, y: HILL, z: CANNON.z, ry: faceAngle(aimDx, aimDz), sx: 1.05 },
+      { id: 'ammo1', kind: 'coconut', x: 4.4, y: 0.33, z: CANNON.z - 0.4 },
+      { id: 'ammo2', kind: 'coconut', x: 4.95, y: 0.33, z: CANNON.z - 0.1 },
+      { id: 'ammo3', kind: 'coconut', x: 4.7, y: 0.33, z: CANNON.z + 0.45 },
+      { id: 'ammo4', kind: 'coconut', x: 4.7, y: 0.85, z: CANNON.z - 0.02 },
+      { id: 'barrel1', kind: 'prop', prop: 'barrel', x: -3.3, y: 0, z: CANNON.z - 0.2, ry: 0.4 },
+      { id: 'crate1', kind: 'prop', prop: 'crate', x: -4.3, y: 0, z: CANNON.z + 0.4, ry: 0.3 },
+      { id: 'crate2', kind: 'prop', prop: 'crate', x: -4.2, y: 0.8, z: CANNON.z + 0.35, ry: 0.9, sx: 0.85 },
+      // palms, plants and beach clutter around the arena
+      { id: 'palm1', kind: 'palm', x: -9.6, y: -0.05, z: 4 },
+      { id: 'palm2', kind: 'palm', x: 9.6, y: -0.05, z: 3, ry: 2 },
+      { id: 'palm3', kind: 'prop', prop: 'palm2', x: -8.4, y: -0.05, z: 6.6, ry: 0.6 },
+      { id: 'bush3', kind: 'prop', prop: 'bush', x: -9, y: 0, z: -3.2, sx: 0.9, ry: 2 },
+      { id: 'palm4', kind: 'prop', prop: 'palm2', x: 8.6, y: -0.05, z: 6.2, ry: 4 },
+      { id: 'bush1', kind: 'prop', prop: 'bush', x: -9.2, y: 0, z: 1.8, sx: 1.1 },
+      { id: 'bush2', kind: 'prop', prop: 'bush', x: 9.1, y: 0, z: -1.6 },
+      { id: 'fern1', kind: 'prop', prop: 'fern', x: 5.6, y: 0, z: 8.9, sx: 1.2 },
+      { id: 'fern2', kind: 'prop', prop: 'fern', x: -6.5, y: 0, z: 7.4 },
+      { id: 'shell1', kind: 'prop', prop: 'shell', x: -4, y: 0, z: -6.4 },
+      { id: 'shell2', kind: 'prop', prop: 'shell', x: 4.5, y: 0, z: -6, ry: 2 },
+      { id: 'drift', kind: 'prop', prop: 'driftwood', x: 6.5, y: 0, z: -5.4, ry: 2.4 },
+      { id: 'rock1', kind: 'prop', prop: 'rocksmall', x: -6.8, y: 0, z: -5.2, sx: 1.6 },
+      { id: 'crab', kind: 'prop', prop: 'crab', x: 1.5, y: 0, z: -6.3, ry: 3.4, sx: 0.4 },
       // crosshair: big, red, glowing ring – readable from the couch
       { id: 'cross', kind: 'torus', x: s.cross.x, y: 0.08, z: s.cross.z, sx: HIT_R * 2, sy: 1, sz: HIT_R * 2, color: '#ff3b3b', glow: true },
       { id: 'crossDot', kind: 'cylinder', x: s.cross.x, y: 0.05, z: s.cross.z, sx: 0.35, sy: 0.04, sz: 0.35, color: '#ff3b3b', glow: true },
     ];
+    // corner and middle posts of the rope fence
+    let n = 0;
+    for (const px of [-1, 0, 1]) {
+      for (const pz of [-1, 1]) {
+        entities.push({ id: `post${n++}`, kind: 'cylinder', x: px * (AX + 0.7), y: 0.22, z: pz * (AZ + 0.7), sx: 0.16, sy: 0.44, sz: 0.16, color: '#8a5a32', mat: 'wood' });
+      }
+    }
+    for (const px of [-1, 1]) entities.push({ id: `post${n++}`, kind: 'cylinder', x: px * (AX + 0.7), y: 0.22, z: 0, sx: 0.16, sy: 0.44, sz: 0.16, color: '#8a5a32', mat: 'wood' });
     s.ps.forEach((p, i) => {
       if (i === s.solo) {
-        entities.push({ id: `p${i}`, kind: 'player', player: i, x: p.x, y: 0.6, z: p.z, ry: p.ry, anim: s.booms.some((b) => b.hit && b.t > 0.3) ? 'cheer' : 'idle' });
+        // the gunner stands next to the cannon on the mound (not hidden behind it)
+        entities.push({ id: `p${i}`, kind: 'player', player: i, x: CANNON.x + 2, y: HILL, z: CANNON.z + 0.6, ry: p.ry, anim: s.booms.some((b) => b.hit && b.t > 0.3) ? 'cheer' : 'idle' });
         return;
       }
       // short protection after a hit: shown as a white ring (alpha toggles would rebuild the figure)
@@ -352,13 +399,16 @@ export const kokosKanonier: MinigameDef<KokosKanonierState> = {
       entities.push({ id: `sd${sh.id}`, kind: 'cylinder', x: sh.x, y: 0.03, z: sh.z, sx: r, sy: 0.02, sz: r, color: '#222222', alpha: 0.25 + f * 0.3 });
     }
     for (const b of s.booms) {
+      if (!b.hit) continue;
       entities.push({ id: `bm${b.id}`, kind: 'star', x: b.x, y: 0.8 + (0.6 - b.t) * 3, z: b.z, alpha: Math.min(0.95, b.t * 2), sx: b.hit ? 1.4 : 0.8, sy: b.hit ? 1.4 : 0.8, sz: b.hit ? 1.4 : 0.8, color: b.hit ? '#ff5a3d' : '#d9c48a' });
     }
     const live = alive(s).length;
     return {
       env: 'water',
+      scenery: { set: 'lagoon', clear: { r: 15, z: IZ }, water: WATER },
       camera: { alpha: -Math.PI / 2, beta: 0.8, radius: 25, target: [0, 0, 1] },
       entities,
+      fx: viewFx(s),
       hud: {
         timer: s.practice ? undefined : Math.max(0, s.duration - s.t),
         teams: [

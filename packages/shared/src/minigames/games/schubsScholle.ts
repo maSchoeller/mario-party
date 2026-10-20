@@ -1,7 +1,7 @@
 import { PLAYER_COLOR_HEX } from '../../config';
 import type { Rng } from '../../rng';
 import type { MgEntity, MgInput, MgPlayer, MinigameDef } from '../types';
-import { clamp, faceAngle, lerp, moveWithStick, ranksFromScores, ringSpawn, skill, steerTo } from '../util';
+import { ageFx, clamp, emitFx, faceAngle, lerp, moveWithStick, ranksFromScores, ringSpawn, skill, steerTo, viewFx, type FxState } from '../util';
 
 /**
  * #2 Schubs-Scholle (FFA, Joystick + Button): sumo on a round ice floe that melts over
@@ -19,6 +19,9 @@ const DASH_TIME = 0.22;
 const COOLDOWN = 1.4;
 const DASH_KNOCK = 6.5;
 const PRACTICE_RESPAWN = 1.4;
+const WATER_Y = -0.35;
+/** the melting floe cracks audibly every MELT_STEP of radius lost */
+const MELT_STEP = 0.6;
 
 interface P {
   x: number;
@@ -46,7 +49,7 @@ interface P {
   aimAt: number;
 }
 
-export interface ScholleState {
+export interface ScholleState extends FxState {
   t: number;
   duration: number;
   practice: boolean;
@@ -55,6 +58,11 @@ export interface ScholleState {
   radius: number;
   ps: P[];
   endAt: number | null;
+  /** melt steps already announced with a crack */
+  cracks: number;
+  /** throttles for frequent sounds */
+  whooshAt: number;
+  bumpAt: number;
 }
 
 function floeRadius(s: ScholleState): number {
@@ -80,6 +88,11 @@ export const schubsScholle: MinigameDef<ScholleState> = {
       colors: players.map((p) => PLAYER_COLOR_HEX[p.color]),
       radius: opts.practice ? R0 * 0.85 : R0,
       endAt: null,
+      cracks: 0,
+      whooshAt: 0,
+      bumpAt: 0,
+      fx: [],
+      fxN: 0,
       ps: players.map((_, i) => {
         const sp = ringSpawn(n, 4, i);
         const len = Math.hypot(sp.x, sp.z) || 1;
@@ -118,10 +131,23 @@ export const schubsScholle: MinigameDef<ScholleState> = {
   tick(s, dt) {
     s.t += dt;
     s.radius = floeRadius(s);
+    ageFx(s, dt);
+    const melt = Math.floor((R0 - s.radius) / MELT_STEP);
+    if (melt > s.cracks) {
+      s.cracks = melt;
+      const a = melt * 2.39996;
+      emitFx(s, { kind: 'ice', sfx: 'crack', x: Math.cos(a) * s.radius, y: 0.05, z: Math.sin(a) * s.radius, s: 0.9 });
+    }
     for (const p of s.ps) {
       p.hitT = Math.max(0, p.hitT - dt);
       if (p.fallT !== null) {
+        const before = p.fallT;
         p.fallT += dt;
+        // hits the water surface (y = -5 t²)
+        if (before < 0.26 && p.fallT >= 0.26) {
+          emitFx(s, { kind: 'splash', sfx: 'splash', x: p.x, y: WATER_Y, z: p.z, s: 1.2 }, 0.5);
+          if (!s.practice) emitFx(s, { sfx: 'aww', x: p.x, y: 1, z: p.z }, 0.5);
+        }
         p.x += p.vx * dt * 0.5;
         p.z += p.vz * dt * 0.5;
         if (s.practice && p.fallT >= PRACTICE_RESPAWN) {
@@ -131,6 +157,7 @@ export const schubsScholle: MinigameDef<ScholleState> = {
           p.vx = p.vz = 0;
           p.fallT = null;
           p.dash = 0;
+          emitFx(s, { kind: 'pop', sfx: 'pop', x: 0, y: 1, z: 0, color: s.colors[s.ps.indexOf(p)] });
         }
         p.wantPush = false;
         continue;
@@ -147,6 +174,9 @@ export const schubsScholle: MinigameDef<ScholleState> = {
         p.cd = COOLDOWN;
         p.vx = p.fx * DASH_SPEED;
         p.vz = p.fz * DASH_SPEED;
+        const loud = s.t >= s.whooshAt;
+        if (loud) s.whooshAt = s.t + 0.35;
+        emitFx(s, { kind: 'ice', sfx: loud ? 'whoosh' : undefined, x: p.x, y: 0.1, z: p.z, s: 0.5 });
       }
       p.wantPush = false;
       if (p.dash > 0) {
@@ -180,6 +210,13 @@ export const schubsScholle: MinigameDef<ScholleState> = {
         pb.x += (nx * overlap) / 2;
         pb.z += (nz * overlap) / 2;
         const vrel = (pa.vx - pb.vx) * nx + (pa.vz - pb.vz) * nz;
+        const mx = (pa.x + pb.x) / 2;
+        const mz = (pa.z + pb.z) / 2;
+        if (pa.dash > 0 || pb.dash > 0) emitFx(s, { kind: 'hit', sfx: 'thud', x: mx, y: 1, z: mz });
+        else if (vrel > 2.5 && s.t >= s.bumpAt) {
+          s.bumpAt = s.t + 0.4;
+          emitFx(s, { kind: 'ice', sfx: 'pop', x: mx, y: 0.6, z: mz, s: 0.4 });
+        }
         if (vrel > 0) {
           const j = vrel * 0.9;
           pa.vx -= j * nx;
@@ -287,21 +324,33 @@ export const schubsScholle: MinigameDef<ScholleState> = {
     return out;
   },
   view(s) {
+    const r = s.radius;
+    const SLOPE = 0.86;
     const entities: MgEntity[] = [
-      { id: 'melt', kind: 'cylinder', x: 0, y: -0.35, z: 0, sx: R0 * 2, sy: 0.4, sz: R0 * 2, color: '#bfe3f2', alpha: 0.3 },
-      { id: 'floe', kind: 'cylinder', x: 0, y: -0.3, z: 0, sx: s.radius * 2, sy: 0.6, sz: s.radius * 2, color: '#eef8fd' },
-      { id: 'berg1', kind: 'cone', x: -12, y: -0.5, z: 7, sx: 3, sy: 3.5, sz: 3, color: '#ffffff' },
-      { id: 'berg2', kind: 'cone', x: 12.5, y: -0.5, z: 5, sx: 2.4, sy: 2.6, sz: 2.4, color: '#e4f4fb' },
-      { id: 'berg3', kind: 'cone', x: 9, y: -0.5, z: 11, sx: 3.5, sy: 4.2, sz: 3.5, color: '#ffffff' },
+      // slush showing the original size of the floe
+      { id: 'melt', kind: 'cylinder', x: 0, y: WATER_Y + 0.02, z: 0, sx: R0 * 2, sy: 0.06, sz: R0 * 2, color: '#d6f1fb', alpha: 0.3 },
+      // the floe: clear ice with sloped flanks into the sea, a snow layer on top (rim = danger)
+      { id: 'floe', kind: 'cylinder', x: 0, y: -0.55, z: 0, sx: (r * 2) / SLOPE, sy: 1.1, sz: (r * 2) / SLOPE, color: '#cfeaf6', mat: 'ice', taper: SLOPE },
+      { id: 'snowcap', kind: 'cylinder', x: 0, y: 0, z: 0, sx: Math.max(0.5, r * 2 - 0.7), sy: 0.08, sz: Math.max(0.5, r * 2 - 0.7), color: '#f8fbfd', mat: 'snow', taper: 0.98 },
+      // icebergs, a small floe with a pine and a few buoys around the arena
+      { id: 'berg1', kind: 'cone', x: -13.5, y: -1.4, z: 8, sx: 4.4, sy: 5.2, sz: 4, color: '#f4f9fc', mat: 'snow' },
+      { id: 'berg2', kind: 'cone', x: 13.5, y: -1.2, z: 5.5, sx: 3.2, sy: 3.6, sz: 3, color: '#e6f4fb', mat: 'ice' },
+      { id: 'berg3', kind: 'cone', x: 10, y: -1.6, z: 12.5, sx: 5, sy: 6.2, sz: 4.6, color: '#f4f9fc', mat: 'snow' },
+      { id: 'isle', kind: 'cylinder', x: -11, y: -0.45, z: 12, sx: 4.6, sy: 0.7, sz: 3.8, color: '#f2f8fc', mat: 'snow', taper: 0.85 },
+      { id: 'islePine', kind: 'prop', prop: 'snowpine', x: -11.4, y: -0.1, z: 12.4, sx: 0.9 },
+      { id: 'isleFlag', kind: 'prop', prop: 'flag', x: -9.8, y: -0.1, z: 11.6, color: '#5f8fe0', sx: 0.6 },
+      { id: 'buoy1', kind: 'prop', prop: 'buoy', x: -11, y: WATER_Y - 0.45, z: 2.5 },
+      { id: 'buoy2', kind: 'prop', prop: 'buoy', x: 11.2, y: WATER_Y - 0.45, z: -1.5, ry: 1 },
+      { id: 'buoy3', kind: 'prop', prop: 'buoy', x: 4, y: WATER_Y - 0.45, z: 12.4, ry: 2 },
     ];
     const over = s.endAt !== null && s.t >= s.endAt - 1.2;
     s.ps.forEach((p, i) => {
       if (p.fallT !== null && p.fallT > 1.2) {
         // splash ring where the player went down
-        if (p.fallT < 2.2) entities.push({ id: `sp${i}`, kind: 'torus', x: p.x, y: -0.2, z: p.z, sx: 1 + p.fallT, sy: 1, sz: 1 + p.fallT, color: '#ffffff', alpha: clamp(2.2 - p.fallT, 0, 1) });
+        if (p.fallT < 2.2) entities.push({ id: `sp${i}`, kind: 'torus', x: p.x, y: WATER_Y + 0.05, z: p.z, sx: 1 + p.fallT, sy: 1, sz: 1 + p.fallT, color: '#ffffff', alpha: clamp(2.2 - p.fallT, 0, 1) });
         return;
       }
-      const y = p.fallT !== null ? -p.fallT * p.fallT * 5 : 0;
+      const y = p.fallT !== null ? -p.fallT * p.fallT * 5 : 0.03;
       entities.push({
         id: `p${i}`,
         kind: 'player',
@@ -314,13 +363,15 @@ export const schubsScholle: MinigameDef<ScholleState> = {
       });
       if (p.fallT === null && p.out === null) {
         // ready-to-push marker under the player
-        entities.push({ id: `rdy${i}`, kind: 'torus', x: p.x, y: 0.05, z: p.z, sx: 1.6, sy: 1, sz: 1.6, player: i, color: s.colors[i], alpha: p.cd <= 0 ? 0.9 : 0.25, glow: p.cd <= 0 });
+        entities.push({ id: `rdy${i}`, kind: 'torus', x: p.x, y: 0.09, z: p.z, sx: 1.6, sy: 1, sz: 1.6, player: i, color: s.colors[i], alpha: p.cd <= 0 ? 0.9 : 0.25, glow: p.cd <= 0 });
       }
     });
     return {
-      env: 'water',
+      env: 'ice',
+      scenery: { set: 'ice', clear: { r: R0 + 2 }, water: WATER_Y },
       camera: { alpha: -Math.PI / 2, beta: 0.8, radius: 12 + s.radius * 1.6, target: [0, 0, 0.5] },
       entities,
+      fx: viewFx(s),
       hud: {
         timer: s.practice ? undefined : Math.max(0, s.duration - s.t),
         scores: s.ps.map((p, i) => ({ player: i, value: p.out === null ? '🧊' : '💦' })),
