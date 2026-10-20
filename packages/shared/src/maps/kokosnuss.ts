@@ -150,9 +150,6 @@ export const KOKOSNUSS: MapDef = {
     { kind: 'torch', x: -8, z: 3 },
     { kind: 'driftwood', x: -38, z: 10, r: 0.6 },
     { kind: 'driftwood', x: 12, z: -30, r: 2.2 },
-    { kind: 'palm', x: -6, z: -28, s: 1.2 },
-    { kind: 'palm2', x: 27, z: -20, s: 1.1, r: 2 },
-    { kind: 'palm', x: 37, z: 3, s: 1.2 },
   ],
   musicKey: 'island',
 };

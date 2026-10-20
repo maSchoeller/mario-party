@@ -42,7 +42,7 @@ Nachbearbeitung (Stille kürzen, Lautheit angleichen, MP3-Bitrate) mit Blender 5
 | Asset | Erzeugung | Datei |
 |---|---|---|
 | Helden Rocco/Quaki/Pingo/Foxy/Bruno/Hoppla/Schildi/Zippy, Moderator (Low-Poly, 3,3–4,0 k Dreiecke, gebackene AO in Vertexfarben, starres Teile-Rig) | Blender 5.2, Python-Skript (`scripts/assets/blender/characters.py`) | `apps/web/public/media/models/<figur>.glb` |
-| Props + Wahrzeichen: Palme, Hütte, Stadthaus, Fels, Baum, toter Baum, Obsidian, Vulkan, Kokos-Kanone, Krabbe, Uhrturm, Brunnen, Lok, Marktstand | Blender 5.2, Python-Skript (`scripts/assets/blender/props.py`) | `apps/web/public/media/models/props.glb` |
+| Props + Wahrzeichen (69 Stück, v0.3 mit gebackener AO in Vertexfarben): gemeinsam (u. a. Item-Häuschen, Start-Tor, Schatzkiste, Duell- und Glücksschild, Laterne, Bank), Insel (Palmen, Büsche, Farn, Blumen, Gras, Muscheln, Klippe, Brücke, Steg, Boot, Leuchtturm, Ruine, Stelzenhütte), Vulkan (Lavafels, Kristall, Riesenpilz, Dampfschlot, Steinbrücke, Seilbahnstation, Gondel, Tempel, Knochen, Lore, Kaktus, Aschepflanze, Zelt), Stadt (Stadthäuser, Bahnhof, Waggon, Bäume, Hecke, Laterne, Blumenkasten, Kiosk, Marktstand, Laden, Steinbrücke, Fahrrad, Briefkasten) | Blender 5.2, Python-Skripte (`scripts/assets/blender/props*.py`, `propkit.py`) | `apps/web/public/media/models/props*.glb` |
 | Prozedurale Fallbacks: Figuren, Props, Musik, SFX (die Browser-Sprachsynthese ist seit v0.3 entfernt; ohne Datei gibt es nur den Untertitel) | Code (greifen nur, wenn eine Datei fehlt) | `apps/web/src/host/render/*.ts`, `apps/web/src/host/audio.ts` |
 | Emoji-Icons am Handy | System-Emoji-Schrift des Geräts | `apps/web/src/common/characters.ts` |
 | Landschaft, Wasser, Lava, Detail-Texturen, 3D-Würfel | Prozedural zur Laufzeit (Höhenfeld + Canvas-Texturen), keine Bilddateien | `apps/web/src/host/render/terrain.ts`, `dice3d.ts` |
@@ -55,5 +55,6 @@ Nachbearbeitung (Stille kürzen, Lautheit angleichen, MP3-Bitrate) mit Blender 5
   KI-/CC0-Meshes ersetzen, solange die Namenskonvention `<gruppe>__<material>` eingehalten wird.
 - **„Geriggt“ (ASSET-02):** Statt Skelett und Skinning haben die Figuren ein starres Teile-Rig
   (Körper/Kopf/Arme an Drehpunkten). Die geforderten Animationen (ART-02) laufen prozedural auf diesen Gelenken.
-- **ASSET-03 (Draco/meshopt):** Die Modelle sind zusammen ~0,9 MB groß. Ein Draco-Decoder (~300 KB WASM) bzw.
-  meshopt würde mehr Komplexität bringen, als er spart. Texturen gibt es keine, daher kein KTX2.
+- **ASSET-03 (Draco/meshopt):** Seit v0.3 sind die Modelle zusammen ~7,3 MB groß (mehr Details, Vertexfarben).
+  Für den Laptop im Heimnetz ist das unkritisch; vor einem öffentlichen Deployment lohnt sich meshopt-Kompression
+  (offener Punkt). Texturen sind prozedural (Laufzeit), daher kein KTX2.

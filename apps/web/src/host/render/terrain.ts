@@ -107,7 +107,7 @@ export class Terrain {
         const [bx, bz] = c.points[i + 1];
         if (x < Math.min(ax, bx) - reach || x > Math.max(ax, bx) + reach || z < Math.min(az, bz) - reach || z > Math.max(az, bz) + reach) continue;
         // meander the banks a little (one noise lookup per point)
-        meander ??= (noise2(x * 0.25, z * 0.25, 5) - 0.5) * 1.2;
+        meander ??= (noise2(x * 0.18, z * 0.18, 5) - 0.5) * 1.0;
         const dd = distToSegment(x, z, ax, az, bx, bz).d + meander;
         if (!best || dd - c.width / 2 < best.d - best.w / 2) best = { d: dd, w: c.width, kind: c.kind };
       }
@@ -179,7 +179,7 @@ export class Terrain {
         if (ch) {
           const half = ch.w / 2;
           const bed = (ch.kind === 'lava' ? d.water.high : (d.water.low ?? d.water.high)) - 0.7;
-          const k = smoothstep(half + 1.1, half - 0.5, ch.d);
+          const k = smoothstep(half + 2.1, half - 0.4, ch.d);
           if (k > 0) {
             y = y + (Math.min(y, bed) - y) * k;
             if (k > 0.5) cls = 'channel';

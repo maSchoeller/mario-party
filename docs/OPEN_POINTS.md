@@ -11,6 +11,7 @@ Stand 20.10.2026 (v0.3). Alles andere ist lokal lauffähig und getestet, siehe [
 | **Maps** | Alle 3 Maps neu mit 61–73 Feldern und 4–5 Abzweigungen. Die Landschaft wird aus den Map-Daten gebaut (Höhen, Fluss/Lava/Kanal, Brücken, Steg, Gebäude an den Feldern, Vegetation). | Kokosnuss: Bei Flut sind Furt **und** Sandbank gesperrt. |
 | **Stimme** | Neue deutsche Stimme „DiMario“. Sie spricht nur noch an Höhepunkten und die Würfelzahl, sonst gibt es nur Untertitel. Die Browser-Sprachausgabe ist entfernt. | Welche Momente vertont sind: `VOICE_LINES` in `packages/shared/src/i18n/voice.ts`. |
 | **Ton** | Master-Kompressor, Equal-Power-Crossfades, Mini-Fades gegen Klicks bei allen Effekten, weiches Ducking unter der Stimme, Pause blendet den Ton ab, Würfel-Klacken bei jedem Aufprall. | – |
+| **Ladezeit** | Die Modelle sind zusammen 7,3 MB groß (vorher 0,9 MB), der Brettaufbau dauert 0,6–0,9 s. | Vor öffentlichem Deployment: meshopt-Kompression der GLBs (spart grob 60 %). |
 
 
 ## 1. Erledigt in v0.2

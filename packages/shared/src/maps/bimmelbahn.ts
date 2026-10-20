@@ -157,7 +157,7 @@ export const BIMMELBAHN: MapDef = {
     { kind: 'fountain', x: 5, z: 5 },
     { kind: 'marketstall', x: 5, z: -5, r: 0.8, tint: '#e87d7d' },
     { kind: 'marketstall', x: -6, z: 5, r: -2.2, tint: '#6f9de6' },
-    { kind: 'kiosk', x: 10, z: -24, r: 3.1 },
+    { kind: 'kiosk', x: 35, z: -21, r: -1.6 },
     { kind: 'boat', x: 18, z: -27.5, r: 1.6 },
     { kind: 'boat', x: -34, z: -28, r: 1.5 },
     { kind: 'bench', x: -13, z: 4, r: 2.2 },

@@ -61,6 +61,7 @@ npm run simulate     # komplette Bot-Partien auf allen Maps (Balancing-Überblic
 npx tsx packages/shared/scripts/balance.ts 60   # Balancing-Kennzahlen (Aufholjagd, Bonus, Ökonomie)
 npx tsx packages/shared/scripts/dice-balance.ts 96   # Siegquote je Charakterwürfel, Felder pro Zug
 npx tsx packages/shared/scripts/map-svg.ts apps/web/public/dev-maps   # Feldgraphen als SVG (→ /dev-maps/<map>.svg)
+node scripts/screenshots.mjs    # Map-Screenshots nach docs/screenshots (braucht laufendes npm run dev + Chrome)
 npm run typecheck
 AZURITE=1 npx vitest run apps/server/test/tableStore.test.ts   # mit laufendem Azurite
 ```
