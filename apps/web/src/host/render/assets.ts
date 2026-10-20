@@ -1,4 +1,6 @@
-import { LoadAssetContainerAsync, Mesh, TransformNode, VertexData, type AssetContainer, type Material, type Matrix } from '@babylonjs/core';
+import { LoadAssetContainerAsync, Mesh, MeshoptCompression, TransformNode, VertexData, type AssetContainer, type Material, type Matrix } from '@babylonjs/core';
+// meshopt decoder shipped with the app (no CDN): the GLBs are meshopt-compressed (scripts/assets/compress.mjs)
+import meshoptDecoderUrl from 'meshoptimizer/meshopt_decoder.js?url';
 import type { Stage } from './stage';
 
 /**
@@ -40,6 +42,7 @@ export class AssetLibrary {
   constructor(private readonly stage: Stage) {}
 
   async load(onProgress?: (done: number, total: number) => void): Promise<void> {
+    MeshoptCompression.Configuration = { decoder: { url: meshoptDecoderUrl } };
     await import('@babylonjs/loaders/glTF/2.0');
     let done = 0;
     await Promise.all(
@@ -59,12 +62,27 @@ export class AssetLibrary {
     const out = new Map<string, Part[]>();
     for (const m of c.meshes) {
       if (!(m instanceof Mesh) || !m.getTotalVertices()) continue;
-      const [group, material] = m.name.split('__');
+      // meshopt-packed files keep the name on the parent node; the mesh hangs below it
+      // with an unnamed dequantization transform (baked below via the world matrix)
+      let named: { name: string; parent: unknown } | null = m;
+      while (named && !named.name.includes('__')) named = named.parent as typeof named;
+      if (!named) continue;
+      const [group, material] = named.name.split('__');
       if (!group || !material) continue;
       // bake the glTF root conversion (right- to left-handed) into the vertices
       m.computeWorldMatrix(true);
       const vd = VertexData.ExtractFromMesh(m, true, true);
       vd.transform(m.getWorldMatrix());
+      // the dequantization scale shrinks the normals: re-normalize them
+      if (vd.normals) {
+        const n = vd.normals;
+        for (let i = 0; i < n.length; i += 3) {
+          const l = Math.hypot(n[i], n[i + 1], n[i + 2]) || 1;
+          n[i] /= l;
+          n[i + 1] /= l;
+          n[i + 2] /= l;
+        }
+      }
       const mesh = new Mesh(`tpl_${m.name}`, this.stage.scene);
       vd.applyToMesh(mesh);
       // the glTF handedness flip mirrors the triangles – flip the winding back
