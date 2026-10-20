@@ -5,6 +5,7 @@
  */
 import type { BotLevel, CharacterId, PlayerColor, RoundCount } from '../config';
 import type { ItemId } from '../game/items';
+import type { DiceId } from '../game/dice';
 import type { Action, GameMode } from '../game/types';
 import type { ControllerLayout, MgFormat, MgInput } from '../minigames/types';
 
@@ -80,7 +81,8 @@ export interface MeInfo {
 /** Board decision as presented on the phone (host pre-computes everything). */
 export type PhoneDecision =
   | { kind: 'orderRoll' }
-  | { kind: 'turnMenu'; canUseItem: boolean; items: { id: ItemId; usable: boolean }[] }
+  /** dice: choices for the second die (the standard die always rolls too) */
+  | { kind: 'turnMenu'; canUseItem: boolean; items: { id: ItemId; usable: boolean }[]; dice: DiceId[] }
   | { kind: 'miniPick'; options: number[] }
   | { kind: 'branch'; options: { id: string; angle: number; labelKey?: string; starDistance?: number }[] }
   | { kind: 'shop'; offer: { id: ItemId; price: number; affordable: boolean }[]; full: boolean; titleKey: string }

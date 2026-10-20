@@ -2,6 +2,7 @@ import { BALANCE, type BotLevel } from '../config';
 import { PASS_FIELDS } from '../maps/types';
 import type { Rng } from '../rng';
 import type { GameEngine } from './engine';
+import { stepDistribution, type DiceId } from './dice';
 import { ITEMS, type ItemId } from './items';
 import type { Action, Pending } from './types';
 
@@ -41,6 +42,8 @@ const ITEM_VALUE: Record<ItemId, number> = {
   warpShell: 5,
   trapStone: 3,
   miniDice: 4,
+  riskDice: 4,
+  goldDice: 4,
 };
 
 function sloppy(level: BotLevel, rng: Rng): boolean {
@@ -59,7 +62,7 @@ export function botAction(e: GameEngine, p: Pending, rng: Rng): Action {
         const item = chooseItem(e, p.player, level, rng);
         if (item) return { type: 'useItem', item };
       }
-      return { type: 'roll' };
+      return { type: 'roll', dice: chooseDice(e, p.player, p.dice, level, rng) };
     }
     case 'miniPick':
       return { type: 'pickSteps', steps: bestMiniSteps(e, p.player).steps };
@@ -115,6 +118,25 @@ export function botAction(e: GameEngine, p: Pending, rng: Rng): Action {
   }
 }
 
+/**
+ * Second die: with the star in reach and enough coins, maximize the chance to pass it;
+ * otherwise the character die (same expectation, more fun). Easy bots pick at random.
+ */
+export function chooseDice(e: GameEngine, i: number, options: DiceId[], level: BotLevel, rng: Rng): DiceId {
+  if (options.length === 1 || level === 'easy') return rng.pick(options);
+  const me = e.player(i);
+  const toStar = distance(e, me.field, e.state.starField);
+  if (me.coins >= e.starPrice(i) && toStar <= 14) {
+    const chance = (id: DiceId) => {
+      let p = 0;
+      for (const [steps, q] of stepDistribution(['standard', id])) if (steps >= toStar) p += q;
+      return p;
+    };
+    return [...options].sort((a, b) => chance(b) - chance(a))[0];
+  }
+  return options[options.length - 1];
+}
+
 function worstItemIndex(items: ItemId[]): number {
   let w = 0;
   items.forEach((it, i) => {
@@ -135,6 +157,8 @@ function chooseItem(e: GameEngine, i: number, level: BotLevel, rng: Rng): ItemId
   const ahead = (pred: (o: number) => boolean) =>
     others.some((o) => pred(o) && distance(e, me.field, e.player(o).field) <= 9);
   if (has('starTicket') && ahead((o) => e.player(o).stars > 0)) return 'starTicket';
+  if (has('goldDice') && !canAfford && me.coins + 9 >= e.starPrice(i)) return 'goldDice';
+  if (has('riskDice') && canAfford && toStar >= 9 && toStar <= 14) return 'riskDice';
   if (has('miniDice') && bestMiniSteps(e, i).value >= (canAfford ? 15 : 4)) return 'miniDice';
   if (canAfford && toStar > 20 && has('tripleDice')) return 'tripleDice';
   if (canAfford && toStar > 10 && has('doubleDice')) return 'doubleDice';

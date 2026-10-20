@@ -1,4 +1,4 @@
-# Umsetzungsstand je Anforderung (Stand 20.10.2026, v0.2)
+# Umsetzungsstand je Anforderung (Stand 20.10.2026, v0.3)
 
 Legende: ✅ umgesetzt & lokal getestet · 🟡 umgesetzt mit Platzhalter/Einschränkung · ⛔ offen (externer Dienst/Gerät nötig, siehe [OPEN_POINTS.md](OPEN_POINTS.md))
 
@@ -30,8 +30,9 @@ Legende: ✅ umgesetzt & lokal getestet · 🟡 umgesetzt mit Platzhalter/Einsch
 | BOARD-02 | ✅ | Stern/Shop/Bahnhof/Seilbahn beim Vorbeilaufen (zählen keinen Schritt), Rest beim Stehenbleiben |
 | BOARD-03 | ✅ | Gezeiten, Ausbruch (+Lava, Münzregen, Brocken, Seilbahn), Zug nach Fahrplan + Tickets |
 | BOARD-04 | 🟡 | Vorspulen (Bandenchef hält Taste, ×3), AFK-Timeout (Computer entscheidet nach 35 s); Bot-Züge 3,5–18 s. Mit Menschen ungemessen |
-| BOARD-05 | ✅ | Jede Aktion vom Moderator angesagt (Untertitel immer), ElevenLabs-Stimme aus Bausteinen (`voice.test.ts`) |
-| ITEM-01/02 | ✅ | 8 Items, Einsatz am Handy vor dem Würfeln, max. 3, Ersetzen/Verwerfen |
+| BOARD-05 | ✅ | Jede Aktion als Untertitel; Stimme bewusst sparsam: ganze Sätze nur an Höhepunkten + Würfelzahl (`voice.ts`, `voice.test.ts`) |
+| DICE (v0.3) | ✅ | 2 echte 3D-Würfel pro Zug: Standard (1–6) + frei gewählter 2. Würfel (Standard, Charakterwürfel oder Würfel-Item). Alle Würfel Ø 3,5 Schritte (Münzen = 0,4 Schritte), unterschiedliche Streuung, negative Flächen = rückwärts laufen (`dice.ts`, `dice3d.ts`, `engine.test.ts`) |
+| ITEM-01/02 | ✅ | 10 Items (neu: Risiko-Würfel, Gold-Würfel), Einsatz am Handy vor dem Würfeln, max. 3, Ersetzen/Verwerfen |
 | CHAOS-01 | ✅ | Finale letzte 5 Runden: Zwischenstand, Blau/Rot ×2, Letzter dreht Rad (Münzen/Item/Stern-Rabatt) |
 | CHAOS-02/03 | ✅ | 3 aus 7 Bonus-Kategorien (eine immer aus dem Aufhol-Pool), einzeln enthüllt; Halbzeit-Aufholrad; Letzter nach Runde 10 gewinnt in 15–18 % der Bot-Partien ([BALANCING.md](BALANCING.md)) |
 | BOT-01..04 | ✅ | 3 Stärken, Übernahme bei Abbruch, Bot-KI für alle 21 Minispiele, Brett-Entscheidungen Richtung Stern |
@@ -40,7 +41,8 @@ Legende: ✅ umgesetzt & lokal getestet · 🟡 umgesetzt mit Platzhalter/Einsch
 
 | ID | Stand | Umsetzung / Nachweis |
 |---|---|---|
-| MAP-01 | ✅ | 40–60 Felder, 2–4 Abzweigungen, 1–2 Shops, ≥ 5 Sternplätze – automatisch validiert (`validateMap`) |
+| MAP-01 | ✅ | v0.3: 60–80 Felder, 4–6 Abzweigungen, 1–2 Shops, ≥ 5 Sternplätze – automatisch validiert (`validateMap`). Kokosnuss 73/5, Vulkan 65/4, Bimmelbahn 61/5 |
+| MAP-07 (v0.3) | ✅ | Landschaft aus Map-Daten: Höhenfeld mit Küsten, Hügeln, Fluss-/Lava-/Kanal-Rinnen; Wege eingeebnet; Brücken, Steg, Gebäude an Shop/Item/Glück/Duell/Start; instanzierte Vegetation (`terrain.ts`, `board.ts`) |
 | MAP-02 | ✅ | Gimmick angekündigt + animiert (Wasserstand, Ausbruch/Kamerawackeln, Zugfahrt), HUD-Widget |
 | MAP-03 | ✅ | Übersichtskamera, Verfolgung des aktiven Spielers, Zoom bei Ereignissen |
 | MAP-04 | ✅ | Suno-Loop je Map + Finale-Variante, Crossfade-Loop |
@@ -72,9 +74,9 @@ Legende: ✅ umgesetzt & lokal getestet · 🟡 umgesetzt mit Platzhalter/Einsch
 | CTRL-06 | 🟡 | Gyro-Freigabe beim Beitritt; auf echtem iOS ungetestet ⛔ |
 | CTRL-07 | ✅ | ~72 KB initial, keine 3D-Engine (`scripts/check-bundle.mjs` in CI) |
 | ART-01 | ✅ | Eigene Figuren/Namen, keine Fremd-IP |
-| ART-02 | ✅ | Blender-Figuren mit Teile-Rig; Idle/Laufen/Springen/Jubeln/Ärgern/Getroffen/Würfeln prozedural; Gebrabbel (ElevenLabs) |
+| ART-02 | ✅ | 8 Blender-Figuren (neu: Bruno, Hoppla, Schildi, Zippy) mit Teile-Rig, ≤ 4 k Dreiecke, gebackene AO in Vertexfarben; Animationen prozedural; Gebrabbel je Figur (ElevenLabs) |
 | ART-03 | ✅ | Unterschiedliche Silhouetten, Farbring + Form |
-| ART-04/05 | ✅ | Flat-Shading, Pastell, Schatten, Nebel; alle GLB-Materialien laufen über die zentrale Palette |
+| ART-04/05 | ✅ | Low-Poly mit weichen Farbverläufen, Detail-Textur (prozedural), animiertes Wasser/Lava, Himmelsverlauf, Vignette; alle GLB-Materialien über die zentrale Palette |
 | ART-06 | ✅ | Abgerundete halbtransparente Karten, Nunito, große Typo |
 | ART-07, A11Y-01 | ✅ | Form-Icons zusätzlich zur Farbe |
 | ASSET-01..04 | 🟡 | GLB aus Blender-Skripten (Figur ≤ 1,8 k Dreiecke, Budget im Build geprüft); statt CC0/Meshy eigene Modelle, keine Mesh-Kompression ([Abweichungen](ASSETS_LICENSES.md#bewusste-abweichungen-von-der-asset-pipeline-der-spec)) |

@@ -325,41 +325,58 @@ button.primary {
   font-size: 2.6vh;
   font-weight: 800;
 }
-.dice-box {
+.dice-result {
+  margin-bottom: 56vh;
+  padding: 1.6vh 4vh 1.8vh;
   display: flex;
-  gap: 2vh;
+  flex-direction: column;
   align-items: center;
-  margin-bottom: 20vh;
+  gap: 0.4vh;
+  animation: dice-pop 0.38s cubic-bezier(0.2, 1.6, 0.4, 1) both;
 }
-.die {
-  width: 14vh;
-  height: 14vh;
-  border-radius: 3vh;
-  background: #f4d58d;
-  box-shadow: 0 1vh 0 #d9b25e, var(--shadow);
+.dice-result.out {
+  transition: opacity 0.25s ease, transform 0.25s ease;
+  opacity: 0;
+  transform: translateY(-1.5vh) scale(0.94);
+}
+.dice-result .sum {
+  font-size: 3.2vh;
+  font-weight: 800;
+  color: var(--ink-soft, #6c6a7a);
   display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 9vh;
-  font-weight: 900;
+  gap: 1vh;
+}
+.dice-result .dv.neg {
   color: #e8676b;
 }
-.die.rolling {
-  animation: wobble 0.15s infinite alternate;
+.dice-result .total {
+  font-size: 11vh;
+  line-height: 1;
+  font-weight: 900;
+  color: #3d3a55;
 }
-@keyframes wobble {
+.dice-result.back .total {
+  color: #e8676b;
+}
+.dice-result .hint {
+  font-size: 2.4vh;
+  font-weight: 800;
+  color: #e8676b;
+}
+.dice-result .coins {
+  font-size: 3vh;
+  font-weight: 900;
+  color: #c9971d;
+}
+@keyframes dice-pop {
   from {
-    transform: rotate(-8deg) translateY(-1vh);
+    opacity: 0;
+    transform: scale(0.6);
   }
   to {
-    transform: rotate(8deg);
+    opacity: 1;
+    transform: scale(1);
   }
-}
-.dice-box .total {
-  font-size: 8vh;
-  font-weight: 900;
-  color: #fff;
-  text-shadow: 0 0.4vh 0 rgba(0, 0, 0, 0.2);
 }
 .wheel {
   position: relative;

@@ -27,6 +27,11 @@ export const SFX = {
   babble_quaki: { d: 1.2, p: 'cute cartoon frog character speaking short gibberish nonsense syllables, croaky proud voice, no real words' },
   babble_pingo: { d: 1.2, p: 'cute cartoon penguin character speaking short gibberish nonsense syllables, squeaky happy voice, no real words' },
   babble_foxy: { d: 1.2, p: 'cute cartoon fox character speaking short gibberish nonsense syllables, sly playful voice, no real words' },
+  clack: { d: 0.5, p: 'single chunky plastic board game die hitting a wooden table once, one short clack, dry, no reverb' },
+  babble_bruno: { d: 1.2, p: 'cute cartoon bear character speaking short gibberish nonsense syllables, deep cozy friendly rumble, no real words' },
+  babble_hoppla: { d: 1.2, p: 'cute cartoon bunny character speaking short fast gibberish nonsense syllables, hyper energetic high voice, no real words' },
+  babble_schildi: { d: 1.2, p: 'cute cartoon turtle character speaking short slow gibberish nonsense syllables, calm drawling voice, no real words' },
+  babble_zippy: { d: 1.2, p: 'cute cartoon squirrel character speaking short very fast squeaky gibberish nonsense syllables, excited chatter, no real words' },
   babble_moderator: { d: 1.2, p: 'cartoon parrot squawking short gibberish chatter, funny pirate parrot, no real words' },
 };
 

@@ -44,9 +44,9 @@ export function validateMap(map: MapDef): string[] {
   const errors: string[] = [];
   const idx = fieldIndex(map);
   const n = map.fields.length;
-  if (n < 40 || n > 60) errors.push(`field count ${n} not in 40..60`);
+  if (n < 60 || n > 80) errors.push(`field count ${n} not in 60..80`);
   const branches = map.fields.filter((f) => f.next.length > 1).length;
-  if (branches < 2 || branches > 4) errors.push(`branch count ${branches} not in 2..4`);
+  if (branches < 4 || branches > 6) errors.push(`branch count ${branches} not in 4..6`);
   const shops = map.fields.filter((f) => f.type === 'shop').length;
   if (shops < 1 || shops > 2) errors.push(`shop count ${shops} not in 1..2`);
   if (new Set(map.starSpots).size < 5) errors.push('fewer than 5 star spots');

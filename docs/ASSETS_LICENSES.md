@@ -9,7 +9,7 @@ Erzeugung und Nachbearbeitung sind skriptbasiert: siehe [scripts/assets/README.m
 
 | Dienst | Genutzter Tarif (20.10.2026) | Rechtslage laut Anbieter (zu prüfen!) | Konsequenz |
 |---|---|---|---|
-| **ElevenLabs** (Stimme, SFX, Gebrabbel) | **Free** (API-Key mit eingeschränkten Rechten; Bibliotheks- und Design-Stimmen per API gesperrt) | Free-Tarif: Ausgaben nur **nicht-kommerziell** und **mit Namensnennung** („ElevenLabs“). Kommerzielle Nutzung ab Starter-/Creator-Tarif. | Für den privaten Spieleabend ok (Namensnennung im Impressum). Vor öffentlicher Freigabe: Tarif upgraden und Clips neu erzeugen (Skripte sind idempotent) oder Lizenzlage bestätigen. |
+| **ElevenLabs** (Stimme, SFX, Gebrabbel) | v0.2: **Free**. Ab v0.3 (20.10.2026): **bezahlter Tarif** (Monatsabo). Moderator-Stimme und alle in v0.3 neu erzeugten Clips stammen aus dem bezahlten Tarif. | Free-Tarif: nur **nicht-kommerziell** und **mit Namensnennung**. Bezahlte Tarife erlauben laut Anbieter kommerzielle Nutzung. Bei Bibliotheksstimmen gelten zusätzlich die Bedingungen der Stimmen-Anbieter. | Die SFX aus v0.2 (Free) vor öffentlicher Freigabe einmal neu erzeugen (`node scripts/assets/sfx.mjs <key>`). Lizenzlage der Bibliotheksstimme „DiMario“ prüfen. |
 | **Suno** über **sunoapi.org** (Musik, Jingles) | Credits bei sunoapi.org (Drittanbieter, **keine offizielle Suno-API**) | Suno vergibt Eigentum/kommerzielle Rechte nur an Ausgaben aus bezahlten Suno-Abos. Welche Rechte über sunoapi.org entstehen, ist unklar (dortige AGB + Suno-AGB prüfen). | **Rechtlich größtes Risiko.** Vor öffentlicher Nutzung klären oder Musik mit eigenem Suno-Pro/Premier-Konto neu erzeugen. Die prozedurale Musik bleibt als Fallback eingebaut. |
 
 ## Ausgelieferte Fremd-Bestandteile
@@ -30,8 +30,9 @@ Erzeugung und Nachbearbeitung sind skriptbasiert: siehe [scripts/assets/README.m
 |---|---|---|---|---|
 | Musik: Lobby, Kokosnuss-Küste (+Finale), Vulkan-Gipfel (+Finale), Bimmelbahn-Stadt (+Finale), 3 Minispiel-Stimmungen, Siegerehrung (11 Tracks) | Suno V6 (instrumental, Custom Mode) via sunoapi.org | sunoapi.org-Credits (12 Credits/Generierung) | `apps/web/public/media/audio/music/*.mp3` | 2026-10-20 |
 | Jingles: Stern, Item, Ausbruch, Zug | Suno V6 via sunoapi.org, auf ≤ 4 s gekürzt | wie oben | `…/audio/sfx/jingle_*.mp3` | 2026-10-20 |
-| Moderator „Käpt’n Plapperschnabel“ (177 Sprachbausteine) | ElevenLabs TTS `eleven_v3`, Premade-Stimme „Callum“ | Free | `…/audio/voice/*.mp3` + `manifest.json` | 2026-10-20 |
+| Moderator „Käpt’n Plapperschnabel“ (57 ganze Sätze: Höhepunkte, Würfelzahlen −2…26, 8 Figurennamen) | ElevenLabs TTS `eleven_v3`, deutsche Bibliotheksstimme „DiMario – Energetic and Fun“ (`DQ4rTqXxHr077oQgsA9D`, per Casting ausgewählt) | bezahlt | `…/audio/voice/*.mp3` + `manifest.json` | 2026-10-20 |
 | SFX (14) + Gebrabbel je Figur (5) | ElevenLabs Sound Generation | Free | `…/audio/sfx/*.mp3` | 2026-10-20 |
+| Würfel-Klacken + Gebrabbel Bruno/Hoppla/Schildi/Zippy | ElevenLabs Sound Generation | bezahlt | `…/audio/sfx/clack.mp3`, `babble_*.mp3` | 2026-10-20 |
 
 Nachbearbeitung (Stille kürzen, Lautheit angleichen, MP3-Bitrate) mit Blender 5.2 (audaspace), siehe
 `scripts/assets/blender/audio.py`.
@@ -40,10 +41,11 @@ Nachbearbeitung (Stille kürzen, Lautheit angleichen, MP3-Bitrate) mit Blender 5
 
 | Asset | Erzeugung | Datei |
 |---|---|---|
-| Helden Rocco/Quaki/Pingo/Foxy, Moderator (Low-Poly, 1,4–1,7 k Dreiecke, starres Teile-Rig) | Blender 5.2, Python-Skript (`scripts/assets/blender/characters.py`) | `apps/web/public/media/models/<figur>.glb` |
+| Helden Rocco/Quaki/Pingo/Foxy/Bruno/Hoppla/Schildi/Zippy, Moderator (Low-Poly, 3,3–4,0 k Dreiecke, gebackene AO in Vertexfarben, starres Teile-Rig) | Blender 5.2, Python-Skript (`scripts/assets/blender/characters.py`) | `apps/web/public/media/models/<figur>.glb` |
 | Props + Wahrzeichen: Palme, Hütte, Stadthaus, Fels, Baum, toter Baum, Obsidian, Vulkan, Kokos-Kanone, Krabbe, Uhrturm, Brunnen, Lok, Marktstand | Blender 5.2, Python-Skript (`scripts/assets/blender/props.py`) | `apps/web/public/media/models/props.glb` |
-| Prozedurale Fallbacks: Figuren, Props, Musik, SFX, Moderator per Browser-Sprachsynthese | Code (greifen nur, wenn eine Datei fehlt) | `apps/web/src/host/render/*.ts`, `apps/web/src/host/audio.ts` |
+| Prozedurale Fallbacks: Figuren, Props, Musik, SFX (die Browser-Sprachsynthese ist seit v0.3 entfernt; ohne Datei gibt es nur den Untertitel) | Code (greifen nur, wenn eine Datei fehlt) | `apps/web/src/host/render/*.ts`, `apps/web/src/host/audio.ts` |
 | Emoji-Icons am Handy | System-Emoji-Schrift des Geräts | `apps/web/src/common/characters.ts` |
+| Landschaft, Wasser, Lava, Detail-Texturen, 3D-Würfel | Prozedural zur Laufzeit (Höhenfeld + Canvas-Texturen), keine Bilddateien | `apps/web/src/host/render/terrain.ts`, `dice3d.ts` |
 
 ## Bewusste Abweichungen von der Asset-Pipeline der Spec
 

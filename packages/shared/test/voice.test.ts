@@ -1,63 +1,41 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { CHARACTERS } from '../src/config';
-import { de, t } from '../src/i18n/index';
-import { allVoiceSegments, voiceSegments } from '../src/i18n/voice';
+import { de, hasKey } from '../src/i18n/index';
+import { allVoiceClips, numberClip, numberWord, VOICE_LINES, VOICE_NUMBERS, voiceClips, voiceHash } from '../src/i18n/voice';
 
 const MANIFEST = new URL('../../../apps/web/public/media/audio/voice/manifest.json', import.meta.url);
-const names = CHARACTERS.map((c) => de[`char.${c}`]);
-const charOf = (n: string) => (n === 'Marvin' ? 'Foxy' : n === 'Lea' ? 'Pingo' : null);
+const charOf = (n: string) => (n === 'Marvin' ? ('foxy' as const) : null);
 
-/** Typical params per placeholder (as emitted by engine/session). */
-const SAMPLE: Record<string, string | number> = {
-  player: 'Marvin',
-  leader: 'Lea',
-  players: `Marvin ${t('voice.and')} Lea`,
-  round: 7,
-  total: 12,
-  coins: 5,
-  price: 20,
-  stars: 3,
-  count: 10,
-  item: 'item.shield.name',
-  map: 'map.vulkan.name',
-  format: 'format.2v2',
-  game: 'mg.gipfelsturm.name',
-  category: 'bonus.coinMagnet.name',
-  station: 'station.north',
-};
-
-describe('moderator voice segments (AUDIO-03)', () => {
-  it('splits a line into literal parts and placeholder values, speaking character names', () => {
-    expect(voiceSegments('mod.dice', { player: 'Marvin', total: 12 }, charOf)).toEqual(['Foxy', 'würfelt eine', '12']);
-    expect(voiceSegments('mod.bonusStar', { category: 'bonus.coinMagnet.name', players: SAMPLE.players }, charOf)).toEqual([
-      'Bonus-Stern',
-      'Münzen-Magnet',
-      'geht an',
-      'Foxy',
-      'und',
-      'Pingo',
-    ]);
-    expect(voiceSegments('mod.bonusStar', { category: 'bonus.coinMagnet.name', players: 'bonus.nobody' }, charOf)?.at(-1)).toBe('Niemand – leer ausgegangen!');
+describe('moderator voice (AUDIO-03, sparse whole lines)', () => {
+  it('speaks numbers as German words', () => {
+    expect(numberWord(7)).toBe('Sieben');
+    expect(numberWord(21)).toBe('Einundzwanzig');
+    expect(numberWord(26)).toBe('Sechsundzwanzig');
+    expect(numberWord(-2)).toBe('Minus zwei');
+    expect(numberClip(12)).toBe('num.12');
+    expect(numberClip(99)).toBeNull();
   });
 
-  it('falls back (null) for unknown players or numbers outside the recorded range', () => {
-    expect(voiceSegments('mod.turn', { player: 'Unbekannt' }, charOf)).toBeNull();
-    expect(voiceSegments('mod.steal', { coins: 999 }, charOf)).toBeNull();
+  it('maps lines to whole clips and never stitches nicknames', () => {
+    expect(voiceClips('mod.intro', { map: 'map.vulkan.name' }, charOf)).toEqual(['intro.vulkan']);
+    expect(voiceClips('mod.winner', { player: 'Marvin' }, charOf)).toEqual(['mod.winner', 'char.foxy']);
+    expect(voiceClips('mod.turn', { player: 'Marvin' }, charOf)).toEqual([]);
+    expect(voiceClips('mod.blue', { player: 'Marvin' }, charOf)).toEqual([]);
   });
 
-  it('every requested segment is part of the generator set', () => {
-    const all = new Set(allVoiceSegments(de, names));
-    for (const key of Object.keys(de).filter((k) => k.startsWith('mod.'))) {
-      const segs = voiceSegments(key, SAMPLE, charOf);
-      expect(segs, key).not.toBeNull();
-      for (const s of segs!) expect(all.has(s), `${key}: "${s}"`).toBe(true);
-    }
+  it('every voiced line belongs to a real moderator text', () => {
+    for (const k of Object.keys(VOICE_LINES)) if (k.startsWith('mod.')) expect(hasKey(k), k).toBe(true);
   });
 
-  it.runIf(existsSync(MANIFEST))('every generator segment is recorded', () => {
+  it('dice totals stay within the recorded range', () => {
+    expect(VOICE_NUMBERS.min).toBeLessThanOrEqual(-1);
+    expect(VOICE_NUMBERS.max).toBeGreaterThanOrEqual(6 + 8 + 6 + 6);
+  });
+
+  it.runIf(existsSync(MANIFEST))('every clip is recorded', () => {
     const manifest = JSON.parse(readFileSync(MANIFEST, 'utf8')) as Record<string, string>;
-    const missing = allVoiceSegments(de, names).filter((s) => !manifest[s]);
+    const clips = allVoiceClips((c) => de[`char.${c}`]);
+    const missing = Object.entries(clips).filter(([id, text]) => manifest[id] !== voiceHash(text)).map(([id]) => id);
     expect(missing).toEqual([]);
   });
 });

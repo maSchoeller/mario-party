@@ -53,7 +53,8 @@ const tides: Gimmick = {
     e.emit({ type: 'tide', tide: e.state.gimmick.tide! });
   },
   isBlocked(e, id) {
-    return e.state.gimmick.tide === 'high' && hasTag(e.field(id), 'sandbank');
+    // high tide floods the sandbank and fills the river over the ford stones
+    return e.state.gimmick.tide === 'high' && (hasTag(e.field(id), 'sandbank') || hasTag(e.field(id), 'ford'));
   },
   onEventField(e, player) {
     coconutCannon(e, player);

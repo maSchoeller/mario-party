@@ -2,6 +2,12 @@
 
 3D-Party-Brettspiel im Browser: Ein Laptop am TV zeigt das Spielbrett, die Spieler steuern mit dem Handy.
 
+**v0.3:**
+- 8 Figuren, jede mit eigenem Charakterwürfel
+- 2 echte 3D-Würfel pro Zug: Standard plus frei gewählter Zweitwürfel
+- 3 größere Maps (61–73 Felder) mit Landschaft, Fluss, Lava und Kanal
+- eine sparsame deutsche Moderator-Stimme
+
 - 📄 Anforderungs-Spec: [docs/spec/SPEC.md](docs/spec/SPEC.md)
 - ✅ Umsetzungsstand je Anforderung: [docs/STATUS.md](docs/STATUS.md)
 - ⛔ Offene Punkte: [docs/OPEN_POINTS.md](docs/OPEN_POINTS.md)
@@ -53,6 +59,8 @@ npm test             # Unit-/Integrationstests (Engine, Maps, 21 Minispiele, Bot
 npm run test:e2e     # Playwright: Lobby, P2P, Relay-Fallback, Reconnect, Host-Reload, Pause, Demo
 npm run simulate     # komplette Bot-Partien auf allen Maps (Balancing-Überblick)
 npx tsx packages/shared/scripts/balance.ts 60   # Balancing-Kennzahlen (Aufholjagd, Bonus, Ökonomie)
+npx tsx packages/shared/scripts/dice-balance.ts 96   # Siegquote je Charakterwürfel, Felder pro Zug
+npx tsx packages/shared/scripts/map-svg.ts apps/web/public/dev-maps   # Feldgraphen als SVG (→ /dev-maps/<map>.svg)
 npm run typecheck
 AZURITE=1 npx vitest run apps/server/test/tableStore.test.ts   # mit laufendem Azurite
 ```

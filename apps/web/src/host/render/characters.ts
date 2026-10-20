@@ -23,6 +23,10 @@ const LOOKS: Record<CharacterId | 'moderator', Look> = {
   quaki: { body: '#7cc56f', belly: '#d8efc5', dark: '#2f4a2b', accent: '#f2c94c' },
   pingo: { body: '#2f3552', belly: '#f1f0f4', dark: '#1b1e2e', accent: '#e8676b' },
   foxy: { body: '#f0a050', belly: '#fbf1e4', dark: '#3a2a22', accent: '#f6c08a' },
+  bruno: { body: '#9a6440', belly: '#e8c79a', dark: '#3a2a22', accent: '#d9483b' },
+  hoppla: { body: '#dcc39b', belly: '#fbf6ee', dark: '#4a3a32', accent: '#2fb3c6' },
+  schildi: { body: '#a9c96a', belly: '#efe0b0', dark: '#6b4426', accent: '#c9923f' },
+  zippy: { body: '#c8643b', belly: '#fbe8cf', dark: '#3a2a22', accent: '#8a5a2b' },
   moderator: { body: '#5cc08a', belly: '#f2c94c', dark: '#2b2b3a', accent: '#e8676b' },
 };
 

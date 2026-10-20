@@ -5,10 +5,12 @@ import { MINIGAMES, pickMinigame } from '../minigames/registry';
 import type { MgFormat } from '../minigames/types';
 import { Rng } from '../rng';
 import { BONUS_CATEGORIES, COMEBACK_CATEGORIES, computeBonus } from './bonus';
+import { DICE, type DiceId } from './dice';
 import { GIMMICKS, type Gimmick } from './gimmicks';
 import { ITEMS, ITEM_IDS, type ItemId } from './items';
 import type {
   Action,
+  DiceRoll,
   GameConfig,
   GameEvent,
   GameState,
@@ -270,9 +272,10 @@ export class GameEngine {
     switch (p.kind) {
       case 'orderRoll': {
         if (a.type !== 'roll') throw new ActionError('expected roll');
-        const value = this.rng.int(1, BALANCE.diceMax);
+        const roll = this.rollDie('standard');
+        const value = roll.steps;
         this.state.orderRolls[p.player] = value;
-        this.emit({ type: 'orderRoll', player: p.player, value });
+        this.emit({ type: 'orderRoll', player: p.player, value, roll });
         if (p.player < this.n - 1) {
           this.state.pending = { kind: 'orderRoll', player: p.player + 1 };
         } else {
@@ -299,18 +302,20 @@ export class GameEngine {
           this.state.pending = { kind: 'miniPick', player: p.player, options: [1, 2, 3] };
           return;
         }
-        this.roll(p.player);
+        const second = a.dice ?? p.dice[p.dice.length - 1];
+        if (!p.dice.includes(second)) throw new ActionError('die not available');
+        this.roll(p.player, second);
         return;
       }
       case 'miniPick': {
         if (a.type !== 'pickSteps' || !p.options.includes(a.steps)) throw new ActionError('expected pickSteps 1..3');
-        this.roll(p.player, a.steps);
+        this.roll(p.player, 'standard', a.steps);
         return;
       }
       case 'branch': {
         if (a.type !== 'branch' || !p.options.includes(a.to)) throw new ActionError('invalid branch');
         this.state.pending = null;
-        this.step(p.player, a.to);
+        this.step(p.player, a.to, p.backward);
         this.continueMove();
         return;
       }
@@ -409,7 +414,7 @@ export class GameEngine {
       const t = this.state.turn;
       if (!t) return this.beginTurn();
       if (!t.rolled) {
-        this.state.pending = { kind: 'turnMenu', player: t.player, canUseItem: false };
+        this.state.pending = { kind: 'turnMenu', player: t.player, canUseItem: false, dice: this.diceOptions(t.player) };
         return;
       }
       if (!t.landed) return this.continueMove();
@@ -435,7 +440,20 @@ export class GameEngine {
       stepsTaken: 0,
     };
     this.emit({ type: 'turnStart', player: i });
-    this.state.pending = { kind: 'turnMenu', player: i, canUseItem: this.player(i).items.some((it) => ITEMS[it].usable) };
+    this.state.pending = { kind: 'turnMenu', player: i, canUseItem: this.player(i).items.some((it) => ITEMS[it].usable), dice: this.diceOptions(i) };
+  }
+
+  /** Choices for the second die: a dice item in use replaces them, else standard or the character die. */
+  diceOptions(i: number): DiceId[] {
+    const used = this.state.turn?.usedItem;
+    if (used === 'riskDice' || used === 'goldDice') return [used];
+    return ['standard', this.player(i).character];
+  }
+
+  private rollDie(id: DiceId): DiceRoll {
+    const face = this.rng.int(0, 5);
+    const f = DICE[id].faces[face];
+    return { dice: id, face, steps: f.steps, coins: f.coins ?? 0 };
   }
 
   private useItem(i: number, item: ItemId): void {
@@ -474,31 +492,29 @@ export class GameEngine {
       default:
         break; // dice items modify the roll
     }
-    this.state.pending = { kind: 'turnMenu', player: i, canUseItem: false };
+    this.state.pending = { kind: 'turnMenu', player: i, canUseItem: false, dice: this.diceOptions(i) };
   }
 
-  private roll(i: number, fixed?: number): void {
+  private roll(i: number, second: DiceId, fixed?: number): void {
     const t = this.state.turn!;
-    let values: number[];
-    switch (t.usedItem) {
-      case 'doubleDice':
-        values = [this.rng.int(1, BALANCE.diceMax), this.rng.int(1, BALANCE.diceMax)];
-        break;
-      case 'tripleDice':
-        values = [this.rng.int(1, BALANCE.diceMax), this.rng.int(1, BALANCE.diceMax), this.rng.int(1, BALANCE.diceMax)];
-        break;
-      case 'miniDice':
-        values = [fixed ?? this.rng.int(1, 3)];
-        break;
-      default:
-        values = [this.rng.int(1, BALANCE.diceMax)];
+    let rolls: DiceRoll[];
+    if (t.usedItem === 'miniDice') {
+      const steps = fixed ?? this.rng.int(1, 3);
+      rolls = [{ dice: 'standard', face: steps - 1, steps, coins: 0 }];
+    } else {
+      rolls = [this.rollDie('standard'), this.rollDie(second)];
+      // dice items add standard dice on top (Doppelwürfel +1, Turbo-Würfel +2)
+      const extra = t.usedItem === 'doubleDice' ? 1 : t.usedItem === 'tripleDice' ? 2 : 0;
+      for (let k = 0; k < extra; k++) rolls.push(this.rollDie('standard'));
     }
-    const total = values.reduce((a, b) => a + b, 0);
-    t.dice = values;
+    const total = rolls.reduce((a, r) => a + r.steps, 0);
+    const coins = rolls.reduce((a, r) => a + r.coins, 0);
+    t.dice = rolls;
     t.remaining = total;
     t.rolled = true;
     this.state.pending = null;
-    this.emit({ type: 'dice', player: i, values, total });
+    this.emit({ type: 'dice', player: i, rolls, total });
+    if (coins) this.changeCoins(i, coins, 'dice');
     this.continueMove();
   }
 
@@ -509,24 +525,36 @@ export class GameEngine {
     while (!this.state.pending) {
       const pl = this.player(i);
       // pass triggers on the field we currently stand on (star / shop / station / cablecar)
-      if (t.passResolved !== pl.field && t.stepsTaken > 0) {
+      if (t.passResolved !== pl.field && t.stepsTaken > 0 && t.remaining >= 0) {
         t.passResolved = pl.field;
         if (this.passTrigger(i, pl.field)) return;
       }
-      if (t.remaining <= 0) {
+      if (t.remaining === 0) {
         this.land(i);
         return;
       }
-      const options = this.openNext(pl.field);
+      const backward = t.remaining < 0;
+      const options = backward ? this.openPrev(pl.field) : this.openNext(pl.field);
+      if (!options.length) {
+        t.remaining = 0;
+        continue;
+      }
       if (options.length > 1) {
-        this.state.pending = { kind: 'branch', player: i, options };
+        this.state.pending = { kind: 'branch', player: i, options, backward: backward || undefined };
         return;
       }
-      this.step(i, options[0]);
+      this.step(i, options[0], backward);
     }
   }
 
-  private step(i: number, to: string): void {
+  /** Predecessors that can be walked to backwards (negative dice totals). */
+  openPrev(fieldId: string): string[] {
+    const all = predecessors(this.map, fieldId);
+    const open = all.filter((n) => this.isOpen(n));
+    return open.length ? open : all;
+  }
+
+  private step(i: number, to: string, backward = false): void {
     const t = this.state.turn!;
     const pl = this.player(i);
     const from = pl.field;
@@ -535,10 +563,12 @@ export class GameEngine {
     const f = this.field(to);
     const counts = !PASS_FIELDS.includes(f.type) && this.state.starField !== to;
     if (counts) {
-      t.remaining--;
+      t.remaining += backward ? 1 : -1;
       pl.stats.fieldsWalked++;
     }
-    this.emit({ type: 'move', player: i, from, to, kind: 'walk' });
+    // walking backwards does not trigger star/shop/station on the way
+    if (backward) t.passResolved = to;
+    this.emit({ type: 'move', player: i, from, to, kind: backward ? 'back' : 'walk' });
     this.passOthers(i, to);
     this.collectBag(i, to);
   }
@@ -615,7 +645,7 @@ export class GameEngine {
   }
 
   private shopOffer(): ItemId[] {
-    const base: ItemId[] = ['doubleDice', 'tripleDice', 'miniDice', 'warpShell', 'stealGlove', 'trapStone', 'shield'];
+    const base: ItemId[] = ['doubleDice', 'tripleDice', 'miniDice', 'riskDice', 'goldDice', 'warpShell', 'stealGlove', 'trapStone', 'shield'];
     const offer = this.rng.shuffle([...base]).slice(0, 4);
     if (this.rng.chance(0.3)) offer.push('starTicket');
     return offer;

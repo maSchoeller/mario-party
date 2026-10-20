@@ -3,6 +3,7 @@ import type { ItemId } from '@wb/shared/game/items';
 import { t } from '@wb/shared/i18n/index';
 import type { ControllerLayout } from '@wb/shared/minigames/types';
 import { EMOJIS, type ControllerView, type LobbySettings, type PhoneDecision, type ViewEnvelope } from '@wb/shared/net/protocol';
+import { DICE, type DiceId } from '@wb/shared/game/dice';
 import { CHAR_EMOJI, ITEM_EMOJI, WHEEL_EMOJI } from '../common/characters';
 import { h } from '../common/dom';
 import type { PlayApp } from './main';
@@ -105,6 +106,8 @@ function lobby(app: PlayApp, env: ViewEnvelope, v: Extract<ControllerView, { scr
         h('span', { class: 'emoji' }, CHAR_EMOJI[c]),
         h('strong', {}, t(`char.${c}`)),
         h('small', {}, taken ? t('play.taken') : t(`char.${c}.animal`)),
+        diceStrip(c),
+        h('small', { class: 'dice-desc' }, t(`dice.${c}.desc`)),
       );
     }),
   );
@@ -283,7 +286,8 @@ function decide(app: PlayApp, env: ViewEnvelope, d: PhoneDecision): HTMLElement 
         'div',
         { class: 'decide' },
         h('h2', {}, t('play.yourTurn')),
-        h('button', { class: 'ctrl-big roll', onclick: () => act({ t: 'action', action: { type: 'roll' } }) }, '🎲 ', t('play.roll')),
+        dicePicker(d.dice),
+        h('button', { class: 'ctrl-big roll', onclick: () => act({ t: 'action', action: { type: 'roll', dice: pickedDie(d.dice) } }) }, '🎲 ', t('play.roll')),
         d.canUseItem && d.items.some((i) => i.usable)
           ? h(
               'section',
@@ -420,6 +424,59 @@ function decide(app: PlayApp, env: ViewEnvelope, d: PhoneDecision): HTMLElement 
         h('button', { class: 'ctrl-big roll', onclick: () => act({ t: 'action', action: { type: 'stopWheel' } }) }, t('play.wheelStop')),
       );
   }
+}
+
+// ------------------------------------------------------------------ dice
+
+/** The six faces of a die as a small strip (lobby + turn menu). */
+function diceStrip(id: DiceId): HTMLElement {
+  const def = DICE[id];
+  return h(
+    'div',
+    { class: 'dice-strip', style: `--dc:${def.color};--di:${def.ink}` },
+    def.faces.map((f) => h('span', { class: `face${f.steps < 0 ? ' neg' : ''}` }, String(f.steps), f.coins ? h('i', {}, `+${f.coins}●`) : null)),
+  );
+}
+
+let diceChoice: { options: string; id: DiceId } | null = null;
+
+/** Remembered choice for the current set of options (re-renders keep the selection). */
+function pickedDie(options: DiceId[]): DiceId {
+  const key = options.join(',');
+  if (!diceChoice || diceChoice.options !== key || !options.includes(diceChoice.id)) diceChoice = { options: key, id: options[options.length - 1] };
+  return diceChoice.id;
+}
+
+function dicePicker(options: DiceId[]): HTMLElement {
+  const current = pickedDie(options);
+  const cards = options.map((id) =>
+    h(
+      'button',
+      {
+        class: `dice-card${id === current ? ' selected' : ''}`,
+        'aria-pressed': String(id === current),
+        onclick: (ev: Event) => {
+          vibrate(8);
+          diceChoice = { options: options.join(','), id };
+          const wrap = (ev.currentTarget as HTMLElement).parentElement!;
+          wrap.querySelectorAll('.dice-card').forEach((el, k) => {
+            el.classList.toggle('selected', options[k] === id);
+            el.setAttribute('aria-pressed', String(options[k] === id));
+          });
+        },
+      },
+      h('strong', {}, t(`dice.${id}.name`)),
+      diceStrip(id),
+      h('small', {}, t(`dice.${id}.desc`)),
+    ),
+  );
+  return h(
+    'section',
+    { class: 'card pad dice-pick' },
+    h('h3', {}, t('play.secondDie')),
+    h('div', { class: `dice-cards n${options.length}` }, cards),
+    h('small', { class: 'muted' }, t('play.secondDieHint')),
+  );
 }
 
 function yesNo(question: string, icon: string, on: (yes: boolean) => void): HTMLElement {
