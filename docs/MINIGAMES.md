@@ -34,6 +34,10 @@ Regeln:
   In Team-Formaten erhalten alle Mitglieder **denselben Rang** (Hilfsfunktionen `teamRanks`,
   `teamRanksFromScores` in `util.ts`).
 - Spieleranzahl: FFA/2v2/1v3 = 4 Spieler, Duell = 2.
+- **Faire Bots in Timing-/Reaktionsspielen:** Menschen sehen das Signal erst mit TV- und
+  Touch-Latenz (~100 ms). Bots addieren dafür `BOT_DISPLAY_LAG` aus `games/botLag.ts` auf ihre Reaktion.
+- **Tagesform:** Der Host lässt Bots je Minispiel mit leicht variierender Stärke spielen
+  (`minigameBotLevel`), damit nicht immer derselbe Bot gewinnt.
 - **Eingabe-Zeitstempel** (`press.t`) sind bereits in Minispiel-Sekunden umgerechnet und am Handy
   gemessen (NET-05). Für Timing-Spiele immer `input.t` statt Ankunftszeit nutzen und ggf. eine kurze
   Kulanzzeit auf späte Nachrichten warten (siehe Schnellzieher).

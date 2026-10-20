@@ -7,6 +7,7 @@
 - ⛔ Offene Punkte (fehlende Dienste/Assets): [docs/OPEN_POINTS.md](docs/OPEN_POINTS.md)
 - 🧩 Minispiele bauen: [docs/MINIGAMES.md](docs/MINIGAMES.md)
 - 📜 Lizenz-Register (ASSET-05): [docs/ASSETS_LICENSES.md](docs/ASSETS_LICENSES.md)
+- ⚖️ Balancing & unabhängiger Review: [docs/BALANCING.md](docs/BALANCING.md)
 
 ## Schnellstart (lokal, ohne Azure)
 
@@ -50,6 +51,7 @@ Mit `AZURE_STORAGE_CONNECTION_STRING` nutzt der Server Azure Table Storage (loka
 npm test             # Unit-/Integrationstests (Engine, Maps, 21 Minispiele, Bots, Server)
 npm run test:e2e     # Playwright: Lobby, P2P, Relay-Fallback, Reconnect, Host-Reload, Pause, Demo
 npm run simulate     # komplette Bot-Partien auf allen Maps (Balancing-Überblick)
+npx tsx packages/shared/scripts/balance.ts 60   # Balancing-Kennzahlen (Aufholjagd, Bonus, Ökonomie)
 npm run typecheck
 AZURITE=1 npx vitest run apps/server/test/tableStore.test.ts   # mit laufendem Azurite
 ```

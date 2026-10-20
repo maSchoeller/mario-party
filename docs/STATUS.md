@@ -29,11 +29,11 @@ Legende: ✅ umgesetzt & lokal getestet · 🟡 umgesetzt mit Platzhalter/Einsch
 | BOARD-01 | ✅ | Abzweigung am Handy (Pfeile mit Richtung), TV zeigt 3D-Pfeile |
 | BOARD-02 | ✅ | Stern/Shop/Bahnhof/Seilbahn beim Vorbeilaufen (zählen keinen Schritt), Rest beim Stehenbleiben |
 | BOARD-03 | ✅ | Gezeiten, Ausbruch (+Lava, Münzregen, Brocken, Seilbahn), Zug nach Fahrplan + Tickets |
-| BOARD-04 | 🟡 | Vorspulen (Bandenchef hält Taste, ×3). Zugdauer per Bot-Simulation nicht gemessen am echten Gerät |
+| BOARD-04 | 🟡 | Vorspulen (Bandenchef hält Taste, ×3), AFK-Timeout (Computer entscheidet nach 35 s); Bot-Züge 3,5–18 s. Mit Menschen ungemessen |
 | BOARD-05 | 🟡 | Jede Aktion vom Moderator angesagt (Text immer); Stimme = Browser-TTS-Platzhalter |
 | ITEM-01/02 | ✅ | 8 Items, Einsatz am Handy vor dem Würfeln, max. 3, Ersetzen/Verwerfen |
 | CHAOS-01 | ✅ | Finale letzte 5 Runden: Zwischenstand, Blau/Rot ×2, Letzter dreht Rad (Münzen/Item/Stern-Rabatt) |
-| CHAOS-02/03 | ✅ | 3 aus 6 Bonus-Kategorien, einzeln dramatisch enthüllt |
+| CHAOS-02/03 | ✅ | 3 aus 7 Bonus-Kategorien (eine immer aus dem Aufhol-Pool), einzeln enthüllt; Halbzeit-Aufholrad; Letzter nach Runde 10 gewinnt in 15–18 % der Bot-Partien ([BALANCING.md](BALANCING.md)) |
 | BOT-01..04 | ✅ | 3 Stärken, Übernahme bei Abbruch, Bot-KI für alle 21 Minispiele, Brett-Entscheidungen Richtung Stern |
 
 ## Maps

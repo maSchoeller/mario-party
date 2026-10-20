@@ -35,4 +35,5 @@ Alles andere ist lokal lauffähig und getestet (siehe [STATUS.md](STATUS.md)).
 - **3 Spieler ohne Bots**: Runden-Minispiele sind dann immer „Jeder gegen Jeden“ (Team-Formate brauchen 4).
 - **Bahnticket** ist eine map-spezifische Ressource (nicht eines der 8 Items): Geschenk auf Ereignisfeldern oder am Bahnhof kaufen.
 - **Kein Speichern mitten im Minispiel**: Nach einem Host-Reload startet ein laufendes Minispiel neu (Autosave nach jeder Runde und lokal nach jeder Aktion).
-- **Balancing-Werte** sind die Startwerte der Spec und per Bot-Simulation grob geprüft; echter Playtest steht aus.
+- **Balancing-Werte** wurden nach dem unabhängigen Review per Bot-Simulation nachjustiert (siehe [BALANCING.md](BALANCING.md), z. B. Minispiel-Belohnung 8/5/3/1 statt 10/5/2/0); echter Playtest mit Menschen steht aus.
+- **Mini-Würfel** lässt 1–3 Schritte frei wählen (statt zufällig 1–3), sonst wäre das Item wirkungslos.

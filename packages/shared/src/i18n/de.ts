@@ -379,7 +379,6 @@ export const de: Record<string, string> = {
   'mg.gipfelSprint.desc': 'Renn den Vulkan hoch – wer zuerst oben ist, gewinnt!',
   'mg.gipfelSprint.controls': 'So schnell wie möglich tippen',
   'mg.schnellzieher.name': 'Schnellzieher',
-  'mg.schnellzieher.desc': 'Warte auf „JETZT!“ und tippe als Erster. Frühstart verliert die Runde! Zwei Siege gewinnen.',
   'mg.schnellzieher.controls': 'Button: drücken bei „JETZT!“',
   'mg.schnellzieher.ready': 'Fertig machen …',
   'mg.schnellzieher.now': 'JETZT!',
