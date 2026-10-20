@@ -58,3 +58,34 @@ export function distToSegment(px: number, pz: number, ax: number, az: number, bx
   const t = l2 > 0 ? Math.max(0, Math.min(1, ((px - ax) * dx + (pz - az) * dz) / l2)) : 0;
   return { d: Math.hypot(px - (ax + dx * t), pz - (az + dz * t)), t };
 }
+
+/** Value noise that repeats every `period` units (seamless tiling textures). */
+export function pnoise2(x: number, z: number, period: number, seed = 1): number {
+  const xi = Math.floor(x);
+  const zi = Math.floor(z);
+  const xf = x - xi;
+  const zf = z - zi;
+  const u = xf * xf * (3 - 2 * xf);
+  const v = zf * zf * (3 - 2 * zf);
+  const w = (k: number) => ((k % period) + period) % period;
+  const a = hash(w(xi), w(zi), seed);
+  const b = hash(w(xi + 1), w(zi), seed);
+  const c = hash(w(xi), w(zi + 1), seed);
+  const d = hash(w(xi + 1), w(zi + 1), seed);
+  return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v;
+}
+
+/** Seamless fBm over a texture: (s, t) in [0,1), base lattice `period` cells across. */
+export function tileFbm(s: number, t: number, period: number, octaves = 4, seed = 1): number {
+  let sum = 0;
+  let amp = 0.5;
+  let norm = 0;
+  let p = period;
+  for (let o = 0; o < octaves; o++) {
+    sum += pnoise2(s * p, t * p, p, seed + o * 17) * amp;
+    norm += amp;
+    amp *= 0.5;
+    p *= 2;
+  }
+  return sum / norm;
+}

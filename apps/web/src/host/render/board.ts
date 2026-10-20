@@ -606,27 +606,33 @@ export class BoardView {
     const from = this.map.fields.find((f) => f.type === 'cablecar');
     const target = this.map.gimmickParams?.cableCarTarget;
     if (!from || !target) return;
-    const a = this.fieldPos(from.id).add(new Vector3(0, 4.5, 0));
-    const b = this.fieldPos(target).add(new Vector3(0, 4.5, 0));
-    const line = MeshBuilder.CreateTube(`cable${i}`, { path: [a, Vector3.Lerp(a, b, 0.5).add(new Vector3(0, -0.8, 0)), b], radius: 0.06 }, s.scene);
+    // a station next to each end; the cable runs between their anchors (bull wheel at y 4)
+    const anchors = [from.id, target].map((id) => {
+      const f = getField(this.map, id);
+      const out = this.tangent(f);
+      const side = new Vector3(-out.z, 0, out.x);
+      const sgn = side.x * f.x + side.z * f.z >= 0 ? 1 : -1;
+      const x = f.x + side.x * 3.2 * sgn;
+      const z = f.z + side.z * 3.2 * sgn;
+      const st = s.assets.prop('cablestation', `cablest${id}`, this.root, '#e8767a');
+      const ground = this.terrain.height(x, z);
+      if (st) this.place(st, x, z, Math.atan2(-side.x * sgn, -side.z * sgn), 1, ground - 0.05);
+      else {
+        const tower = cyl(s, `tower${id}`, { d: 0.4, h: 4, tess: 5 }, '#6c6a7a', this.root);
+        tower.position.set(x, ground + 2, z);
+      }
+      this.keepOut.push({ x, z, r: 2.6 });
+      return new Vector3(x, ground + 4, z);
+    });
+    const [a, b] = anchors;
+    const sag = (t: number) => Vector3.Lerp(a, b, t).add(new Vector3(0, -1.2 * 4 * t * (1 - t), 0));
+    const line = MeshBuilder.CreateTube(`cable${i}`, { path: Array.from({ length: 13 }, (_, k) => sag(k / 12)), radius: 0.05, tessellation: 5 }, s.scene);
     line.material = s.mat('#3d3a55');
     line.parent = this.root;
-    for (const [p, id] of [
-      [a, from.id],
-      [b, target],
-    ] as const) {
-      const st = s.assets.prop('cablestation', `cablest${id}`, this.root);
-      if (st) {
-        const f = getField(this.map, id);
-        const out = new Vector3(f.x, 0, f.z).normalize().scale(3);
-        this.place(st, f.x + out.x, f.z + out.z, Math.atan2(-out.x, -out.z));
-      } else {
-        const tower = cyl(s, `tower${id}`, { d: 0.4, h: 4.5, tess: 5 }, '#6c6a7a', this.root);
-        tower.position.set(p.x, p.y - 2.25, p.z);
-      }
-    }
     const g = s.assets.prop('gondola', `gondola${i}`, this.root, '#e8767a') ?? box(s, `gondola${i}`, 1, 0.8, 1, '#e8767a', this.root);
-    g.position = Vector3.Lerp(a, b, 0.35).add(new Vector3(0, -1.2, 0));
+    g.position = sag(0.35);
+    if (!s.assets.hasProp('gondola')) g.position.y -= 0.6;
+    g.rotation.y = Math.atan2(b.x - a.x, b.z - a.z);
   }
 
   // ------------------------------------------------------------------ vegetation
@@ -651,10 +657,10 @@ export class BoardView {
           const scR = rnd();
           if (tr.ground(px, pz) !== rule.on) continue;
           // clustered, organic distribution
-          if (roll > smoothstep(0.3, 0.68, fbm(px * 0.06 + ri, pz * 0.06, 3, 50 + ri))) continue;
+          if (roll > 0.15 + 0.85 * smoothstep(0.28, 0.62, fbm(px * 0.06 + ri, pz * 0.06, 3, 50 + ri))) continue;
           const clear = tr.clearance(px, pz);
-          if (clear < (big ? 2.8 : 1.6)) continue;
-          if (this.map.fields.some((f) => Math.hypot(f.x - px, f.z - pz) < (big ? 3 : 2))) continue;
+          if (clear < (big ? 2.6 : 1.45)) continue;
+          if (this.map.fields.some((f) => Math.abs(f.x - px) < 3 && Math.abs(f.z - pz) < 3 && Math.hypot(f.x - px, f.z - pz) < (big ? 2.8 : 1.8))) continue;
           if (this.keepOut.some((k) => Math.hypot(k.x - px, k.z - pz) < k.r + (big ? 1.2 : 0.3))) continue;
           const [lo, hi] = rule.scale ?? [0.8, 1.2];
           const sc = lo + (hi - lo) * scR;

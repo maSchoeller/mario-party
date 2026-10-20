@@ -93,8 +93,8 @@ let n = 0;
 const facing = (dx: number, dz: number) => Math.atan2(-dx, -dz);
 const block = (x0: number, x1: number, z0: number, z1: number) => {
   for (let x = x0; x <= x1; x += 6.5) {
-    houses.push({ kind: kinds[n % 4], x, z: z1, r: facing(0, 1), tint: ROOFS[n++ % ROOFS.length] });
-    houses.push({ kind: kinds[n % 4], x, z: z0, r: facing(0, -1), tint: ROOFS[n++ % ROOFS.length] });
+    houses.push({ kind: kinds[n % 4], x, z: z1, r: facing(0, 1), s: 0.8, tint: ROOFS[n++ % ROOFS.length] });
+    houses.push({ kind: kinds[n % 4], x, z: z0, r: facing(0, -1), s: 0.8, tint: ROOFS[n++ % ROOFS.length] });
   }
 };
 block(6, 21, -15, -6); // south-east
@@ -102,12 +102,12 @@ block(6, 21, 6, 15); // north-east
 block(-21, -8, -15, -6); // south-west
 // outside the ring
 for (let x = -30; x <= 30; x += 7.5) {
-  houses.push({ kind: kinds[n % 4], x, z: 27, r: facing(0, -1), tint: ROOFS[n++ % ROOFS.length] });
+  houses.push({ kind: kinds[n % 4], x, z: 27, r: facing(0, -1), s: 0.8, tint: ROOFS[n++ % ROOFS.length] });
 }
 for (const side of [-1, 1]) {
   for (let z = -14; z <= 14; z += 7) {
     if (Math.abs(z) < 5) continue; // stations sit there
-    houses.push({ kind: kinds[n % 4], x: side * 35, z, r: facing(-side, 0), tint: ROOFS[n++ % ROOFS.length] });
+    houses.push({ kind: kinds[n % 4], x: side * 35, z, r: facing(-side, 0), s: 0.8, tint: ROOFS[n++ % ROOFS.length] });
   }
 }
 
@@ -145,11 +145,11 @@ export const BIMMELBAHN: MapDef = {
     channels: [{ points: BIMMEL_CANAL, width: 3.6, kind: 'water' }],
     colors: { grass: '#a5cc86', grass2: '#c2dc98', sand: '#d6cfc2', rock: '#b4aea8', path: '#e3d8c8', seabed: '#5d86ad' },
     scatter: [
-      { kind: 'treeround', on: 'grass', density: 0.35, scale: [0.85, 1.25] },
-      { kind: 'tree', on: 'grass', density: 0.15, scale: [0.8, 1.2] },
-      { kind: 'bushround', on: 'grass', density: 1.4, scale: [0.8, 1.3] },
-      { kind: 'flowers', on: 'grass', density: 1.4, scale: [0.8, 1.2] },
-      { kind: 'grass', on: 'grass', density: 6, scale: [0.8, 1.4] },
+      { kind: 'treeround', on: 'grass', density: 0.77, scale: [0.85, 1.25] },
+      { kind: 'tree', on: 'grass', density: 0.3, scale: [0.8, 1.2] },
+      { kind: 'bushround', on: 'grass', density: 3.64, scale: [0.8, 1.3] },
+      { kind: 'flowers', on: 'grass', density: 3.64, scale: [0.8, 1.2] },
+      { kind: 'grass', on: 'grass', density: 18, scale: [0.8, 1.4] },
     ],
   },
   decor: [

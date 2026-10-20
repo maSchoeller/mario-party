@@ -1,6 +1,6 @@
 import { Color3, DynamicTexture, Mesh, MeshBuilder, StandardMaterial, Texture, TransformNode, VertexData, type Scene } from '@babylonjs/core';
 import type { FieldDef, MapDef, TerrainDef } from '@wb/shared/maps/index';
-import { distToSegment, fbm, noise2, smoothstep } from './noise';
+import { distToSegment, fbm, noise2, smoothstep, tileFbm } from './noise';
 import type { Stage } from './stage';
 
 /**
@@ -23,6 +23,8 @@ interface Edge {
 }
 
 const RES = 1.0;
+/** clearance values beyond this are irrelevant (scatter / buildings only care about the near range) */
+const CLEAR_CAP = 6;
 
 export class Terrain {
   readonly fieldY = new Map<string, number>();
@@ -36,6 +38,8 @@ export class Terrain {
   private nz: number;
   private h: Float32Array;
   private cls: Uint8Array;
+  /** distance to the nearest path edge per grid vertex (capped), for fast scatter queries */
+  private clear: Float32Array;
   private waterTarget: number;
   private waterTex: Texture | null = null;
   private t = 0;
@@ -55,6 +59,7 @@ export class Terrain {
     this.nz = Math.ceil((Math.max(...zs) + M - this.minZ) / RES) + 1;
     this.h = new Float32Array(this.nx * this.nz);
     this.cls = new Uint8Array(this.nx * this.nz);
+    this.clear = new Float32Array(this.nx * this.nz);
     this.layoutFields();
     this.buildHeights();
     this.mesh = this.buildMesh(parent);
@@ -94,13 +99,16 @@ export class Terrain {
 
   private channelDist(x: number, z: number): { d: number; w: number; kind: 'water' | 'lava' } | null {
     let best: { d: number; w: number; kind: 'water' | 'lava' } | null = null;
+    let meander: number | null = null;
     for (const c of this.def.channels ?? []) {
+      const reach = c.width / 2 + 3;
       for (let i = 0; i < c.points.length - 1; i++) {
         const [ax, az] = c.points[i];
         const [bx, bz] = c.points[i + 1];
-        const { d } = distToSegment(x, z, ax, az, bx, bz);
-        // meander the banks a little
-        const dd = d + (noise2(x * 0.25, z * 0.25, 5) - 0.5) * 1.2;
+        if (x < Math.min(ax, bx) - reach || x > Math.max(ax, bx) + reach || z < Math.min(az, bz) - reach || z > Math.max(az, bz) + reach) continue;
+        // meander the banks a little (one noise lookup per point)
+        meander ??= (noise2(x * 0.25, z * 0.25, 5) - 0.5) * 1.2;
+        const dd = distToSegment(x, z, ax, az, bx, bz).d + meander;
         if (!best || dd - c.width / 2 < best.d - best.w / 2) best = { d: dd, w: c.width, kind: c.kind };
       }
     }
@@ -134,21 +142,28 @@ export class Terrain {
       for (let i = 0; i < this.nx; i++) {
         const x = this.minX + i * RES;
         const z = this.minZ + j * RES;
-        let { y } = this.natural(x, z);
+        const nat = this.natural(x, z);
+        let y = nat.y;
         let cls: Ground = 'grass';
         // 1) paths and tiles are flattened into the land
         let w = 0;
         let target = y;
+        let nearest = CLEAR_CAP;
         for (const e of this.edges) {
-          if (e.kind === 'pier' || e.kind === 'shallow') continue;
+          // cheap bounding-box reject before the exact distance
+          if (x < Math.min(e.ax, e.bx) - CLEAR_CAP || x > Math.max(e.ax, e.bx) + CLEAR_CAP || z < Math.min(e.az, e.bz) - CLEAR_CAP || z > Math.max(e.az, e.bz) + CLEAR_CAP) continue;
           const s = distToSegment(x, z, e.ax, e.az, e.bx, e.bz);
+          if (s.d < nearest) nearest = s.d;
+          if (e.kind === 'pier' || e.kind === 'shallow') continue;
           const k = smoothstep(3.4, 1.3, s.d);
           if (k > w) {
             w = k;
             target = e.ya + (e.yb - e.ya) * s.t - 0.18;
           }
         }
+        this.clear[j * this.nx + i] = nearest;
         for (const f of tilted) {
+          if (Math.abs(x - f.x) > 2.6 || Math.abs(z - f.z) > 2.6) continue;
           const k = smoothstep(2.6, 1.5, Math.hypot(x - f.x, z - f.z));
           if (k > w) {
             w = k;
@@ -172,7 +187,7 @@ export class Terrain {
         }
         // 3) sandbank / ford bars rise from the water just below their fields
         for (const e of this.edges) {
-          if (e.kind !== 'shallow') continue;
+          if (e.kind !== 'shallow' || nearest > 2.4) continue;
           const s = distToSegment(x, z, e.ax, e.az, e.bx, e.bz);
           const k = smoothstep(2.4, 1.0, s.d);
           if (k > 0) {
@@ -181,7 +196,7 @@ export class Terrain {
             if (k > 0.5) cls = 'sand';
           }
         }
-        if (cls === 'grass') cls = this.classify(x, z, y, i, j);
+        if (cls === 'grass') cls = this.classify(x, z, y, nat.L);
         this.h[j * this.nx + i] = y;
         this.cls[j * this.nx + i] = GROUND_ID[cls];
       }
@@ -198,10 +213,9 @@ export class Terrain {
     }
   }
 
-  private classify(x: number, z: number, y: number, _i: number, _j: number): Ground {
+  private classify(x: number, z: number, y: number, L: number): Ground {
     const d = this.def;
     if (y < d.water.high - 0.02) return 'water';
-    const L = this.land(x, z);
     if (L < 3.2 + (noise2(x * 0.2, z * 0.2, 4) - 0.5) * 2 && y < d.base + 0.5) return 'sand';
     return 'grass';
   }
@@ -231,11 +245,18 @@ export class Terrain {
     return GROUNDS[this.cls[j * this.nx + i]];
   }
 
-  /** Distance to the nearest path edge or field (for keeping scatter off the paths). */
+  /** Distance to the nearest path edge (for keeping scatter off the paths), capped at CLEAR_CAP. */
   clearance(x: number, z: number): number {
-    let best = Infinity;
-    for (const e of this.edges) best = Math.min(best, distToSegment(x, z, e.ax, e.az, e.bx, e.bz).d);
-    return best;
+    const fx = Math.max(0, Math.min(this.nx - 1.001, (x - this.minX) / RES));
+    const fz = Math.max(0, Math.min(this.nz - 1.001, (z - this.minZ) / RES));
+    const i = Math.floor(fx);
+    const j = Math.floor(fz);
+    const u = fx - i;
+    const v = fz - j;
+    const k = j * this.nx + i;
+    const c = this.clear;
+    // bilinear interpolation underestimates near the path, which is the safe side
+    return c[k] * (1 - u) * (1 - v) + c[k + 1] * u * (1 - v) + c[k + this.nx] * (1 - u) * v + c[k + this.nx + 1] * u * v;
   }
 
   get bounds() {
@@ -254,11 +275,6 @@ export class Terrain {
       path: Color3.FromHexString(d.colors.path),
       seabed: Color3.FromHexString(d.colors.seabed),
     };
-    const pos: number[] = [];
-    const col: number[] = [];
-    const uv: number[] = [];
-    const idx: number[] = [];
-    const nrm: number[] = [];
     const tmp = new Color3();
     const nx = this.nx;
     // colors per grid vertex (smooth transitions) – lighting stays faceted
@@ -304,68 +320,76 @@ export class Terrain {
       }
     }
     vc = blur;
-    const P = (i: number, j: number) => [this.minX + i * RES, this.h[j * nx + i], this.minZ + j * RES];
+    // flat-shaded: 3 own vertices per triangle, written straight into typed arrays
+    const tris = (nx - 1) * (this.nz - 1) * 2;
+    const pos = new Float32Array(tris * 9);
+    const nrm = new Float32Array(tris * 9);
+    const col = new Float32Array(tris * 12);
+    const uv = new Float32Array(tris * 6);
+    const idx = new Uint32Array(tris * 3);
+    let v = 0;
+    const emit = (k: number, fx: number, fy: number, fz: number, jitter: number) => {
+      const x = this.minX + (k % nx) * RES;
+      const z = this.minZ + Math.floor(k / nx) * RES;
+      pos[v * 3] = x;
+      pos[v * 3 + 1] = this.h[k];
+      pos[v * 3 + 2] = z;
+      nrm[v * 3] = fx;
+      nrm[v * 3 + 1] = fy;
+      nrm[v * 3 + 2] = fz;
+      col[v * 4] = vc[k * 3] * jitter;
+      col[v * 4 + 1] = vc[k * 3 + 1] * jitter;
+      col[v * 4 + 2] = vc[k * 3 + 2] * jitter;
+      col[v * 4 + 3] = 1;
+      uv[v * 2] = x / 7;
+      uv[v * 2 + 1] = z / 7;
+      idx[v] = v;
+      v++;
+    };
+    const tri = (a: number, b: number, c: number) => {
+      const ax = this.minX + (a % nx) * RES;
+      const az = this.minZ + Math.floor(a / nx) * RES;
+      const ux = this.minX + (b % nx) * RES - ax;
+      const uz = this.minZ + Math.floor(b / nx) * RES - az;
+      const wx = this.minX + (c % nx) * RES - ax;
+      const wz = this.minZ + Math.floor(c / nx) * RES - az;
+      // Babylon culls clockwise faces: order the corners so the triangle faces up
+      if (ux * wz - uz * wx < 0) [b, c] = [c, b];
+      // face normal from the (possibly swapped) edges a→b and a→c, always pointing up
+      const uy = this.h[b] - this.h[a];
+      const wy = this.h[c] - this.h[a];
+      const bx = this.minX + (b % nx) * RES - ax;
+      const bz = this.minZ + Math.floor(b / nx) * RES - az;
+      const cx = this.minX + (c % nx) * RES - ax;
+      const cz = this.minZ + Math.floor(c / nx) * RES - az;
+      let fx = uy * cz - bz * wy;
+      let fy = bz * cx - bx * cz;
+      let fz = bx * wy - uy * cx;
+      const l = Math.hypot(fx, fy, fz) || 1;
+      const sgn = fy < 0 ? -1 : 1;
+      fx = (fx / l) * sgn;
+      fy = (fy / l) * sgn;
+      fz = (fz / l) * sgn;
+      // a whisper of per-face variation keeps the low-poly sparkle
+      const jitter = 0.985 + noise2((ax + bx / 3 + cx / 3) * 0.9, (az + bz / 3 + cz / 3) * 0.9, 33) * 0.03;
+      emit(a, fx, fy, fz, jitter);
+      emit(b, fx, fy, fz, jitter);
+      emit(c, fx, fy, fz, jitter);
+    };
     for (let j = 0; j < this.nz - 1; j++) {
       for (let i = 0; i < nx - 1; i++) {
         const k00 = j * nx + i;
         const k10 = k00 + 1;
         const k01 = k00 + nx;
         const k11 = k01 + 1;
-        const flip = (i + j) % 2 === 0;
-        const tris = flip
-          ? [
-              [k00, k01, k11],
-              [k00, k11, k10],
-            ]
-          : [
-              [k00, k01, k10],
-              [k10, k01, k11],
-            ];
-        for (const tri of tris) {
-          const ps = tri.map((k) => P(k % nx, Math.floor(k / nx)));
-          const cx = (ps[0][0] + ps[1][0] + ps[2][0]) / 3;
-          const cy = (ps[0][1] + ps[1][1] + ps[2][1]) / 3;
-          const cz = (ps[0][2] + ps[1][2] + ps[2][2]) / 3;
-          // a whisper of per-face variation keeps the low-poly sparkle
-          const jitter = 0.985 + noise2(cx * 0.9, cz * 0.9, 33) * 0.03;
-          void cy;
-          // face normal (left-handed: (b-a) x (c-a) with this winding points up)
-          const ux = ps[1][0] - ps[0][0];
-          const uy = ps[1][1] - ps[0][1];
-          const uz = ps[1][2] - ps[0][2];
-          const vx = ps[2][0] - ps[0][0];
-          const vy = ps[2][1] - ps[0][1];
-          const vz = ps[2][2] - ps[0][2];
-          let fx = uy * vz - uz * vy;
-          let fy = uz * vx - ux * vz;
-          let fz = ux * vy - uy * vx;
-          const l = Math.hypot(fx, fy, fz) || 1;
-          fx /= l;
-          fy /= l;
-          fz /= l;
-          if (fy < 0) {
-            fx = -fx;
-            fy = -fy;
-            fz = -fz;
-          }
-          for (const [q, p] of ps.entries()) {
-            const k = tri[q];
-            idx.push(pos.length / 3);
-            pos.push(p[0], p[1], p[2]);
-            nrm.push(fx, fy, fz);
-            col.push(vc[k * 3] * jitter, vc[k * 3 + 1] * jitter, vc[k * 3 + 2] * jitter, 1);
-            uv.push(p[0] / 7, p[2] / 7);
-          }
+        if ((i + j) % 2 === 0) {
+          tri(k00, k01, k11);
+          tri(k00, k11, k10);
+        } else {
+          tri(k00, k01, k10);
+          tri(k10, k01, k11);
         }
       }
-    }
-    // make sure the triangles face up for Babylon's (left-handed, clockwise) culling
-    for (let t = 0; t < idx.length; t += 3) {
-      const a = idx[t] * 3;
-      const b = idx[t + 1] * 3;
-      const c = idx[t + 2] * 3;
-      const cross = (pos[b] - pos[a]) * (pos[c + 2] - pos[a + 2]) - (pos[b + 2] - pos[a + 2]) * (pos[c] - pos[a]);
-      if (cross < 0) [idx[t + 1], idx[t + 2]] = [idx[t + 2], idx[t + 1]];
     }
     const m = new Mesh('terrain', this.stage.scene);
     const vd = new VertexData();
@@ -399,9 +423,9 @@ export class Terrain {
     const mat = new StandardMaterial('waterMat', s.scene);
     if (d.water.kind === 'lava') {
       const tex = lavaTexture(s.scene);
-      tex.uScale = tex.vScale = 900 / 26;
+      tex.uScale = tex.vScale = 900 / 34;
       mat.emissiveTexture = tex;
-      mat.diffuseColor = new Color3(0.25, 0.06, 0.02);
+      mat.diffuseColor = new Color3(0.12, 0.04, 0.03);
       mat.specularColor = Color3.Black();
       this.waterTex = tex;
     } else {
@@ -505,15 +529,8 @@ export function detailTexture(scene: Scene, theme: string): Texture {
     const img = ctx.createImageData(S, S);
     for (let y = 0; y < S; y++) {
       for (let x = 0; x < S; x++) {
-        // tileable: sample noise on a torus
-        const a = (x / S) * Math.PI * 2;
-        const b = (y / S) * Math.PI * 2;
-        const nx = Math.cos(a) * 3 + 10;
-        const ny = Math.sin(a) * 3 + 10;
-        const nz = Math.cos(b) * 3 + 10;
-        const nw = Math.sin(b) * 3 + 10;
-        const n = fbm(nx + nz * 1.7, ny + nw * 1.3, 4, 7);
-        const g = noise2((nx + nz) * 9, (ny + nw) * 9, 3);
+        const n = tileFbm(x / S, y / S, 6, 4, 7);
+        const g = tileFbm(x / S, y / S, 64, 1, 3);
         const v = 0.86 + n * 0.12 + (g > 0.82 ? 0.06 : g < 0.12 ? -0.07 : 0);
         const o = (y * S + x) * 4;
         img.data[o] = img.data[o + 1] = img.data[o + 2] = Math.min(255, v * 255);
@@ -534,11 +551,7 @@ function waterNormals(scene: Scene): Texture {
     const tex = new DynamicTexture('waterN', { width: S, height: S }, scene, true);
     const ctx = tex.getContext() as unknown as CanvasRenderingContext2D;
     const img = ctx.createImageData(S, S);
-    const hgt = (x: number, y: number) => {
-      const a = (x / S) * Math.PI * 2;
-      const b = (y / S) * Math.PI * 2;
-      return fbm(Math.cos(a) * 2 + Math.cos(b) * 1.3 + 5, Math.sin(a) * 2 + Math.sin(b) * 1.3 + 5, 3, 41);
-    };
+    const hgt = (x: number, y: number) => tileFbm((((x % S) + S) % S) / S, (((y % S) + S) % S) / S, 6, 3, 41);
     for (let y = 0; y < S; y++) {
       for (let x = 0; x < S; x++) {
         const dx = hgt(x + 1, y) - hgt(x - 1, y);
@@ -568,22 +581,17 @@ function lavaTexture(scene: Scene): Texture {
     const img = ctx.createImageData(S, S);
     for (let y = 0; y < S; y++) {
       for (let x = 0; x < S; x++) {
-        // tileable noise on a torus
-        const a = (x / S) * Math.PI * 2;
-        const b = (y / S) * Math.PI * 2;
-        const u = Math.cos(a) * 1.6 + Math.cos(b) * 0.9 + 4;
-        const v = Math.sin(a) * 1.6 + Math.sin(b) * 0.9 + 4;
-        const n = fbm(u, v, 4, 13);
-        const fine = fbm(u * 4, v * 4, 2, 29);
-        // molten pools (bright) and floating crust plates with glowing seams
-        const crust = smoothstep(0.47, 0.56, n);
-        const seam = 1 - smoothstep(0.0, 0.035, Math.abs(n - 0.6 - (fine - 0.5) * 0.08));
-        const hot = 1 - crust + seam * 0.8;
+        const n = tileFbm(x / S, y / S, 4, 4, 13);
+        const fine = tileFbm(x / S, y / S, 16, 2, 29);
+        // mostly cooled crust plates; glowing seams between them and a few molten pools
+        const pool = 1 - smoothstep(0.3, 0.38, n);
+        const seam = 1 - smoothstep(0.0, 0.03, Math.abs(n - 0.52 - (fine - 0.5) * 0.12));
+        const glow = Math.min(1, pool + seam * 0.9);
+        const crust = 0.75 + fine * 0.5;
         const o = (y * S + x) * 4;
-        const glow = Math.min(1, hot);
-        img.data[o] = 70 + 185 * glow;
-        img.data[o + 1] = 22 + (110 + 70 * (1 - n)) * glow;
-        img.data[o + 2] = 16 + 30 * glow * (1 - n);
+        img.data[o] = 62 * crust + (255 - 62 * crust) * glow;
+        img.data[o + 1] = 26 * crust + (150 - 26 * crust) * glow * (0.75 + 0.25 * pool);
+        img.data[o + 2] = 22 * crust + (40 - 22 * crust) * glow;
         img.data[o + 3] = 255;
       }
     }

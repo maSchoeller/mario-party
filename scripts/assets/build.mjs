@@ -13,6 +13,7 @@ const run = (script, ...args) => execFileSync(blender, ['-b', '--factory-startup
 
 if (what === 'all' || what === 'models') {
   run('characters.py', '--out', 'apps/web/public/media/models');
-  run('props.py', '--out', 'apps/web/public/media/models');
+  // prop libraries: shared/field buildings + one file per map theme
+  for (const lib of ['props', 'props_island', 'props_volcano', 'props_city']) run(`${lib}.py`, '--out', 'apps/web/public/media/models');
 }
 if (what === 'all' || what === 'audio') run('audio.py', '--root', process.cwd());
