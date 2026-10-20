@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { simulateGame } from '../scripts/simulate';
 import { BALANCE, CHARACTERS, PLAYER_COLORS } from '../src/config';
 import { computeBonus } from '../src/game/bonus';
+import { DICE, expectedValue } from '../src/game/dice';
 import { createGame, GameEngine, marathonPoints, minigameRewards } from '../src/game/engine';
 import { botAction as botActionFor } from '../src/game/bots';
 import { COMEBACK_CATEGORIES } from '../src/game/bonus';
@@ -154,7 +155,7 @@ describe('review fixes', () => {
     const e = started();
     const p = e.state.order[0];
     e.state.players[p].items = ['miniDice'];
-    e.state.pending = { kind: 'turnMenu', player: p, canUseItem: true };
+    e.state.pending = { kind: 'turnMenu', player: p, canUseItem: true, dice: ['standard'] };
     e.act(p, { type: 'useItem', item: 'miniDice' });
     e.act(p, { type: 'roll' });
     expect(e.pending).toMatchObject({ kind: 'miniPick', options: [1, 2, 3] });
@@ -227,9 +228,102 @@ describe('review fixes', () => {
     const target = getMap('kokosnuss').fields.find((f) => f.id === 'k2')!;
     e.state.traps.push({ field: target.id, owner: (p + 1) % 4 });
     victim.field = 'k1';
-    e.state.turn = { player: p, dice: [1], remaining: 1, rolled: true, usedItem: null, glove: false, starSteal: false, passResolved: null, landed: false, stepsTaken: 0 };
+    e.state.turn = { player: p, dice: [{ dice: 'standard', face: 0, steps: 1, coins: 0 }], remaining: 1, rolled: true, usedItem: null, glove: false, starSteal: false, passResolved: null, landed: false, stepsTaken: 0 };
     e.state.pending = null;
     (e as unknown as { continueMove(): void }).continueMove();
     expect(victim.items).toContain('shield');
+  });
+});
+
+describe('dice (v0.3)', () => {
+  const started = (mapId = 'kokosnuss') => {
+    const e = new GameEngine(createGame(config(mapId), setups()));
+    e.start();
+    for (let i = 0; i < 4; i++) e.act(i, { type: 'roll' });
+    return e;
+  };
+
+  it('every die has the same expectation (±0.05; coins count 0.4 steps)', () => {
+    for (const d of Object.values(DICE)) expect(expectedValue(d), d.id).toBeCloseTo(3.5, 1);
+  });
+
+  it('offers the standard die or the character die as second die', () => {
+    const e = started();
+    const p = e.state.order[0];
+    expect(e.pending).toMatchObject({ kind: 'turnMenu', dice: ['standard', e.state.players[p].character] });
+    const events = e.act(p, { type: 'roll', dice: 'standard' });
+    const dice = events.find((ev) => ev.type === 'dice');
+    expect(dice?.type === 'dice' && dice.rolls.map((r) => r.dice)).toEqual(['standard', 'standard']);
+  });
+
+  it('rejects dice the player does not own', () => {
+    const e = started();
+    const p = e.state.order[0];
+    expect(() => e.act(p, { type: 'roll', dice: 'riskDice' })).toThrow();
+  });
+
+  it('pays coin faces right after the roll', () => {
+    const e = started();
+    const p = e.state.order[0];
+    e.state.players[p].character = 'zippy';
+    e.state.pending = { kind: 'turnMenu', player: p, canUseItem: false, dice: ['standard', 'zippy'] };
+    // force the zippy die onto its "0 + 4 coins" face
+    const rng = (e as unknown as { rng: { int(a: number, b: number): number } }).rng;
+    const orig = rng.int.bind(rng);
+    let call = 0;
+    rng.int = (a, b) => (a === 0 && b === 5 ? (call++ === 0 ? 2 : 0) : orig(a, b));
+    const coins = e.state.players[p].coins;
+    const events = e.act(p, { type: 'roll', dice: 'zippy' });
+    const dice = events.find((ev) => ev.type === 'dice');
+    expect(dice?.type === 'dice' && dice.rolls[1]).toMatchObject({ dice: 'zippy', steps: 0, coins: 4 });
+    expect(events.some((ev) => ev.type === 'coins' && ev.reason === 'dice' && ev.delta === 4)).toBe(true);
+    expect(e.state.players[p].coins).toBeGreaterThanOrEqual(coins + 4 - 6);
+  });
+
+  it('a negative total walks backwards without pass triggers', () => {
+    const e = started();
+    const p = e.state.order[0];
+    const pl = e.state.players[p];
+    pl.field = 'k6';
+    e.state.turn = { player: p, dice: [], remaining: -2, rolled: true, usedItem: null, glove: false, starSteal: false, passResolved: null, landed: false, stepsTaken: 0 };
+    e.state.pending = null;
+    (e as unknown as { continueMove(): void }).continueMove();
+    // k5 is where the jetty joins: walking backwards there is a choice
+    if (e.pending?.kind === 'branch') {
+      expect(e.pending.backward).toBe(true);
+      e.act(p, { type: 'branch', to: e.pending.options.includes('k4') ? 'k4' : e.pending.options[0] });
+    }
+    expect(pl.field).not.toBe('k6');
+    expect(pl.stats.fieldsWalked).toBeGreaterThanOrEqual(1);
+    expect(e.state.players.some((x) => x.field === 'k7' && x === pl)).toBe(false);
+  });
+
+  it('dice items replace the second die and extra dice add standard dice', () => {
+    const e = started();
+    const p = e.state.order[0];
+    e.state.players[p].items = ['riskDice'];
+    e.state.pending = { kind: 'turnMenu', player: p, canUseItem: true, dice: ['standard', e.state.players[p].character] };
+    e.act(p, { type: 'useItem', item: 'riskDice' });
+    expect(e.pending).toMatchObject({ kind: 'turnMenu', dice: ['riskDice'] });
+    const ev = e.act(p, { type: 'roll' }).find((x) => x.type === 'dice');
+    expect(ev?.type === 'dice' && ev.rolls.map((r) => r.dice)).toEqual(['standard', 'riskDice']);
+
+    const e2 = started();
+    const q = e2.state.order[0];
+    e2.state.players[q].items = ['tripleDice'];
+    e2.state.pending = { kind: 'turnMenu', player: q, canUseItem: true, dice: ['standard', e2.state.players[q].character] };
+    e2.act(q, { type: 'useItem', item: 'tripleDice' });
+    const ev2 = e2.act(q, { type: 'roll' }).find((x) => x.type === 'dice');
+    expect(ev2?.type === 'dice' && ev2.rolls.length).toBe(4);
+  });
+
+  it('high tide floods the ford in the river', () => {
+    const e = started();
+    const ford = getMap('kokosnuss').fields.filter((f) => f.tags?.includes('ford'));
+    expect(ford.length).toBeGreaterThanOrEqual(1);
+    e.state.gimmick.tide = 'high';
+    expect(e.isOpen(ford[0].id)).toBe(false);
+    e.state.gimmick.tide = 'low';
+    expect(e.isOpen(ford[0].id)).toBe(true);
   });
 });

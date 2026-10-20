@@ -108,5 +108,5 @@ def short(kind, target_db, bitrate, mono):
 
 
 music()
-short('voice', -16, 64, True)
+short('voice', -16, 96, True)
 short('sfx', -17, 96, False)

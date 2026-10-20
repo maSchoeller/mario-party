@@ -1,5 +1,6 @@
+import type { CharacterId } from '@wb/shared/config';
 import { t, type Params } from '@wb/shared/i18n/index';
-import { voiceSegments } from '@wb/shared/i18n/voice';
+import { clipFile, numberClip, voiceClips } from '@wb/shared/i18n/voice';
 
 /**
  * Host audio (AUDIO-05: audio only on the host). Generated assets in public/media/audio
@@ -7,11 +8,12 @@ import { voiceSegments } from '@wb/shared/i18n/voice';
  *  - music (Suno): one loop per map + finale variant, lobby, 3 minigame moods, victory;
  *    streamed via <audio> and looped with a crossfade (AUDIO-01)
  *  - jingles (Suno) + SFX (ElevenLabs), decoded once (AUDIO-02)
- *  - moderator voice (ElevenLabs): pre-recorded segments chained per line (AUDIO-03)
+ *  - moderator voice (ElevenLabs): few whole lines at the big moments + dice numbers,
+ *    everything else is subtitle only (AUDIO-03, v0.3)
  *  - character babble (ElevenLabs): fantasy gibberish per figure (AUDIO-04)
- * Every part falls back to the procedural WebAudio / speech-synthesis placeholder when
- * a file is missing or cannot be decoded.
- * Separate volumes for music / effects / voice (AUDIO-06).
+ * Music and effects fall back to procedural WebAudio when a file is missing.
+ * Separate volumes for music / effects / voice (AUDIO-06). All buses run through a gentle
+ * master compressor; every gain change is ramped (no clicks, clean fades).
  */
 export type MusicKey = 'lobby' | 'island' | 'volcano' | 'city' | 'minigame' | 'minigame2' | 'minigame3' | 'victory' | 'none';
 export type Sfx =
@@ -33,7 +35,8 @@ export type Sfx =
   | 'pad1'
   | 'pad2'
   | 'pad3'
-  | 'splash';
+  | 'splash'
+  | 'clack';
 
 interface Volumes {
   music: number;
@@ -80,8 +83,11 @@ const SFX_FILES: Partial<Record<Sfx, string[]>> = {
   ding: ['ding'],
   fanfare: ['fanfare'],
   splash: ['splash'],
+  clack: ['clack'],
 };
-const BABBLERS = ['rocco', 'quaki', 'pingo', 'foxy', 'moderator'];
+const BABBLERS = ['rocco', 'quaki', 'pingo', 'foxy', 'bruno', 'hoppla', 'schildi', 'zippy', 'moderator'];
+/** Effects that get a little pitch variation so repeats never sound identical. */
+const VARIED: Sfx[] = ['step', 'coin', 'clack', 'ui', 'whoosh'];
 /** Crossfade length for track changes and the loop point (seconds). */
 const XFADE = 1.4;
 
@@ -100,10 +106,11 @@ export class HostAudio {
   private nextTime = 0;
   private step = 0;
   private timer: ReturnType<typeof setInterval> | null = null;
-  private voice: SpeechSynthesisVoice | null = null;
+  private master: DynamicsCompressorNode | null = null;
+  private masterGain: GainNode | null = null;
   onSubtitle: (text: string | null) => void = () => {};
-  /** Maps a player name to the spoken character name (set by the session). */
-  characterOf: (playerName: string) => string | null = () => null;
+  /** Maps a player name to its character (winner announcement; set by the session). */
+  characterOf: (playerName: string) => CharacterId | null = () => null;
   private lineId = 0;
   // file-based assets
   private buffers = new Map<string, AudioBuffer | null>();
@@ -124,14 +131,6 @@ export class HostAudio {
     } catch {
       /* ignore */
     }
-    if ('speechSynthesis' in window) {
-      const pick = () => {
-        const voices = speechSynthesis.getVoices().filter((v) => v.lang.startsWith('de'));
-        this.voice = voices[0] ?? null;
-      };
-      pick();
-      speechSynthesis.addEventListener?.('voiceschanged', pick);
-    }
   }
 
   get unlocked(): boolean {
@@ -149,9 +148,21 @@ export class HostAudio {
       this.duck = ctx.createGain();
       this.sfxGain = ctx.createGain();
       this.voiceGain = ctx.createGain();
-      this.musicGain.connect(this.duck).connect(ctx.destination);
-      this.sfxGain.connect(ctx.destination);
-      this.voiceGain.connect(ctx.destination);
+      // gentle bus compression keeps voice, jingles and music in one consistent loudness
+      this.master = ctx.createDynamicsCompressor();
+      this.master.threshold.value = -14;
+      this.master.knee.value = 12;
+      this.master.ratio.value = 3;
+      this.master.attack.value = 0.01;
+      this.master.release.value = 0.25;
+      this.masterGain = ctx.createGain();
+      this.masterGain.gain.value = 0;
+      this.master.connect(this.masterGain).connect(ctx.destination);
+      this.musicGain.connect(this.duck).connect(this.master);
+      this.sfxGain.connect(this.master);
+      this.voiceGain.connect(this.master);
+      // fade the whole mix in instead of starting hard
+      this.masterGain.gain.setTargetAtTime(1, ctx.currentTime + 0.05, 0.25);
       for (let i = 0; i < 2; i++) {
         const el = new Audio();
         el.preload = 'auto';
@@ -180,10 +191,11 @@ export class HostAudio {
   }
 
   private applyVolumes() {
-    // the procedural loops are much louder than the mastered files
-    if (this.musicGain) this.musicGain.gain.value = this.vol.music * (this.procedural ? 0.22 : 0.8);
-    if (this.sfxGain) this.sfxGain.gain.value = this.vol.sfx * 0.5;
-    if (this.voiceGain) this.voiceGain.gain.value = this.vol.voice;
+    // the procedural loops are much louder than the mastered files; ramps avoid zipper noise
+    const now = this.ctx?.currentTime ?? 0;
+    this.musicGain?.gain.setTargetAtTime(this.vol.music * (this.procedural ? 0.22 : 0.8), now, 0.08);
+    this.sfxGain?.gain.setTargetAtTime(this.vol.sfx * 0.5, now, 0.05);
+    this.voiceGain?.gain.setTargetAtTime(this.vol.voice * 1.1, now, 0.05);
   }
 
   // --- files -------------------------------------------------------------------
@@ -197,7 +209,7 @@ export class HostAudio {
       .then((r) => (r.ok ? (r.json() as Promise<Record<string, string>>) : null))
       .then(async (m) => {
         this.voiceManifest = m;
-        for (const id of new Set(Object.values(m ?? {}))) await this.buffer(`voice/${id}.mp3`);
+        for (const id of Object.keys(m ?? {})) await this.buffer(`voice/${clipFile(id)}.mp3`);
       })
       .catch(() => (this.voiceManifest = null));
   }
@@ -224,15 +236,16 @@ export class HostAudio {
     const src = ctx.createBufferSource();
     src.buffer = buf;
     src.playbackRate.value = opts.rate ?? 1;
-    if (opts.gain !== undefined || opts.dur !== undefined) {
-      const g = ctx.createGain();
-      g.gain.setValueAtTime(opts.gain ?? 1, start);
-      if (opts.dur !== undefined) {
-        g.gain.setValueAtTime(opts.gain ?? 1, start + opts.dur * 0.7);
-        g.gain.linearRampToValueAtTime(0, start + opts.dur);
-      }
-      src.connect(g).connect(out);
-    } else src.connect(out);
+    // 4 ms fade-in and a short fade-out: no clicks, even when cut mid-sample
+    const g = ctx.createGain();
+    const peak = opts.gain ?? 1;
+    const len = (opts.dur ?? buf.duration - (opts.offset ?? 0)) / (opts.rate ?? 1);
+    g.gain.setValueAtTime(0, start);
+    g.gain.linearRampToValueAtTime(peak, start + 0.004);
+    const tail = opts.dur !== undefined ? Math.min(0.25, len * 0.3) : Math.min(0.03, len * 0.2);
+    g.gain.setValueAtTime(peak, start + Math.max(0.005, len - tail));
+    g.gain.linearRampToValueAtTime(0, start + len);
+    src.connect(g).connect(out);
     src.start(start, opts.offset ?? 0, opts.dur);
     return src;
   }
@@ -275,13 +288,18 @@ export class HostAudio {
     if (!next.el.src.endsWith(src)) next.el.src = src;
     next.el.currentTime = 0;
     void next.el.play().catch(() => undefined);
+    // equal-power curves: no loudness dip in the middle of the crossfade
+    const curve = (from: number, to: number) => Float32Array.from({ length: 32 }, (_, i) => {
+      const k = i / 31;
+      return to > from ? from + (to - from) * Math.sin((k * Math.PI) / 2) : to + (from - to) * Math.cos((k * Math.PI) / 2);
+    });
     for (const [m, to] of [
       [next, 1],
       [old, 0],
     ] as const) {
+      const from = m.gain.gain.value;
       m.gain.gain.cancelScheduledValues(now);
-      m.gain.gain.setValueAtTime(m.gain.gain.value, now);
-      m.gain.gain.linearRampToValueAtTime(to, now + XFADE);
+      m.gain.gain.setValueCurveAtTime(curve(from, to), now, XFADE);
     }
     setTimeout(() => {
       if (this.music[this.activeEl] !== old) old.el.pause();
@@ -293,7 +311,7 @@ export class HostAudio {
     for (const m of this.music) {
       m.gain.gain.cancelScheduledValues(now);
       m.gain.gain.setValueAtTime(m.gain.gain.value, now);
-      m.gain.gain.linearRampToValueAtTime(0, now + 0.8);
+      m.gain.gain.setTargetAtTime(0, now, 0.25);
     }
     setTimeout(() => {
       if (!this.musicSrc) for (const m of this.music) m.el.pause();
@@ -379,7 +397,8 @@ export class HostAudio {
     if (!ctx || !this.sfxGain || ctx.state !== 'running') return;
     const recorded = (SFX_FILES[kind] ?? []).map((f) => this.buffers.get(`sfx/${f}.mp3`)).filter((b): b is AudioBuffer => !!b);
     if (recorded.length) {
-      for (const b of recorded) this.play(b, this.sfxGain);
+      const rate = VARIED.includes(kind) ? 0.95 + Math.random() * 0.1 : 1;
+      for (const b of recorded) this.play(b, this.sfxGain, 0, { rate });
       return;
     }
     const at = ctx.currentTime;
@@ -431,6 +450,10 @@ export class HostAudio {
       case 'splash':
         this.noise(at, 0.5, 0.8, 600, out);
         break;
+      case 'clack':
+        this.noise(at, 0.035, 0.7, 2500, out);
+        this.note(55, at, 0.08, 'sine', 0.35, out);
+        break;
       case 'pad0':
       case 'pad1':
       case 'pad2':
@@ -452,84 +475,95 @@ export class HostAudio {
       this.play(rec, this.sfxGain, 0, { rate: 0.92 + Math.random() * 0.2, offset, dur, gain: 0.9 });
       return;
     }
-    const base = { rocco: 62, quaki: 70, pingo: 66, foxy: 74, moderator: 78 }[character] ?? 68;
+    const base = { rocco: 62, quaki: 70, pingo: 66, foxy: 74, bruno: 55, hoppla: 76, schildi: 58, zippy: 80, moderator: 78 }[character] ?? 68;
     for (let i = 0; i < 5; i++) this.note(base + Math.floor(Math.random() * 7), ctx.currentTime + i * 0.07, 0.06, 'square', 0.15, this.sfxGain);
   }
 
   // --- moderator ---------------------------------------------------------------
 
-  /** Moderator line: subtitle always (A11Y-03) + voice (AUDIO-03). Resolves when done. */
+  /**
+   * Moderator line: subtitle always (A11Y-03); voice only for the few recorded big moments
+   * (AUDIO-03). Resolves when the line is done.
+   */
   say(key: string, params?: Params, minMs = 1400, speed = 1): Promise<void> {
     const text = t(key, params);
     this.lineId++;
     this.onSubtitle(text);
     const est = Math.max(minMs, text.length * 55) / speed;
-    const recorded = speed <= 1 ? this.recordedLine(key, params) : null;
+    const clips = speed <= 1 ? this.recorded(voiceClips(key, params, (name) => this.characterOf(name))) : null;
     return new Promise((resolve) => {
       let done = false;
       const finish = () => {
         if (done) return;
         done = true;
-        this.unduck();
         // keep the subtitle a moment, then clear it unless a newer line replaced it
         const mine = this.lineId;
         setTimeout(() => mine === this.lineId && this.onSubtitle(null), 1200);
         resolve();
       };
-      if (recorded && this.vol.voice > 0 && this.unlocked) {
-        const dur = this.speak(recorded);
-        setTimeout(finish, Math.max(dur * 1000 + 150, minMs / speed));
+      if (clips && this.vol.voice > 0 && this.unlocked) {
+        const dur = this.speak(clips, 0.35);
+        // reading time still counts: long subtitles stay a little longer than the voice
+        setTimeout(finish, Math.max(dur * 1000 + 150, Math.min(est, dur * 1000 + 900)));
         return;
       }
-      if ('speechSynthesis' in window && this.vol.voice > 0 && this.unlocked && speed <= 1) {
-        try {
-          this.stopVoice();
-          const u = new SpeechSynthesisUtterance(text.replace(/[★●▲■◆]/g, ''));
-          u.lang = 'de-DE';
-          if (this.voice) u.voice = this.voice;
-          u.pitch = 1.5;
-          u.rate = 1.12;
-          u.volume = this.vol.voice;
-          u.onend = () => setTimeout(finish, 150);
-          u.onerror = () => setTimeout(finish, est);
-          speechSynthesis.speak(u);
-          setTimeout(finish, est + 4000);
-          return;
-        } catch {
-          /* fall back to timer */
-        }
-      }
-      this.babble('moderator');
       setTimeout(finish, est);
     });
   }
 
-  /** Decoded segment buffers for a line, or null if any segment is unavailable. */
-  private recordedLine(key: string, params?: Params): AudioBuffer[] | null {
-    if (!this.voiceManifest || !this.ctx) return null;
-    const segs = voiceSegments(key, params, (name) => this.characterOf(name));
-    if (!segs?.length) return null;
+  /** Calls out a dice total ("Sieben!") – the only per-turn voice line. */
+  sayNumber(n: number, minMs = 700): Promise<void> {
+    const id = numberClip(n);
+    const clips = id ? this.recorded([id]) : null;
+    if (!clips || this.vol.voice <= 0 || !this.unlocked) return new Promise((r) => setTimeout(r, minMs));
+    const dur = this.speak(clips, 0);
+    return new Promise((r) => setTimeout(r, Math.max(minMs, dur * 1000 + 100)));
+  }
+
+  /** Impact of a 3D die (strength 0..1). */
+  diceClack(strength: number): void {
+    const ctx = this.ctx;
+    if (!ctx || !this.sfxGain || ctx.state !== 'running' || strength <= 0.05) return;
+    const rec = this.buffers.get('sfx/clack.mp3');
+    if (rec) this.play(rec, this.sfxGain, 0, { rate: 0.9 + Math.random() * 0.25, gain: 0.35 + strength * 0.65 });
+    else {
+      this.noise(ctx.currentTime, 0.03, 0.5 * strength, 2500, this.sfxGain);
+      this.note(52 + Math.floor(Math.random() * 5), ctx.currentTime, 0.07, 'sine', 0.3 * strength, this.sfxGain);
+    }
+  }
+
+  /** Decoded buffers for the clip ids, or null if any is unavailable. */
+  private recorded(ids: string[]): AudioBuffer[] | null {
+    if (!ids.length || !this.voiceManifest || !this.ctx) return null;
     const bufs: AudioBuffer[] = [];
-    for (const seg of segs) {
-      const id = this.voiceManifest[seg];
-      const b = id ? this.buffers.get(`voice/${id}.mp3`) : null;
+    for (const id of ids) {
+      const b = this.voiceManifest[id] ? this.buffers.get(`voice/${clipFile(id)}.mp3`) : null;
       if (!b) return null;
       bufs.push(b);
     }
     return bufs;
   }
 
-  /** Plays the segments back to back (music ducked); returns the duration in seconds. */
-  private speak(bufs: AudioBuffer[]): number {
+  /** Plays whole clips back to back with a natural pause (music ducked); returns seconds. */
+  private speak(bufs: AudioBuffer[], gap: number): number {
     const ctx = this.ctx!;
     this.stopVoice();
-    this.duckTo(0.5, 0.15);
-    let at = ctx.currentTime + 0.03;
+    this.duckTo(0.45, 0.18);
+    let at = ctx.currentTime + 0.04;
     for (const b of bufs) {
       this.voiceSources.push(this.play(b, this.voiceGain!, at));
-      at += b.duration + 0.04;
+      at += b.duration + gap;
     }
-    return at - ctx.currentTime;
+    const total = at - gap - ctx.currentTime;
+    setTimeout(() => this.unduck(), total * 1000);
+    return total;
+  }
+
+  /** Session pause: the mix dips softly instead of cutting out. */
+  setPaused(on: boolean): void {
+    if (!this.ctx || !this.masterGain) return;
+    this.masterGain.gain.cancelScheduledValues(this.ctx.currentTime);
+    this.masterGain.gain.setTargetAtTime(on ? 0.35 : 1, this.ctx.currentTime, 0.2);
   }
 
   private duckTo(v: number, secs: number) {
@@ -537,15 +571,14 @@ export class HostAudio {
     const now = this.ctx.currentTime;
     this.duck.gain.cancelScheduledValues(now);
     this.duck.gain.setValueAtTime(this.duck.gain.value, now);
-    this.duck.gain.linearRampToValueAtTime(v, now + secs);
+    this.duck.gain.setTargetAtTime(v, now, secs / 3);
   }
 
   private unduck() {
-    this.duckTo(1, 0.6);
+    this.duckTo(1, 0.9);
   }
 
   stopVoice(): void {
-    if ('speechSynthesis' in window) speechSynthesis.cancel();
     for (const s of this.voiceSources) {
       try {
         s.stop();

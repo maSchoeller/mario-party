@@ -8,7 +8,10 @@ export type ItemId =
   | 'stealGlove'
   | 'trapStone'
   | 'shield'
-  | 'starTicket';
+  | 'starTicket'
+  /** dice items: replace the second die for one roll (see game/dice.ts) */
+  | 'riskDice'
+  | 'goldDice';
 
 export interface ItemDef {
   id: ItemId;
@@ -30,6 +33,8 @@ export const ITEMS: Record<ItemId, ItemDef> = {
   trapStone: { id: 'trapStone', price: 6, usable: true, findWeight: 3 },
   shield: { id: 'shield', price: 5, usable: false, findWeight: 3 },
   starTicket: { id: 'starTicket', price: 30, usable: true, shopOnly: true, findWeight: 0 },
+  riskDice: { id: 'riskDice', price: 4, usable: true, findWeight: 3 },
+  goldDice: { id: 'goldDice', price: 6, usable: true, findWeight: 3 },
 };
 
 export const ITEM_IDS = Object.keys(ITEMS) as ItemId[];

@@ -16,7 +16,7 @@ test('lobby: QR/code join, chief role, unique characters, start with bots (LOBBY
   await expect.poll(async () => (await hostState(host)).slots.map((s) => s.mode).join(','), { timeout: 15000 }).toBe('p2p,p2p');
   await anna.click('text=Vulkan-Gipfel');
   await anna.click('text=Spiel starten');
-  await expect.poll(async () => (await hostState(host)).phase).toBe('game');
+  await expect.poll(async () => (await hostState(host)).phase, { timeout: 20000 }).toBe('game');
   const st = await hostState(host);
   expect(st.slots).toHaveLength(4);
   expect(st.slots.filter((s) => s.cpu)).toHaveLength(2);
@@ -36,18 +36,20 @@ test('forced WebSocket relay fallback works (NET-03)', async ({ browser }) => {
 });
 
 test('phone reconnect keeps the seat, bot covers meanwhile (LOBBY-05, BOT-02, NET-06)', async ({ browser }) => {
+  test.setTimeout(300_000);
   const { host, code } = await openHost(browser);
   const anna = await joinPhone(browser, code, 'Anna');
   const ben = await joinPhone(browser, code, 'Ben');
   await anna.click('text=Spiel starten');
-  await expect.poll(async () => (await hostState(host)).phase).toBe('game');
+  await expect.poll(async () => (await hostState(host)).phase, { timeout: 20000 }).toBe('game');
   const ctx = ben.context();
   const url = ben.url();
   await ben.close();
   await expect.poll(async () => (await hostState(host)).slots[1].connected, { timeout: 15000 }).toBe(false);
   // while Ben is gone the game does not block: his order roll is done by a bot
   await anna.click('.ctrl-big.roll', { timeout: 30000 });
-  await expect.poll(async () => (await hostState(host)).pending, { timeout: 30000 }).not.toBe('orderRoll');
+  // four animated 3D order rolls in a row: give software-rendered CI enough time
+  await expect.poll(async () => (await hostState(host)).pending, { timeout: 90000 }).not.toBe('orderRoll');
   const ben2 = await ctx.newPage();
   await ben2.goto(url);
   await expect.poll(async () => (await hostState(host)).slots[1].connected, { timeout: 15000 }).toBe(true);
@@ -60,12 +62,12 @@ test('host reload resumes the running game and phones reconnect (SAVE-03)', asyn
   const anna = await joinPhone(browser, code, 'Anna');
   await joinPhone(browser, code, 'Ben');
   await anna.click('text=Spiel starten');
-  await expect.poll(async () => (await hostState(host)).phase).toBe('game');
+  await expect.poll(async () => (await hostState(host)).phase, { timeout: 20000 }).toBe('game');
   await anna.click('.ctrl-big.roll', { timeout: 30000 });
   await host.reload();
   await host.waitForFunction(() => (window as any).__wb?.session.net.code);
   expect(await host.evaluate(() => (window as any).__wb.session.net.code)).toBe(code);
-  await expect.poll(async () => (await hostState(host)).phase).toBe('game');
+  await expect.poll(async () => (await hostState(host)).phase, { timeout: 20000 }).toBe('game');
   await expect.poll(async () => (await hostState(host)).slots.filter((s) => s.connected).length, { timeout: 20000 }).toBe(2);
 });
 

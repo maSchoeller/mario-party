@@ -1,51 +1,74 @@
-import { MapBuilder } from './builder';
+import { MapBuilder, nearest, tagCrossings, type P } from './builder';
 import type { MapDef } from './types';
 
 /**
  * Map 2 – Vulkan-Gipfel (Mittel).
- * Ring around the volcano, a summit path (star often up there), an outer detour along a
- * lava river and a paid cable car to the summit. Red fields fill the eruption counter.
+ * A volcanic island in a lava sea. The ring road circles the volcano; the crater path
+ * climbs over the rim (the star likes it up there) and the ash road takes the short way
+ * along the lava stream. Both are closed by lava when the volcano erupts (red fields and
+ * quake fields fill the counter). A paid cable car lifts players onto the rim; detours
+ * lead to the old temple and the giant mushroom grove.
  */
 const b = new MapBuilder();
 
-const RING = 'TBBRBIRBEBLBSBRDBBRBRBBEBRLBCBIRBDBR';
-const ring = b.seq('r', RING, (i, n) => {
-  const theta = Math.PI / 2 + (i / n) * Math.PI * 2;
-  return { x: Math.cos(theta) * 25, z: Math.sin(theta) * 19 };
-});
-b.chain(ring, true);
+/** Lava stream from the crater to the south-west lava sea (terrain + bridge). */
+export const VULKAN_LAVA: [number, number][] = [
+  [2, 9],
+  [-4, 4],
+  [-10, -1],
+  [-17, -6],
+  [-25, -11],
+  [-33, -16],
+  [-44, -21],
+];
 
-// Summit path r6 -> s0..s8 -> r16 (quadratic curve over the crater rim)
-const r6 = b.get('r6');
-const r16 = b.get('r16');
-const summit = b.seq('s', 'BBRBBBEBL', (i) => {
-  const t = (i + 1) / 10;
-  const c = { x: 0, z: -2 };
-  const x = (1 - t) ** 2 * r6.x + 2 * (1 - t) * t * c.x + t ** 2 * r16.x;
-  const z = (1 - t) ** 2 * r6.z + 2 * (1 - t) * t * c.z + t ** 2 * r16.z;
-  return { x, z, y: Math.sin(t * Math.PI) * 5 };
-}, { tags: ['summit'] });
-b.link('r6', summit[0]);
-b.chain(summit);
-b.link(summit[8], 'r16');
+// Ring road: 42 fields, counter-clockwise from the start in the south.
+const RING = 'TBBRBIBEBCBLBRBDBBSBRBIBEBBLBRBDBBIBRBEBLB';
+const ringCtrl: P[] = [
+  { x: 0, z: -22 },
+  { x: 11, z: -22 },
+  { x: 21, z: -18 },
+  { x: 28, z: -10 },
+  { x: 31, z: 0 },
+  { x: 29, z: 10 },
+  { x: 22, z: 18 },
+  { x: 11, z: 22 },
+  { x: -1, z: 23 },
+  { x: -13, z: 21 },
+  { x: -23, z: 15 },
+  { x: -29, z: 6 },
+  { x: -30, z: -4 },
+  { x: -25, z: -13 },
+  { x: -13, z: -20 },
+];
+const ring = b.path('r', RING, ringCtrl, { closed: true });
+const at = (x: number, z: number) => nearest(b, ring, x, z);
 
-// Outer detour r19 -> o0..o4 -> r25 along the lava river
-const r19 = b.get('r19');
-const r25 = b.get('r25');
-const outer = b.seq('o', 'BIBLB', (i) => {
-  const t = (i + 1) / 6;
-  const a1 = Math.atan2(r19.z / 19, r19.x / 25);
-  let a2 = Math.atan2(r25.z / 19, r25.x / 25);
-  if (a2 < a1) a2 += Math.PI * 2;
-  const a = a1 + (a2 - a1) * t;
-  const bulge = 1.28 + Math.sin(t * Math.PI) * 0.08;
-  return { x: Math.cos(a) * 25 * bulge, z: Math.sin(a) * 19 * bulge };
-}, { tags: ['riverside'] });
-b.link('r19', outer[0]);
-b.chain(outer);
-b.link(outer[4], 'r25');
+// Crater path over the rim (lava group 0).
+const crater = b.path(
+  's',
+  'BBRBLBEBB',
+  [
+    { x: -19, z: 9, y: 1.5 },
+    { x: -12, z: 12, y: 3.2 },
+    { x: -5, z: 13, y: 4.6 },
+    { x: 2, z: 14, y: 5.2 },
+    { x: 9, z: 13, y: 4.6 },
+    { x: 15, z: 10, y: 3 },
+  ],
+  { from: at(-26, 11), to: at(25, 14), tags: ['summit'] },
+);
 
-for (const id of ['r20', 'r21', 'r22', 'r23', 'r24']) b.get(id).tags = ['lavaflow'];
+// Ash road along the lava stream (lava group 1): short, but hot.
+const ash = b.path('a', 'BRBIBL', [{ x: -14, z: -14 }, { x: -6, z: -9 }, { x: 2, z: -6 }, { x: 10, z: -7 }, { x: 17, z: -11 }], { from: at(-22, -16), to: at(27, -11), tags: ['ash'] });
+
+// Temple detour in the south-east.
+b.path('t', 'BIBL', [{ x: 24, z: -27 }, { x: 33, z: -22 }], { from: at(15, -21), to: at(29, -6) });
+
+// Giant mushroom grove in the north-east.
+b.path('m', 'BLDB', [{ x: 37, z: 7 }, { x: 34, z: 18 }], { from: at(31, -1), to: at(17, 21) });
+
+tagCrossings(b, VULKAN_LAVA, 2.3, 1.3);
 
 export const VULKAN: MapDef = {
   id: 'vulkan',
@@ -55,15 +78,12 @@ export const VULKAN: MapDef = {
   theme: 'volcano',
   start: 'r0',
   fields: b.build(),
-  // Summit spots are listed so that the star lands up there more often.
-  starSpots: ['r2', 'r9', 'r17', 'r27', 'r33', 's3', 's4', 's5', 'o2'],
+  // the rim is listed twice as often so the star lands up there more often
+  starSpots: ['r4', 'r13', 'r21', 'r28', 'r35', 's3', 's4', 's5', 'a3', 't2', 'm1'],
   gimmick: 'eruption',
   gimmickParams: {
-    cableCarTarget: 's4',
-    lavaGroups: [
-      ['s0', 's1', 's2', 's3', 's4', 's5', 's6', 's7', 's8'],
-      ['r20', 'r21', 'r22', 'r23', 'r24'],
-    ],
+    cableCarTarget: crater[4],
+    lavaGroups: [crater, ash],
   },
   palette: {
     sky: ['#f2b49b', '#fbe3d0'],
@@ -74,15 +94,48 @@ export const VULKAN: MapDef = {
     path: '#e9ddd6',
     fog: '#f3cdbd',
   },
+  terrain: {
+    base: 0.7,
+    water: { high: -0.5, kind: 'lava' },
+    land: [
+      { x: 0, z: 0, rx: 34, rz: 26 },
+      { x: 30, z: -18, rx: 10, rz: 10 },
+      { x: 33, z: 12, rx: 9, rz: 10 },
+      { x: -26, z: 12, rx: 10, rz: 9 },
+    ],
+    cuts: [{ x: -38, z: -22, rx: 8, rz: 7 }],
+    hills: [
+      { x: 1, z: 15, r: 11, h: 5.2, rz: 7 },
+      { x: 2, z: 24, r: 9, h: 3 },
+      { x: -22, z: 0, r: 5, h: 0.8 },
+      { x: 20, z: 2, r: 6, h: 0.7 },
+    ],
+    channels: [{ points: VULKAN_LAVA, width: 3.2, kind: 'lava' }],
+    colors: { grass: '#a08a7e', grass2: '#bb9c84', sand: '#4a3f46', rock: '#7d6c70', path: '#ecdccc', seabed: '#3a1a10' },
+    scatter: [
+      { kind: 'lavarock', on: 'rock', density: 2.8, scale: [0.6, 1.3] },
+      { kind: 'lavarock', on: 'sand', density: 1.6, scale: [0.5, 1.1] },
+      { kind: 'rocksmall', on: 'grass', density: 3.2, scale: [0.7, 1.4] },
+      { kind: 'ashplant', on: 'grass', density: 5.72, scale: [0.8, 1.3] },
+      { kind: 'cactus', on: 'grass', density: 1, scale: [0.8, 1.3] },
+      { kind: 'deadtree', on: 'grass', density: 0.56, scale: [0.8, 1.2] },
+      { kind: 'crystal', on: 'rock', density: 0.3, scale: [0.6, 1.1] },
+      { kind: 'vent', on: 'grass', density: 0.18, scale: [0.8, 1.1] },
+    ],
+  },
   decor: [
-    { kind: 'volcano', x: 6, z: -6, s: 1 },
-    { kind: 'obsidian', x: -18, z: 8 },
-    { kind: 'obsidian', x: 16, z: -12 },
-    { kind: 'obsidian', x: 30, z: 4 },
+    { kind: 'volcano', x: 2, z: 27, s: 1.25 },
     { kind: 'cablecar', x: 0, z: 0 },
-    { kind: 'rock', x: -10, z: 12 },
-    { kind: 'rock', x: 12, z: 13 },
-    { kind: 'deadtree', x: -22, z: -10 },
+    { kind: 'temple', x: 31, z: -29, r: 2.6 },
+    { kind: 'mushroom', x: 39, z: 13, s: 1.3 },
+    { kind: 'mushroom', x: 36, z: 22, s: 1 },
+    { kind: 'mushroom', x: 41, z: 4, s: 0.8, r: 1 },
+    { kind: 'obsidian', x: -34, z: 2 },
+    { kind: 'obsidian', x: -30, z: 16, r: 1.2 },
+    { kind: 'bones', x: -8, z: -14, r: 0.6 },
+    { kind: 'minecart', x: 10, z: -27, r: 1.4 },
+    { kind: 'vent', x: -5, z: 6 },
+    { kind: 'vent', x: 12, z: 6 },
   ],
   musicKey: 'volcano',
 };

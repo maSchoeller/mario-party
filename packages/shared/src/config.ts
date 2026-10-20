@@ -1,7 +1,6 @@
 /** Balancing start values (SPEC 5.1) – tweakable via playtest/telemetry. */
 export const BALANCE = {
   startCoins: 10,
-  diceMax: 10,
   blueCoins: 3,
   redCoins: 3,
   finaleMultiplier: 2,
@@ -55,5 +54,5 @@ export const PLAYER_SHAPE: Record<PlayerColor, string> = {
   yellow: '◆',
 };
 
-export type CharacterId = 'rocco' | 'quaki' | 'pingo' | 'foxy';
-export const CHARACTERS: CharacterId[] = ['rocco', 'quaki', 'pingo', 'foxy'];
+export type CharacterId = 'rocco' | 'quaki' | 'pingo' | 'foxy' | 'bruno' | 'hoppla' | 'schildi' | 'zippy';
+export const CHARACTERS: CharacterId[] = ['rocco', 'quaki', 'pingo', 'foxy', 'bruno', 'hoppla', 'schildi', 'zippy'];

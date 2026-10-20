@@ -121,7 +121,7 @@ export class HostSession {
     // the recorded moderator says character names, never free-text nicknames (AUDIO-03)
     audio.characterOf = (name) => {
       const c = this.engine?.state.players.find((p) => p.name === name)?.character ?? this.slots.find((s) => s.name === name)?.character;
-      return c ? t(`char.${c}`) : null;
+      return c ?? null;
     };
   }
 
@@ -685,7 +685,7 @@ export class HostSession {
     const target = this.settings.bots || humans < 3 ? 4 : humans;
     while (this.slots.length < target) {
       const i = this.slots.length;
-      const character = CHARACTERS.find((c) => !this.slots.some((x) => x.character === c))!;
+      const character = this.randomFreeCharacter();
       this.slots.push({ slot: i, token: null, peerId: null, name: `${t(`char.${character}`)}`, character, color: PLAYER_COLORS[i], connected: false, cpu: true, motion: false, mode: 'relay' });
     }
     if (this.slots.length < 4) {
@@ -693,7 +693,7 @@ export class HostSession {
       // (open point, see docs/OPEN_POINTS.md) – we keep the bot to stay rule-consistent.
       while (this.slots.length < 4) {
         const i = this.slots.length;
-        const character = CHARACTERS.find((c) => !this.slots.some((x) => x.character === c))!;
+        const character = this.randomFreeCharacter();
         this.slots.push({ slot: i, token: null, peerId: null, name: t(`char.${character}`), character, color: PLAYER_COLORS[i], connected: false, cpu: true, motion: false, mode: 'relay' });
       }
     }
@@ -960,6 +960,8 @@ export class HostSession {
   /** Plays the engine events one after another with animation and moderator lines (BOARD-05). */
   private async present(events: GameEvent[]) {
     this.presenting = true;
+    // phones leave the decision screen right away (no double taps while the TV animates)
+    this.pushViews();
     const e = this.engine!;
     for (const ev of events) {
       while (this.paused) await new Promise((r) => setTimeout(r, 150));
@@ -984,10 +986,15 @@ export class HostSession {
           await this.say('mod.turn', { player: this.pname(ev.player) }, 700);
           break;
         case 'orderRoll':
-          this.board?.focus(ev.player, 26);
-          this.audio.sfx('dice');
-          await this.ui.dice([ev.value], ev.value, 1100 / this.speed());
-          this.ui.popAtPlayer(ev.player, `🎲 ${ev.value}`);
+          if (this.board) {
+            this.board.focus(ev.player, 16);
+            this.audio.sfx('dice');
+            // the order roll is a warm-up: a bit quicker than a real turn roll
+            await this.board.rollDice(ev.player, [ev.roll], this.speed() * 1.35, (k) => this.audio.diceClack(k));
+            this.ui.popAtPlayer(ev.player, `🎲 ${ev.value}`, 'good');
+            await this.sleep(350);
+            void this.board.clearDice(this.speed());
+          }
           break;
         case 'order':
           this.board?.overview();
@@ -995,15 +1002,23 @@ export class HostSession {
           await this.sleep(1200);
           break;
         case 'dice':
-          this.audio.sfx('dice');
-          this.board?.rigs[ev.player]?.setAnim('jump');
-          await this.ui.dice(ev.values, ev.total, 1300 / this.speed());
-          this.board?.rigs[ev.player]?.setAnim('idle');
-          await this.say('mod.dice', { player: this.pname(ev.player), total: ev.total }, 600);
+          if (this.board) {
+            this.board.focus(ev.player, 15);
+            this.audio.sfx('dice');
+            this.board.rigs[ev.player]?.setAnim('jump');
+            await this.board.rollDice(ev.player, ev.rolls, this.speed(), (k) => this.audio.diceClack(k));
+            this.board.rigs[ev.player]?.setAnim(ev.total > 0 ? 'cheer' : 'sad');
+            void this.board.celebrateDice(this.speed());
+            this.ui.diceResult(ev.rolls, ev.total, 1700 / this.speed());
+            // the moderator only calls out the number (AUDIO-03, v0.3)
+            await this.audio.sayNumber(ev.total, 900 / this.speed());
+            this.board.rigs[ev.player]?.setAnim('idle');
+            await this.board.clearDice(this.speed());
+          }
           break;
         case 'move':
           if (this.board) {
-            if (ev.kind === 'walk') this.audio.sfx('step');
+            if (ev.kind === 'walk' || ev.kind === 'back') this.audio.sfx('step');
             else this.audio.sfx('whoosh');
             this.board.focus(ev.player, ev.kind === 'walk' ? 20 : 30);
             const done = this.board.move(ev.player, ev.from, ev.to, ev.kind);
@@ -1222,6 +1237,7 @@ export class HostSession {
   private setPaused(p: boolean) {
     this.paused = p;
     this.stage.paused = p;
+    this.audio.setPaused(p);
     this.ui.pause(p, this.save?.code);
     if (p) {
       this.audio.stopVoice();
@@ -1359,7 +1375,7 @@ export class HostSession {
       case 'orderRoll':
         return { kind: 'orderRoll' };
       case 'turnMenu':
-        return { kind: 'turnMenu', canUseItem: p.canUseItem, items: e.state.players[p.player].items.map((id) => ({ id, usable: p.canUseItem && ITEMS[id].usable })) };
+        return { kind: 'turnMenu', canUseItem: p.canUseItem, items: e.state.players[p.player].items.map((id) => ({ id, usable: p.canUseItem && ITEMS[id].usable })), dice: p.dice };
       case 'miniPick':
         return { kind: 'miniPick', options: p.options };
       case 'branch': {
@@ -1371,7 +1387,7 @@ export class HostSession {
             // screen angle: +x right, +z up on the TV
             const angle = (Math.atan2(f.x - from.x, f.z - from.z) * 180) / Math.PI;
             // show how far the star is along each way (review finding: arrows alone don't help)
-            return { id, angle, labelKey: f.tags?.includes('sandbank') ? 'host.tideLow' : undefined, starDistance: distance(e, id, e.state.starField) + 1 };
+            return { id, angle, labelKey: f.tags?.includes('sandbank') || f.tags?.includes('ford') ? 'host.tideLow' : undefined, starDistance: distance(e, id, e.state.starField) + 1 };
           }),
         };
       }
@@ -1422,6 +1438,12 @@ export class HostSession {
       if (this.slots.some((s) => s.token === c.token)) continue;
       if (c.peerId) this.net.send(c.peerId, { t: 'view', v: this.claimEnvelope() });
     }
+  }
+
+  /** Bots pick a random free figure, so all 8 characters (and their dice) show up. */
+  private randomFreeCharacter(): CharacterId {
+    const free = CHARACTERS.filter((c) => !this.slots.some((x) => x.character === c));
+    return free[Math.floor(Math.random() * free.length)];
   }
 
   /** Dev/test hook (window.__wb) */

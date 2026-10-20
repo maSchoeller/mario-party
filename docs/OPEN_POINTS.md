@@ -1,6 +1,18 @@
 # Offene Punkte
 
-Stand 20.10.2026 (v0.2). Alles andere ist lokal lauffähig und getestet, siehe [STATUS.md](STATUS.md).
+Stand 20.10.2026 (v0.3). Alles andere ist lokal lauffähig und getestet, siehe [STATUS.md](STATUS.md).
+
+## 0. Neu in v0.3 (Feature-Branch, zur Abnahme)
+
+| Thema | Ergebnis | Zur Abstimmung |
+|---|---|---|
+| **Würfel** | 2 echte 3D-Würfel pro Zug: Standard + frei wählbarer 2. Würfel. 8 Charakterwürfel und 2 Würfel-Items (Risiko, Gold), alle mit Ø 3,5 Schritten, aber anderer Streuung. Negative Summe = rückwärts laufen. | Würfel-Items sind **Einmal-Items** (wie die anderen Items), keine dauerhafte Sammlung. |
+| **Figuren** | 8 statt 4: neu sind Bruno (Bär), Hoppla (Hase), Schildi (Schildkröte) und Zippy (Eichhörnchen). Alle Figuren sind mit mehr Details neu modelliert. | Farben der neuen Figuren und Namen der Würfel. |
+| **Maps** | Alle 3 Maps neu mit 61–73 Feldern und 4–5 Abzweigungen. Die Landschaft wird aus den Map-Daten gebaut (Höhen, Fluss/Lava/Kanal, Brücken, Steg, Gebäude an den Feldern, Vegetation). | Kokosnuss: Bei Flut sind Furt **und** Sandbank gesperrt. |
+| **Stimme** | Neue deutsche Stimme „DiMario“. Sie spricht nur noch an Höhepunkten und die Würfelzahl, sonst gibt es nur Untertitel. Die Browser-Sprachausgabe ist entfernt. | Welche Momente vertont sind: `VOICE_LINES` in `packages/shared/src/i18n/voice.ts`. |
+| **Ton** | Master-Kompressor, Equal-Power-Crossfades, Mini-Fades gegen Klicks bei allen Effekten, weiches Ducking unter der Stimme, Pause blendet den Ton ab, Würfel-Klacken bei jedem Aufprall. | – |
+| **Ladezeit** | Die Modelle sind zusammen 7,3 MB groß (vorher 0,9 MB), der Brettaufbau dauert 0,6–0,9 s. | Vor öffentlichem Deployment: meshopt-Kompression der GLBs (spart grob 60 %). |
+
 
 ## 1. Erledigt in v0.2
 
@@ -20,7 +32,7 @@ Stand 20.10.2026 (v0.2). Alles andere ist lokal lauffähig und getestet, siehe [
 | Thema | Spec | Was fehlt |
 |---|---|---|
 | **Nutzungsrechte Audio** | AUDIO-07 | ElevenLabs läuft im **Free-Tarif** (nur nicht-kommerziell, Namensnennung). Suno läuft über den **inoffiziellen** Drittanbieter sunoapi.org, die Rechtelage ist unklar. Vor öffentlicher Freigabe klären oder mit bezahlten Konten neu erzeugen (ein Befehl je Skript). Details: [ASSETS_LICENSES.md](ASSETS_LICENSES.md). |
-| **Moderator-Stimme** | AUDIO-03 | Premade-Stimme „Callum“, weil der Free-Tarif keine eigene oder Bibliotheks-Stimme per API erlaubt. Mit bezahltem Tarif per Voice Design eine echte „Papageien-Kapitän“-Stimme erzeugen, `VOICE.voiceId` in `scripts/assets/voice.ts` tauschen und neu generieren. Bitte einmal reinhören: Tempo und Betonung der zusammengesetzten Sätze sind nur technisch geprüft. |
+| **Moderator-Stimme** | AUDIO-03 | Erledigt in v0.3: deutsche Bibliotheksstimme „DiMario“, nur ganze Sätze. Offen: die Lizenzbedingungen der Bibliotheksstimme prüfen. |
 | **Azure-Deployment** | OPS-01..04, 12 | Subscription, Ressourcengruppe, Service Principal (OIDC), Budget-E-Mail. `infra/main.bicep` ist lokal valide, ein `what-if` gegen Azure steht aus. |
 | **GitHub Container Registry** | 12 | Push-Rechte/Package-Sichtbarkeit |
 | **Application Insights** | PRIV-02 | Connection-String (Weiterleitung ungetestet gegen Azure) |
@@ -41,12 +53,12 @@ Stand 20.10.2026 (v0.2). Alles andere ist lokal lauffähig und getestet, siehe [
 
 ## 4. Bewusste Vereinfachungen / Design-Entscheidungen (zur Abstimmung)
 
-- **Moderator sagt Figurennamen** („Foxy würfelt eine 7!“) statt der frei gewählten Nicknames, die sich nicht
-  vorproduzieren lassen. Zahlen über 40 und Zeilen mit unbekannten Werten fallen auf die Browser-Sprachsynthese zurück.
+- **Moderator spricht sparsam** (v0.3): Würfelzahl, Map-Intro, Gezeiten/Ausbruch/Zug, Stern, Duell, Minispiel,
+  Finale, Bonus und Sieger (mit Figurennamen). Alles mit Spielernamen steht nur im Untertitel.
 - **Minispiel-Physik** läuft deterministisch in eigener TypeScript-Simulation. Havok nutzen wir nur für visuelle Effekte.
 - **Teamzuteilung** (Spec 17.7): nach Feldfarbe (blau/rot, neutrale Felder zufällig) oder „zufällig“.
 - **3 Spieler ohne Bots**: Runden-Minispiele sind dann immer „Jeder gegen Jeden“.
 - **Bahnticket** ist eine map-spezifische Ressource (nicht eines der 8 Items).
 - **Kein Speichern mitten im Minispiel**: Nach Host-Reload startet ein laufendes Minispiel neu.
 - **Balancing-Werte** per Bot-Simulation justiert ([BALANCING.md](BALANCING.md)), echter Playtest steht aus.
-- **Mini-Würfel** lässt 1–3 Schritte frei wählen.
+- **Mini-Würfel** lässt 1–3 Schritte frei wählen (ersetzt beide Würfel).

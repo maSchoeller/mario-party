@@ -1,86 +1,88 @@
-import { hasKey, t, type Params } from './index';
+import { CHARACTERS, type CharacterId } from '../config';
+import type { Params } from './index';
 
 /**
- * Moderator voice lines (AUDIO-03) are pre-recorded as *segments*: the literal parts of
- * each `mod.*` template plus every value a placeholder can take (character names,
- * numbers, item/map/minigame names …). At runtime a line is spoken by chaining its
- * segments. Player nicknames are free text and cannot be recorded, so the moderator
- * says the player's character name instead (the subtitle still shows the nickname).
+ * Moderator voice (AUDIO-03, v0.3). Deliberately sparse: the moderator only speaks at
+ * the big moments, always as one whole, naturally recorded line – never stitched
+ * together from snippets and never with player nicknames. Everything else is shown as
+ * subtitle only.
  *
- * The same function drives the generator (scripts/assets/voice.ts) and the host, so
- * the recorded set always matches what the host asks for.
+ * Clip ids → spoken text (eleven_v3 audio tags in brackets steer the delivery). The
+ * same table drives the generator (scripts/assets/voice.ts) and the host.
  */
-export const VOICE_PLAYER_PARAMS = new Set(['player', 'leader', 'players']);
-export const VOICE_MAX_NUMBER = 40;
+export const VOICE_LINES: Record<string, string> = {
+  'mod.welcome': '[excited] Ahoi, Bande! Ich bin Käpt’n Plapperschnabel. Scannt den Code und rein ins Vergnügen!',
+  'intro.kokosnuss': '[excited] Willkommen an der Kokosnuss-Küste! Achtet auf Ebbe und Flut!',
+  'intro.vulkan': '[excited] Willkommen am Vulkan-Gipfel! Hier wird’s richtig heiß!',
+  'intro.bimmelbahn': '[excited] Willkommen in Bimmelbahn-Stadt! Einsteigen, bitte!',
+  'mod.orderRoll': 'Würfelt die Reihenfolge aus!',
+  'mod.tideHigh': '[shouting] Flut! Der Fluss ist voll!',
+  'mod.tideLow': 'Ebbe! Die Wege sind wieder frei!',
+  'mod.cannon': '[excited] Kokos-Kanone!',
+  'mod.eruption': '[shouting] Ausbruch!',
+  'mod.trainComing': '[excited] Tuut tuut! Die Bimmelbahn kommt!',
+  'mod.starBought': '[excited] Ein Stern!',
+  'mod.duel': '[excited] Duell!',
+  'mod.lucky': 'Ab ans Glücksrad!',
+  'mod.minigameTime': '[excited] Minispiel-Zeit!',
+  'mod.draw': 'Unentschieden!',
+  'mod.catchup': 'Halbzeit! Zeit für eine Aufholjagd!',
+  'mod.finale': '[excited] Das Finale beginnt! Ab jetzt zählt alles doppelt!',
+  'mod.bonusIntro': 'Die Partie ist vorbei! Jetzt kommen die Bonus-Sterne!',
+  'mod.winner': '[dramatic] Und die Bande wird angeführt von …',
+  'mod.marathonIntro': '[excited] Minispiel-Marathon!',
+};
 
-/** Segment texts for a line, or null when a part cannot be voiced (→ fallback). */
-export function voiceSegments(key: string, params: Params | undefined, characterName: (player: string) => string | null): string[] | null {
-  if (!hasKey(key)) return null;
-  const raw = t(key);
-  const out: string[] = [];
-  const re = /\{(\w+)\}/g;
-  let last = 0;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(raw))) {
-    pushLiteral(out, raw.slice(last, m.index));
-    last = m.index + m[0].length;
-    const name = m[1];
-    const v = params?.[name];
-    if (v === undefined) return null;
-    if (VOICE_PLAYER_PARAMS.has(name)) {
-      const parts = String(v).split(` ${t('voice.and')} `);
-      for (const [i, p] of parts.entries()) {
-        if (i > 0) out.push(t('voice.and'));
-        const c = characterName(p);
-        if (c === null) {
-          // "bonus.nobody" etc. is a key, not a player
-          if (hasKey(p)) out.push(clean(t(p)));
-          else return null;
-        } else out.push(c);
-      }
-    } else if (typeof v === 'number') {
-      if (!Number.isInteger(v) || v < 0 || v > VOICE_MAX_NUMBER) return null;
-      out.push(String(v));
-    } else if (hasKey(v)) {
-      out.push(clean(t(v)));
-    } else {
-      return null;
-    }
-  }
-  pushLiteral(out, raw.slice(last));
+/** Range of dice totals the moderator calls out (risk die −2 … four dice). */
+export const VOICE_NUMBERS = { min: -2, max: 26 };
+
+const WORDS = ['Null', 'Eins', 'Zwei', 'Drei', 'Vier', 'Fünf', 'Sechs', 'Sieben', 'Acht', 'Neun', 'Zehn', 'Elf', 'Zwölf', 'Dreizehn', 'Vierzehn', 'Fünfzehn', 'Sechzehn', 'Siebzehn', 'Achtzehn', 'Neunzehn', 'Zwanzig'];
+
+/** German number word as it should be spoken ("Siebenundzwanzig", "Minus zwei"). */
+export function numberWord(n: number): string {
+  if (n < 0) return `Minus ${numberWord(-n).toLowerCase()}`;
+  if (n <= 20) return WORDS[n];
+  const ones = n % 10;
+  const tens = ['', '', 'zwanzig', 'dreißig'][Math.floor(n / 10)];
+  return ones ? `${ones === 1 ? 'Ein' : WORDS[ones]}und${tens}` : tens[0].toUpperCase() + tens.slice(1);
+}
+
+/** Every clip the generator records: lines, numbers and the 8 character names. */
+export function allVoiceClips(charName: (c: CharacterId) => string): Record<string, string> {
+  const out: Record<string, string> = { ...VOICE_LINES };
+  for (let n = VOICE_NUMBERS.min; n <= VOICE_NUMBERS.max; n++) out[`num.${n}`] = `[excited] ${numberWord(n)}!`;
+  for (const c of CHARACTERS) out[`char.${c}`] = `[excited] ${charName(c)}!`;
   return out;
 }
 
-function pushLiteral(out: string[], s: string) {
-  const c = clean(s);
-  if (/\p{L}/u.test(c)) out.push(c);
-}
-
-/** Normalized text as used for recording + lookup. */
-export function clean(s: string): string {
-  return s
-    .replace(/[★●▲■◆]/g, '')
-    .replace(/^[\s,.;:!?–-]+/, '')
-    .replace(/[\s,;:–-]+$/, '')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-/** Every segment that may be requested (for the generator). */
-export function allVoiceSegments(dict: Record<string, string>, characterNames: string[]): string[] {
-  const set = new Set<string>();
-  const valueKeys = Object.keys(dict).filter((k) => /^(item\.\w+\.name|map\.\w+\.name|format\.\w+|bonus\.\w+\.name|mg\.\w+\.name|station\.\w+)$/.test(k));
-  for (const key of Object.keys(dict).filter((k) => k.startsWith('mod.'))) {
-    const raw = dict[key];
-    for (const lit of raw.split(/\{\w+\}/)) {
-      const c = clean(lit);
-      if (/\p{L}/u.test(c)) set.add(c);
-    }
+/**
+ * Clips to play for a moderator line, or [] (subtitle only). `character` resolves the
+ * player param to a character id (winner announcement).
+ */
+export function voiceClips(key: string, params: Params | undefined, character: (player: string) => CharacterId | null): string[] {
+  if (key === 'mod.intro') {
+    const id = /^map\.(\w+)\.name$/.exec(String(params?.map ?? ''))?.[1];
+    return id && VOICE_LINES[`intro.${id}`] ? [`intro.${id}`] : [];
   }
-  for (const k of valueKeys) set.add(clean(dict[k]));
-  for (const c of characterNames) set.add(c);
-  for (let n = 0; n <= VOICE_MAX_NUMBER; n++) set.add(String(n));
-  set.add(clean(dict['voice.and']));
-  if (dict['bonus.nobody']) set.add(clean(dict['bonus.nobody']));
-  return [...set];
+  if (key === 'mod.winner') {
+    const c = params?.player !== undefined ? character(String(params.player)) : null;
+    return c ? ['mod.winner', `char.${c}`] : ['mod.winner'];
+  }
+  return VOICE_LINES[key] ? [key] : [];
+}
+
+export function numberClip(n: number): string | null {
+  return Number.isInteger(n) && n >= VOICE_NUMBERS.min && n <= VOICE_NUMBERS.max ? `num.${n}` : null;
+}
+
+/** File name of a clip (public/media/audio/voice/<file>.mp3). */
+export function clipFile(id: string): string {
+  return id.replace(/\./g, '_');
+}
+
+/** The manifest stores per clip id the hash of the recorded text (re-record on change). */
+export function voiceHash(text: string): string {
+  let h = 2166136261;
+  for (const ch of text) h = Math.imul(h ^ ch.codePointAt(0)!, 16777619) >>> 0;
+  return h.toString(16);
 }

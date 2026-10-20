@@ -1,6 +1,7 @@
 import type { BotLevel, CharacterId, PlayerColor, RoundCount } from '../config';
 import type { MgFormat } from '../minigames/types';
 import type { RngState } from '../rng';
+import type { DiceId } from './dice';
 import type { ItemId } from './items';
 
 export type GameMode = 'board' | 'marathon';
@@ -59,10 +60,11 @@ export interface WheelSegment {
 
 export type Pending =
   | { kind: 'orderRoll'; player: number }
-  | { kind: 'turnMenu'; player: number; canUseItem: boolean }
+  /** dice: options for the second die (the first one is always the standard die) */
+  | { kind: 'turnMenu'; player: number; canUseItem: boolean; dice: DiceId[] }
   /** Mini-Würfel: the player chooses 1, 2 or 3 steps (precise landing) */
   | { kind: 'miniPick'; player: number; options: number[] }
-  | { kind: 'branch'; player: number; options: string[] }
+  | { kind: 'branch'; player: number; options: string[]; backward?: boolean }
   | { kind: 'shop'; player: number; offer: ItemId[] }
   | { kind: 'buyStar'; player: number; price: number }
   | { kind: 'station'; player: number; destinations: string[]; ticketPrice: number; hasTicket: boolean }
@@ -84,7 +86,8 @@ export type Pending =
   | { kind: 'gameOver' };
 
 export type Action =
-  | { type: 'roll' }
+  /** `dice` = choice for the second die (turn menu); ignored for the order roll */
+  | { type: 'roll'; dice?: DiceId }
   | { type: 'pickSteps'; steps: number }
   | { type: 'useItem'; item: ItemId }
   | { type: 'branch'; to: string }
@@ -98,7 +101,8 @@ export type Action =
 
 export interface TurnState {
   player: number;
-  dice: number[];
+  dice: DiceRoll[];
+  /** steps left; negative = walking backwards */
   remaining: number;
   rolled: boolean;
   usedItem: ItemId | null;
@@ -111,6 +115,14 @@ export interface TurnState {
   stepsTaken: number;
   /** after landing the turn may still wait for e.g. a duel */
   afterLanding?: 'duel' | null;
+}
+
+export interface DiceRoll {
+  dice: DiceId;
+  /** face index 0..5 */
+  face: number;
+  steps: number;
+  coins: number;
 }
 
 export interface GimmickState {
@@ -157,10 +169,10 @@ export type GameEvent =
   | { type: 'announce'; key: string; params?: Record<string, string | number>; player?: number }
   | { type: 'roundStart'; round: number; total: number }
   | { type: 'turnStart'; player: number }
-  | { type: 'orderRoll'; player: number; value: number }
+  | { type: 'orderRoll'; player: number; value: number; roll: DiceRoll }
   | { type: 'order'; order: number[] }
-  | { type: 'dice'; player: number; values: number[]; total: number }
-  | { type: 'move'; player: number; from: string; to: string; kind: 'walk' | 'warp' | 'cannon' | 'wash' | 'ride' | 'cable' }
+  | { type: 'dice'; player: number; rolls: DiceRoll[]; total: number }
+  | { type: 'move'; player: number; from: string; to: string; kind: 'walk' | 'back' | 'warp' | 'cannon' | 'wash' | 'ride' | 'cable' }
   | { type: 'land'; player: number; field: string; fieldType: string }
   | { type: 'coins'; player: number; delta: number; reason: string }
   | { type: 'stars'; player: number; delta: number; reason: string }

@@ -7,12 +7,14 @@ import {
   GlowLayer,
   HavokPlugin,
   HemisphericLight,
+  ImageProcessingConfiguration,
+  Mesh,
+  MeshBuilder,
   Scene,
   ShadowGenerator,
   StandardMaterial,
   Vector3,
   type AbstractMesh,
-  type Mesh,
 } from '@babylonjs/core';
 import { AssetLibrary } from './assets';
 
@@ -42,6 +44,7 @@ export class Stage {
   private shake = 0;
   private matCache = new Map<string, StandardMaterial>();
   private quality = 2;
+  private sky: Mesh;
   private fpsSamples: number[] = [];
   private updaters = new Set<(dt: number) => void>();
   timeScale = 1;
@@ -74,6 +77,17 @@ export class Stage {
     this.shadows.darkness = 0.45;
     this.glow = new GlowLayer('glow', scene, { blurKernelSize: 32 });
     this.glow.intensity = 0.6;
+    // gentle grading: a touch of contrast and a soft vignette for the TV look
+    const ip = scene.imageProcessingConfiguration;
+    ip.isEnabled = true;
+    ip.contrast = 1.1;
+    ip.exposure = 1.04;
+    ip.vignetteEnabled = true;
+    ip.vignetteWeight = 1.6;
+    ip.vignetteStretch = 0.4;
+    ip.vignetteColor.set(0.12, 0.1, 0.2, 0);
+    ip.vignetteBlendMode = ImageProcessingConfiguration.VIGNETTEMODE_MULTIPLY;
+    this.sky = this.buildSky();
 
     // ?quality=0 forces the lowest quality (software rendering in automated tests)
     const q = new URLSearchParams(location.search).get('quality');
@@ -200,9 +214,37 @@ export class Stage {
     mesh.receiveShadows = true;
   }
 
+  /** Gradient dome around everything (vertex colors set per map in setSky). */
+  private buildSky(): Mesh {
+    const dome = MeshBuilder.CreateSphere('sky', { diameter: 1000, segments: 16, sideOrientation: Mesh.BACKSIDE }, this.scene);
+    const mat = new StandardMaterial('skyMat', this.scene);
+    mat.disableLighting = true;
+    mat.emissiveColor = Color3.White();
+    mat.fogEnabled = false;
+    mat.backFaceCulling = false;
+    dome.material = mat;
+    dome.infiniteDistance = true;
+    dome.isPickable = false;
+    dome.applyFog = false;
+    return dome;
+  }
+
   setSky(top: string, bottom: string, fog: string): void {
     const b = Color3.FromHexString(top);
     this.scene.clearColor = new Color4(b.r, b.g, b.b, 1);
+    // zenith = top, horizon = fog color (matches the distant board), below = bottom
+    const zen = Color3.FromHexString(top);
+    const hor = Color3.FromHexString(fog);
+    const low = Color3.FromHexString(bottom);
+    const pos = this.sky.getVerticesData('position')!;
+    const col: number[] = [];
+    for (let i = 0; i < pos.length; i += 3) {
+      const y = pos[i + 1] / 500;
+      const c = y > 0 ? Color3.Lerp(hor, zen, Math.pow(y, 0.55)) : Color3.Lerp(hor, low, Math.min(1, -y * 3));
+      col.push(c.r, c.g, c.b, 1);
+    }
+    this.sky.setVerticesData('color', col);
+    this.sky.useVertexColors = true;
     this.scene.fogColor = Color3.FromHexString(fog);
     document.body.style.setProperty('--sky-top', top);
     document.body.style.setProperty('--sky-bottom', bottom);

@@ -437,3 +437,6 @@ playwright-report/
 
 # generated raw assets (Suno/ElevenLabs downloads, Blender caches)
 assets-src/
+
+# authoring previews (map-svg.ts)
+apps/web/public/dev-maps/

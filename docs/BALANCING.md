@@ -1,5 +1,35 @@
 # Balancing & unabhängiger Review
 
+## v0.3: Würfel und größere Maps
+
+Gemessen mit `npx tsx packages/shared/scripts/dice-balance.ts 96`: 96 Partien je Map à 20 Runden,
+4 gleich starke Bots (mittel), Figuren über alle Sitze rotiert. Der einzige systematische Unterschied
+ist also der Charakterwürfel.
+
+| Würfel | Flächen | Ø Schritte (+ Münzen × 0,4) | Siegquote (Soll 25 %) |
+|---|---|---|---|
+| Standard | 1 2 3 4 5 6 | 3,50 | – |
+| Rocco – Glitzer | 1+2● 2+2● 3+2● 3 4 5+1● | 3,47 | 25,0 % |
+| Quaki – Angeber | 0+2● 2 3 4 5 6 | 3,47 | 20,8 % |
+| Pingo – Rutsch | 1 1 4 4 5 6 | 3,50 | 29,9 % |
+| Foxy – Fuchs | −1 2 4 4 5 7 | 3,50 | 24,3 % |
+| Bruno – Kraft | 0 0 5 5 5 6 | 3,50 | 18,1 % |
+| Hoppla – Sprint | 1 1 1 6 6 6 | 3,50 | 24,3 % |
+| Schildi – Sicher | 3 3 3 4 4 4 | 3,50 | 27,8 % |
+| Zippy – Nuss | 0+4● 1+3● 3 4 5 5 | 3,47 | 29,9 % |
+| Item: Risiko | −2 −1 3 6 7 8 | 3,50 | – |
+| Item: Gold | 1+4● 2+3● 3+4● 1+4● 2+3● 3+4● | 3,47 | – |
+
+- Bei 144 Partien je Figur liegt der Zufallsfehler bei ±3,6 Prozentpunkten. Alle Figuren liegen damit
+  innerhalb von 2σ um 25 %. Bruno ist der Kandidat für den echten Playtest.
+- Ein erster Lauf mit Münzwert 0,5 ergab schwächere Münzwürfel. Deshalb wurde der Münzwert auf 0,4 Schritte
+  gesenkt und die Münzwürfel je um eine Münze ergänzt.
+- Tempo: Ø 7,2–7,5 Felder pro Zug. Gekaufte Sterne pro Partie: Kokosnuss 11, Vulkan 12,5, Bimmelbahn 16
+  (vorher je Map ähnlich, bei kleineren Maps).
+- Rückwärtslaufen (Summe < 0) ist selten (< 0,1 % der Züge) und kommt praktisch nur mit dem Risiko-Würfel vor.
+
+## v0.1/v0.2
+
 Ein unabhängiger Review-Subagent hat Spiel und Spielmechanik geprüft (Fuzz-Test mit 900 Partien
 ohne Absturz/Softlock, Bot-Simulationen, Screenshots). Die Befunde wurden umgesetzt; gemessen wird
 mit `npx tsx packages/shared/scripts/balance.ts 60` (60 Bot-Partien je Map, 20 Runden).

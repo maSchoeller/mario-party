@@ -26,7 +26,10 @@ export interface FieldDef {
   y?: number;
   /** Outgoing connections. >1 = branch (BOARD-01). */
   next: string[];
-  /** Map specific tags used by gimmicks, e.g. 'sandbank', 'lava', 'track', 'summit'. */
+  /**
+   * Map specific tags used by gimmicks and the renderer, e.g. 'sandbank' / 'ford'
+   * (flooded at high tide), 'bridge', 'pier', 'track', 'summit'.
+   */
   tags?: string[];
   /** Station name key (Bimmelbahn) */
   label?: string;
@@ -70,6 +73,43 @@ export interface MapDef {
     cableCarTarget?: string;
   };
   /** Decoration hints for the renderer (positions of landmarks). */
-  decor?: { kind: string; x: number; z: number; s?: number; r?: number }[];
+  decor?: DecorDef[];
+  /** Landscape the renderer builds around the field graph (v0.3). */
+  terrain: TerrainDef;
   musicKey: string;
+}
+
+export interface DecorDef {
+  kind: string;
+  x: number;
+  z: number;
+  /** uniform scale */
+  s?: number;
+  /** yaw in radians */
+  r?: number;
+  /** optional runtime tint for props with a `tint` material */
+  tint?: string;
+}
+
+/**
+ * Landscape description (renderer only, the rules never look at it). Heights in world
+ * units; the board's field graph is laid into this terrain and paths are flattened.
+ */
+export interface TerrainDef {
+  /** height of the flat land */
+  base: number;
+  /** water surface (y) at high and low tide; maps without tide use `high` only */
+  water: { high: number; low?: number; kind: 'sea' | 'lava' };
+  /** land blobs; their smooth union defines the coastline */
+  land: { x: number; z: number; rx: number; rz: number; rot?: number }[];
+  /** carved out of the land again (bays) */
+  cuts?: { x: number; z: number; rx: number; rz: number; rot?: number }[];
+  /** additive hills (gaussian), h may be negative for basins */
+  hills?: { x: number; z: number; r: number; h: number; rz?: number }[];
+  /** channels (river, lava stream, canal): carved below the water level */
+  channels?: { points: [number, number][]; width: number; kind: 'water' | 'lava' }[];
+  /** ground colors */
+  colors: { grass: string; grass2: string; sand: string; rock: string; path: string; seabed: string };
+  /** procedural vegetation / detail scatter, density per 100 m² of matching ground */
+  scatter: { kind: string; on: 'grass' | 'sand' | 'rock'; density: number; scale?: [number, number]; tint?: string[] }[];
 }

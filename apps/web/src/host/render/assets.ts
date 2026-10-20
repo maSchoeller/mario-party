@@ -1,4 +1,4 @@
-import { LoadAssetContainerAsync, Mesh, TransformNode, VertexData, type AssetContainer, type Material } from '@babylonjs/core';
+import { LoadAssetContainerAsync, Mesh, TransformNode, VertexData, type AssetContainer, type Material, type Matrix } from '@babylonjs/core';
 import type { Stage } from './stage';
 
 /**
@@ -10,7 +10,22 @@ import type { Stage } from './stage';
  * Every lookup returns null when a file is missing, so the procedural placeholders
  * remain as fallback.
  */
-export const MODEL_FILES = ['rocco', 'quaki', 'pingo', 'foxy', 'moderator', 'props'] as const;
+export const MODEL_FILES = [
+  'rocco',
+  'quaki',
+  'pingo',
+  'foxy',
+  'bruno',
+  'hoppla',
+  'schildi',
+  'zippy',
+  'moderator',
+  'props',
+  'props_island',
+  'props_volcano',
+  'props_city',
+] as const;
+const PROP_FILES = ['props', 'props_island', 'props_volcano', 'props_city'];
 const BASE = `${import.meta.env.BASE_URL}media/models/`;
 
 interface Part {
@@ -90,12 +105,44 @@ export class AssetLibrary {
     });
   }
 
+  /** File that holds prop `id` (props are split by theme), or null. */
+  propFile(id: string): string | null {
+    return PROP_FILES.find((f) => this.has(f, id)) ?? null;
+  }
+
+  hasProp(id: string): boolean {
+    return this.propFile(id) !== null;
+  }
+
   /** A prop from the library as its own node, or null (→ caller uses the fallback). */
   prop(id: string, name: string, parent?: TransformNode, tint?: string): TransformNode | null {
-    if (!this.has('props', id)) return null;
+    const file = this.propFile(id);
+    if (!file) return null;
     const root = new TransformNode(name, this.stage.scene);
     if (parent) root.parent = parent;
-    for (const m of this.attach('props', id, root, { tint })) this.stage.castShadow(m, false);
+    for (const m of this.attach(file, id, root, { tint })) this.stage.castShadow(m, false);
     return root;
+  }
+
+  /**
+   * Many copies of a prop as GPU thin instances (one draw call per material part) –
+   * vegetation and other scatter. Returns the part meshes, or null if the prop is missing.
+   */
+  instances(id: string, name: string, parent: TransformNode, matrices: Matrix[], opts: { tint?: string; shadows?: boolean } = {}): Mesh[] | null {
+    const file = this.propFile(id);
+    if (!file || !matrices.length) return null;
+    const buf = new Float32Array(matrices.length * 16);
+    matrices.forEach((mt, i) => mt.copyToArray(buf, i * 16));
+    return this.groups.get(file)!.get(id)!.map((p) => {
+      const m = p.mesh.clone(`${name}_${p.material}`, parent);
+      m.setEnabled(true);
+      m.material = this.material(p.material, opts.tint);
+      m.thinInstanceSetBuffer('matrix', buf, 16, true);
+      m.isPickable = false;
+      m.thinInstanceRefreshBoundingInfo(false);
+      if (opts.shadows !== false) this.stage.castShadow(m, false);
+      m.receiveShadows = true;
+      return m;
+    });
   }
 }

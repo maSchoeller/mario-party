@@ -6,6 +6,10 @@ export const CHAR_EMOJI: Record<CharacterId, string> = {
   quaki: '🐸',
   pingo: '🐧',
   foxy: '🦊',
+  bruno: '🐻',
+  hoppla: '🐰',
+  schildi: '🐢',
+  zippy: '🐿️',
 };
 
 export const ITEM_EMOJI: Record<string, string> = {
@@ -17,6 +21,8 @@ export const ITEM_EMOJI: Record<string, string> = {
   trapStone: '🪨',
   shield: '☂️',
   starTicket: '🎫',
+  riskDice: '💥',
+  goldDice: '🪙',
 };
 
 export const WHEEL_EMOJI: Record<string, string> = {

@@ -180,25 +180,26 @@ export class HostUI {
     setTimeout(() => el.remove(), ms);
   }
 
-  dice(values: number[], total: number, ms = 1400): Promise<void> {
-    const faces = values.map(() => h('div', { class: 'die rolling' }, '?'));
-    const el = h('div', { class: 'dice-box' }, faces, values.length > 1 ? h('div', { class: 'total' }, `= ${total}`) : null);
-    this.layers.center.append(el);
-    let k = 0;
-    const iv = setInterval(() => faces.forEach((f) => (f.textContent = String(1 + ((k++ * 7) % 10)))), 60);
-    return new Promise((r) => {
-      setTimeout(() => {
-        clearInterval(iv);
-        faces.forEach((f, i) => {
-          f.textContent = String(values[i]);
-          f.classList.remove('rolling');
-        });
-      }, ms * 0.55);
-      setTimeout(() => {
-        el.remove();
-        r();
-      }, ms);
+  /** Result card after the 3D dice have landed: the dice values and the big total. */
+  diceResult(rolls: { steps: number; coins: number }[], total: number, ms = 1700): void {
+    // "3 + 5 − 2": the first value keeps its sign, later ones show it as the operator
+    const sum: HTMLElement[] = [];
+    rolls.forEach((r, i) => {
+      if (i) sum.push(h('span', { class: 'op' }, r.steps < 0 ? '−' : '+'));
+      sum.push(h('span', { class: `dv${r.steps < 0 ? ' neg' : ''}` }, String(i ? Math.abs(r.steps) : r.steps)));
     });
+    const coins = rolls.reduce((a, x) => a + x.coins, 0);
+    const el = h(
+      'div',
+      { class: `dice-result card${total < 0 ? ' back' : ''}` },
+      rolls.length > 1 ? h('div', { class: 'sum' }, sum) : null,
+      h('div', { class: 'total' }, String(total)),
+      total < 0 ? h('div', { class: 'hint' }, t('host.diceBack')) : null,
+      coins ? h('div', { class: 'coins' }, `+${coins} ●`) : null,
+    );
+    this.layers.center.append(el);
+    setTimeout(() => el.classList.add('out'), ms - 250);
+    setTimeout(() => el.remove(), ms);
   }
 
   wheel(segments: string[], result: number, ms = 2600): Promise<void> {
