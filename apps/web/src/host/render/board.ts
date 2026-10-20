@@ -185,8 +185,10 @@ export class BoardView {
       l.position.y = 0.22;
     }
     if (f.type === 'shop') {
-      const stall = hut(s, `shop_${f.id}`, this.map.palette.accent, this.root);
-      stall.scaling.setAll(0.55);
+      const model = s.assets.prop('stall', `shop_${f.id}`, this.root, this.map.palette.accent);
+      const stall = model ?? hut(s, `shop_${f.id}`, this.map.palette.accent, this.root);
+      stall.scaling.setAll(model ? 0.7 : 0.55);
+      if (model) stall.rotation.y = Math.atan2(pos.x, pos.z) + Math.PI;
       stall.position.set(pos.x * 1.12, 0, pos.z * 1.12);
     }
     if (f.type === 'station' && f.label) {
@@ -204,30 +206,37 @@ export class BoardView {
 
   private buildDecor() {
     const s = this.stage;
+    const lib = s.assets;
     for (const [i, d] of (this.map.decor ?? []).entries()) {
       let node: TransformNode | Mesh;
       switch (d.kind) {
         case 'palm':
-          node = palm(s, `palm${i}`, this.root, 1.1);
+          node = lib.prop('palm', `palm${i}`, this.root) ?? palm(s, `palm${i}`, this.root, 1.1);
+          node.scaling.setAll(1.1);
           break;
         case 'hut':
-          node = hut(s, `hut${i}`, i % 2 ? '#e8767a' : '#6f9de6', this.root);
+          node = lib.prop('hut', `hut${i}`, this.root, i % 2 ? '#e8767a' : '#6f9de6') ?? hut(s, `hut${i}`, i % 2 ? '#e8767a' : '#6f9de6', this.root);
           break;
         case 'house':
-          node = hut(s, `house${i}`, ['#e8767a', '#6f9de6', '#f4a259', '#6cc69a'][i % 4], this.root);
+          node = lib.prop('house', `house${i}`, this.root, ['#e8767a', '#6f9de6', '#f4a259', '#6cc69a'][i % 4]) ?? hut(s, `house${i}`, ['#e8767a', '#6f9de6', '#f4a259', '#6cc69a'][i % 4], this.root);
           node.scaling.setAll(1.3);
           break;
         case 'rock':
-          node = rock(s, `rock${i}`, 1.6, '#b9b6c4', this.root);
+          node = lib.prop('rock', `rock${i}`, this.root) ?? rock(s, `rock${i}`, 1.6, '#b9b6c4', this.root);
           break;
         case 'tree':
-          node = tree(s, `tree${i}`, this.root);
+          node = lib.prop('tree', `tree${i}`, this.root) ?? tree(s, `tree${i}`, this.root);
           break;
         case 'deadtree':
-          node = cyl(s, `dtree${i}`, { top: 0.15, bottom: 0.5, h: 3, tess: 5 }, '#5a4a48', this.root);
-          node.position.y = 1.5;
+          node = lib.prop('deadtree', `dtree${i}`, this.root) ?? cyl(s, `dtree${i}`, { top: 0.15, bottom: 0.5, h: 3, tess: 5 }, '#5a4a48', this.root);
+          if (!lib.has('props', 'deadtree')) node.position.y = 1.5;
           break;
         case 'obsidian': {
+          const model = lib.prop('obsidian', `obs${i}`, this.root);
+          if (model) {
+            node = model;
+            break;
+          }
           const n = new TransformNode(`obs${i}`, s.scene);
           n.parent = this.root;
           for (let k = 0; k < 3; k++) {
@@ -239,6 +248,12 @@ export class BoardView {
           break;
         }
         case 'volcano': {
+          const model = lib.prop('volcano', `volcano${i}`, this.root);
+          if (model) {
+            for (const m of model.getChildMeshes()) s.receiveShadow(m);
+            node = model;
+            break;
+          }
           const n = new TransformNode(`volcano${i}`, s.scene);
           n.parent = this.root;
           // crater sits behind the summit path; the path crosses its flank
@@ -271,6 +286,11 @@ export class BoardView {
           continue;
         }
         case 'cannon': {
+          const model = lib.prop('cannon', `cannon${i}`, this.root);
+          if (model) {
+            node = model;
+            break;
+          }
           const n = new TransformNode(`cannon${i}`, s.scene);
           n.parent = this.root;
           cyl(s, `cannonBase${i}`, { d: 1.6, h: 0.6, tess: 8 }, '#8a5a3c', n).position.y = 0.3;
@@ -282,6 +302,11 @@ export class BoardView {
           break;
         }
         case 'crab': {
+          const model = lib.prop('crab', `crab${i}`, this.root);
+          if (model) {
+            node = model;
+            break;
+          }
           const n = new TransformNode(`crab${i}`, s.scene);
           n.parent = this.root;
           const body = sphere(s, `crabBody${i}`, 1.2, '#e8676b', 4, n);
@@ -292,6 +317,12 @@ export class BoardView {
           break;
         }
         case 'tower': {
+          const model = lib.prop('tower', `clock${i}`, this.root, '#e8767a');
+          if (model) {
+            node = model;
+            node.position.y = 3.5;
+            break;
+          }
           node = cyl(s, `clock${i}`, { d: 2, h: 7, tess: 6 }, '#f6efe2', this.root);
           node.position.y = 3.5;
           const roof = cone(s, `clockRoof${i}`, 2.6, 2, '#e8767a', 6, this.root);
@@ -299,6 +330,12 @@ export class BoardView {
           break;
         }
         case 'fountain': {
+          const model = lib.prop('fountain', `fountain${i}`, this.root);
+          if (model) {
+            node = model;
+            node.position.y = 0.3;
+            break;
+          }
           node = cyl(s, `fountain${i}`, { d: 3, h: 0.6, tess: 10 }, '#d9d6ea', this.root);
           node.position.y = 0.3;
           const w = cyl(s, `fountainW${i}`, { d: 2.4, h: 0.1, tess: 10 }, '#86c8e0', this.root);
@@ -567,12 +604,15 @@ export class BoardView {
     const end = pts[pts.length - 1].add(pts[pts.length - 1].subtract(pts[pts.length - 2]).normalize().scale(14));
     const train = new TransformNode('train', this.stage.scene);
     train.parent = this.root;
-    const loco = box(this.stage, 'loco', 1.8, 1.8, 3.6, '#e8767a', train);
-    loco.position.y = 1.1;
-    const cab = box(this.stage, 'cab', 1.8, 1, 1.4, '#3d3a55', train);
-    cab.position.set(0, 2.4, 0.9);
-    const chimney = cyl(this.stage, 'chimney', { d: 0.5, h: 1, tess: 6 }, '#3d3a55', train);
-    chimney.position.set(0, 2.4, -1.2);
+    const model = this.stage.assets.prop('loco', 'locoModel', train, '#e8767a');
+    if (!model) {
+      const loco = box(this.stage, 'loco', 1.8, 1.8, 3.6, '#e8767a', train);
+      loco.position.y = 1.1;
+      const cab = box(this.stage, 'cab', 1.8, 1, 1.4, '#3d3a55', train);
+      cab.position.set(0, 2.4, 0.9);
+      const chimney = cyl(this.stage, 'chimney', { d: 0.5, h: 1, tess: 6 }, '#3d3a55', train);
+      chimney.position.set(0, 2.4, -1.2);
+    }
     for (const m of train.getChildMeshes()) this.stage.castShadow(m, false);
     this.trainMesh = train;
     const path = [start, ...pts, end];

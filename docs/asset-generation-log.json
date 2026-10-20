@@ -1,0 +1,279 @@
+{
+  "music": [
+    {
+      "key": "jingle_star",
+      "tool": "Suno V6 via sunoapi.org",
+      "taskId": "8e8e4b3657b5b9523aa711f49d1aba4f",
+      "audioId": "52811ed4-0b76-4d62-bb45-cc741125661e",
+      "duration": 8,
+      "style": "very short triumphant magical sparkle fanfare jingle, harp glissando, bells, brass hit, video game star collected, instrumental, 3 seconds then silence",
+      "date": "2026-10-20"
+    },
+    {
+      "key": "lobby",
+      "tool": "Suno V6 via sunoapi.org",
+      "taskId": "936fe9a5e57c60c32093d0a5ecf9d0cb",
+      "audioId": "a3db3d35-cf26-4b8a-99dc-4285bd5dcf62",
+      "duration": 90,
+      "style": "bouncy menu theme, ukulele, marimba, whistling melody, light hand percussion, pizzicato strings, major key, 104 bpm, instrumental, family-friendly party board game soundtrack, catchy, playful, clean mix, no vocals, seamless loop feel",
+      "date": "2026-10-20"
+    },
+    {
+      "key": "island",
+      "tool": "Suno V6 via sunoapi.org",
+      "taskId": "0c041318b7c135b3bbf112c9412a62df",
+      "audioId": "af165930-6bf5-478d-b98b-abc25efe9a48",
+      "duration": 120,
+      "style": "sunny tropical calypso, steel drums, ukulele, marimba, shakers, bass guitar, beach vibe, major key, 112 bpm, instrumental, family-friendly party board game soundtrack, catchy, playful, clean mix, no vocals, seamless loop feel",
+      "date": "2026-10-20"
+    },
+    {
+      "key": "island_finale",
+      "tool": "Suno V6 via sunoapi.org",
+      "taskId": "c4d0138e2776bbc6889f05e6892fd05e",
+      "audioId": "00f2c601-19ed-41c1-9bc7-7ef256db6759",
+      "duration": 90,
+      "style": "exciting final-rounds version of a tropical calypso theme, steel drums, driving congas, brass stabs, rising tension, faster, 132 bpm, instrumental, family-friendly party board game soundtrack, catchy, playful, clean mix, no vocals, seamless loop feel",
+      "date": "2026-10-20"
+    },
+    {
+      "key": "volcano",
+      "tool": "Suno V6 via sunoapi.org",
+      "taskId": "fce4b80f105bad2f6764f5ba91eb0142",
+      "audioId": "a573f7ec-7e04-4ad6-a5c9-482dc6a976c0",
+      "duration": 119,
+      "style": "adventurous jungle volcano theme, tribal tom drums, marimba, tuba bass, brass stabs, mysterious but fun, minor key, 120 bpm, instrumental, family-friendly party board game soundtrack, catchy, playful, clean mix, no vocals, seamless loop feel",
+      "date": "2026-10-20"
+    },
+    {
+      "key": "volcano_finale",
+      "tool": "Suno V6 via sunoapi.org",
+      "taskId": "e459dd3e0fa5399bc6477bd5d8288dfd",
+      "audioId": "19d1b5c8-5c0c-4275-a3a5-d68b0826ff84",
+      "duration": 89,
+      "style": "intense final-rounds volcano theme, pounding taiko drums, brass, rumbling bass, urgent and exciting, minor key, 140 bpm, instrumental, family-friendly party board game soundtrack, catchy, playful, clean mix, no vocals, seamless loop feel",
+      "date": "2026-10-20"
+    },
+    {
+      "key": "city",
+      "tool": "Suno V6 via sunoapi.org",
+      "taskId": "ece6c9b959ad1b124c25b0e62ea214cd",
+      "audioId": "9ca0e43b-753e-45fb-a063-31736e7dc23b",
+      "duration": 120,
+      "style": "cheerful swing big band, toy train town, clarinet, muted trumpet, walking upright bass, brushed drums, glockenspiel, train whistle accents, 126 bpm, instrumental, family-friendly party board game soundtrack, catchy, playful, clean mix, no vocals, seamless loop feel",
+      "date": "2026-10-20"
+    },
+    {
+      "key": "minigame",
+      "tool": "Suno V6 via sunoapi.org",
+      "taskId": "67a438106e7f2d606891c7ba0dce2621",
+      "audioId": "eeae4cbf-0a97-4cb1-bcf4-118617662353",
+      "duration": 65,
+      "style": "energetic chiptune pop, square lead, punchy drums, competitive, upbeat, 140 bpm, instrumental, family-friendly party board game soundtrack, catchy, playful, clean mix, no vocals, seamless loop feel",
+      "date": "2026-10-20"
+    },
+    {
+      "key": "minigame2",
+      "tool": "Suno V6 via sunoapi.org",
+      "taskId": "44716ea9afcdb8346c713e4e84354a3b",
+      "audioId": "ffd6bb89-9310-4118-a094-f267693e5891",
+      "duration": 60,
+      "style": "funky surf rock, twangy guitar, tense groove, organ, minor key, 132 bpm, instrumental, family-friendly party board game soundtrack, catchy, playful, clean mix, no vocals, seamless loop feel",
+      "date": "2026-10-20"
+    },
+    {
+      "key": "city_finale",
+      "tool": "Suno V6 via sunoapi.org",
+      "taskId": "8aa9705f46b598269f32f8fbeb289290",
+      "audioId": "faf8e06a-4c9c-4e2e-9cd3-1ae3239af713",
+      "duration": 90,
+      "style": "fast exciting final-rounds swing, hot big band brass, galloping drums, energetic, 150 bpm, instrumental, family-friendly party board game soundtrack, catchy, playful, clean mix, no vocals, seamless loop feel",
+      "date": "2026-10-20"
+    },
+    {
+      "key": "minigame3",
+      "tool": "Suno V6 via sunoapi.org",
+      "taskId": "bb1f590530752a1d37dfb845e9e85a43",
+      "audioId": "b3345a74-b460-46c1-b92a-d9831a5caa95",
+      "duration": 65,
+      "style": "zany circus polka, accordion, tuba, slide whistle, comedic chase, 150 bpm, instrumental, family-friendly party board game soundtrack, catchy, playful, clean mix, no vocals, seamless loop feel",
+      "date": "2026-10-20"
+    },
+    {
+      "key": "victory",
+      "tool": "Suno V6 via sunoapi.org",
+      "taskId": "a7c829a0c0b42361f94ddfdcd82b8cce",
+      "audioId": "5a61f09f-c0c9-4a61-a03d-8794300994ce",
+      "duration": 45,
+      "style": "triumphant celebration fanfare, orchestral brass, timpani, glockenspiel, warm and joyful, major key, 96 bpm, instrumental, family-friendly party board game soundtrack, catchy, playful, clean mix, no vocals, seamless loop feel",
+      "date": "2026-10-20"
+    },
+    {
+      "key": "jingle_item",
+      "tool": "Suno V6 via sunoapi.org",
+      "taskId": "2247bf65a0582ca28f58adb18ff53a8f",
+      "audioId": "f2aa40ce-8814-4586-9406-816b93f84fd3",
+      "duration": 9,
+      "style": "very short cheerful item-get jingle, xylophone arpeggio, pizzicato, video game, instrumental, 2 seconds then silence",
+      "date": "2026-10-20"
+    },
+    {
+      "key": "jingle_train",
+      "tool": "Suno V6 via sunoapi.org",
+      "taskId": "29898a0097cda95f1753919ed4d2c819",
+      "audioId": "a2316608-c0d7-4afd-8630-ca476bc3ac42",
+      "duration": 10,
+      "style": "very short happy toy train arrival jingle, train whistle, bells, swing brass, instrumental, 4 seconds then silence",
+      "date": "2026-10-20"
+    },
+    {
+      "key": "jingle_eruption",
+      "tool": "Suno V6 via sunoapi.org",
+      "taskId": "72e0f3df13770446a707830144a79555",
+      "audioId": "a0c525d8-091d-42f1-b0a2-dbd0927ad402",
+      "duration": 8,
+      "style": "very short dramatic comedic danger sting, timpani roll, low brass, cymbal crash, cartoon volcano eruption, instrumental, 4 seconds then silence",
+      "date": "2026-10-20"
+    }
+  ],
+  "sfx": [
+    {
+      "key": "dice",
+      "tool": "ElevenLabs sound-generation",
+      "prompt": "a few plastic dice rattling in a cup and tumbling onto a wooden board game table, short",
+      "duration": 0.8,
+      "date": "2026-10-20"
+    },
+    {
+      "key": "step",
+      "tool": "ElevenLabs sound-generation",
+      "prompt": "single soft cartoon footstep hop, tiny wooden board game piece hopping one space, cute boing",
+      "duration": 0.5,
+      "date": "2026-10-20"
+    },
+    {
+      "key": "coin",
+      "tool": "ElevenLabs sound-generation",
+      "prompt": "bright cartoon video game coin pickup chime, sparkly, single coin",
+      "duration": 0.6,
+      "date": "2026-10-20"
+    },
+    {
+      "key": "coinLoss",
+      "tool": "ElevenLabs sound-generation",
+      "prompt": "cartoon losing coins, descending sad blips with coins scattering, video game penalty",
+      "duration": 0.9,
+      "date": "2026-10-20"
+    },
+    {
+      "key": "star",
+      "tool": "ElevenLabs sound-generation",
+      "prompt": "magical sparkling star collected, shimmering chimes rising, video game reward",
+      "duration": 1.5,
+      "date": "2026-10-20"
+    },
+    {
+      "key": "item",
+      "tool": "ElevenLabs sound-generation",
+      "prompt": "cheerful video game item pickup, quick rising pop with sparkle",
+      "duration": 0.8,
+      "date": "2026-10-20"
+    },
+    {
+      "key": "ui",
+      "tool": "ElevenLabs sound-generation",
+      "prompt": "soft rounded UI click pop, friendly menu button",
+      "duration": 0.5,
+      "date": "2026-10-20"
+    },
+    {
+      "key": "whoosh",
+      "tool": "ElevenLabs sound-generation",
+      "prompt": "fast cartoon whoosh swish, character zooming past",
+      "duration": 0.7,
+      "date": "2026-10-20"
+    },
+    {
+      "key": "boom",
+      "tool": "ElevenLabs sound-generation",
+      "prompt": "cartoon volcano eruption boom with rumble and rocks, comedic not scary",
+      "duration": 1.8,
+      "date": "2026-10-20"
+    },
+    {
+      "key": "train",
+      "tool": "ElevenLabs sound-generation",
+      "prompt": "toy steam train whistle toot toot with chugging, cheerful",
+      "duration": 2,
+      "date": "2026-10-20"
+    },
+    {
+      "key": "buzz",
+      "tool": "ElevenLabs sound-generation",
+      "prompt": "game show wrong answer buzzer, short, comedic",
+      "duration": 0.7,
+      "date": "2026-10-20"
+    },
+    {
+      "key": "ding",
+      "tool": "ElevenLabs sound-generation",
+      "prompt": "single bright bell ding, game show ready signal",
+      "duration": 0.8,
+      "date": "2026-10-20"
+    },
+    {
+      "key": "fanfare",
+      "tool": "ElevenLabs sound-generation",
+      "prompt": "short triumphant brass fanfare, winner announcement, cheerful video game",
+      "duration": 2.5,
+      "date": "2026-10-20"
+    },
+    {
+      "key": "splash",
+      "tool": "ElevenLabs sound-generation",
+      "prompt": "cartoon water splash, character falls into the sea, playful",
+      "duration": 1,
+      "date": "2026-10-20"
+    },
+    {
+      "key": "babble_rocco",
+      "tool": "ElevenLabs sound-generation",
+      "prompt": "cute cartoon raccoon character speaking short gibberish nonsense syllables, mischievous chuckle, no real words",
+      "duration": 1.2,
+      "date": "2026-10-20"
+    },
+    {
+      "key": "babble_quaki",
+      "tool": "ElevenLabs sound-generation",
+      "prompt": "cute cartoon frog character speaking short gibberish nonsense syllables, croaky proud voice, no real words",
+      "duration": 1.2,
+      "date": "2026-10-20"
+    },
+    {
+      "key": "babble_pingo",
+      "tool": "ElevenLabs sound-generation",
+      "prompt": "cute cartoon penguin character speaking short gibberish nonsense syllables, squeaky happy voice, no real words",
+      "duration": 1.2,
+      "date": "2026-10-20"
+    },
+    {
+      "key": "babble_foxy",
+      "tool": "ElevenLabs sound-generation",
+      "prompt": "cute cartoon fox character speaking short gibberish nonsense syllables, sly playful voice, no real words",
+      "duration": 1.2,
+      "date": "2026-10-20"
+    },
+    {
+      "key": "babble_moderator",
+      "tool": "ElevenLabs sound-generation",
+      "prompt": "cartoon parrot squawking short gibberish chatter, funny pirate parrot, no real words",
+      "duration": 1.2,
+      "date": "2026-10-20"
+    }
+  ],
+  "voice": {
+    "tool": "ElevenLabs TTS eleven_v3, voice Callum (premade, N2lVS1w4EtoT3dr4eOWO)",
+    "segments": 177,
+    "date": "2026-10-20"
+  }
+}

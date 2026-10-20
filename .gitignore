@@ -434,3 +434,6 @@ dist/
 test-results/
 playwright-report/
 *.tsbuildinfo
+
+# generated raw assets (Suno/ElevenLabs downloads, Blender caches)
+assets-src/

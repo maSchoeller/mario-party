@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex" />
+    <title>Datenschutz – Würfel-Bande</title>
+    <link rel="icon" href="/favicon.svg" />
+    <link rel="stylesheet" href="/legal.css" />
+  </head>
+  <body>
+    <main>
+      <p class="draft">
+        ⚠ Entwurf (SEC-03): beschreibt die tatsächliche Datenverarbeitung von Würfel-Bande v0.1. Platzhalter in
+        [eckigen Klammern] ausfüllen und vor der öffentlichen Freigabe rechtlich prüfen lassen.
+      </p>
+      <h1>Datenschutzerklärung</h1>
+
+      <h2>1. Verantwortlicher</h2>
+      <p>[Vorname Nachname], [Anschrift], E-Mail: [kontakt@example.org]</p>
+
+      <h2>2. Kurz gesagt</h2>
+      <ul>
+        <li>Keine Registrierung, kein Konto, keine Cookies, kein Tracking, keine Werbung.</li>
+        <li>Du gibst nur einen frei wählbaren Spitznamen ein. Bitte verwende keinen echten vollen Namen.</li>
+        <li>Telemetrie ist anonym: keine Geräte- oder Personen-IDs, keine sitzungsübergreifende Wiedererkennung.</li>
+      </ul>
+
+      <h2>3. Bereitstellung der Website (Server-Logs)</h2>
+      <p>
+        Beim Aufruf verarbeitet der Hosting-Anbieter technisch notwendige Verbindungsdaten wie IP-Adresse, Zeitpunkt,
+        abgerufene Datei und Browser-Kennung, um die Seite auszuliefern und Missbrauch abzuwehren
+        (Art. 6 Abs. 1 lit. f DSGVO). Hosting: Microsoft Azure (Microsoft Ireland Operations Ltd.), Rechenzentrum
+        [Region, z. B. West Europe]. Rate-Limits arbeiten nur kurzzeitig im Arbeitsspeicher mit der IP-Adresse.
+      </p>
+
+      <h2>4. Spielbetrieb</h2>
+      <ul>
+        <li>
+          <strong>Spitzname und Figur</strong> werden an das Host-Gerät (TV/Laptop) deiner Runde übertragen und dort
+          angezeigt.
+        </li>
+        <li>
+          <strong>Spielstände</strong> (inkl. Spitznamen, Punkte, Spielverlauf) speichert der Server nach jeder Runde,
+          damit eine Partie per Code fortgesetzt werden kann. Sie werden nach 7 Tagen automatisch gelöscht
+          (Art. 6 Abs. 1 lit. b DSGVO).
+        </li>
+        <li>Räume verfallen nach 2 Stunden Inaktivität.</li>
+        <li>
+          <strong>Lokaler Speicher</strong> im Browser (localStorage) enthält einen zufälligen Sitzungs-Schlüssel, damit
+          du nach einem Verbindungsabbruch auf deinen Platz zurückkehrst, sowie Lautstärke-Einstellungen. Das ist für
+          den von dir gewünschten Dienst unbedingt erforderlich (§ 25 Abs. 2 Nr. 2 TDDDG).
+        </li>
+      </ul>
+
+      <h2>5. Verbindung zwischen den Geräten (WebRTC)</h2>
+      <p>
+        Handys und Host verbinden sich möglichst direkt (Peer-to-Peer). Dabei tauschen die Geräte einer Runde ihre
+        IP-Adressen aus. Zum Ermitteln der öffentlichen Adresse wird ein STUN-Server der Google LLC (USA) verwendet
+        (<code>stun.l.google.com</code>), der dabei deine IP-Adresse erhält. Die Übermittlung in die USA stützt sich auf
+        den Angemessenheitsbeschluss zum EU-US Data Privacy Framework. Klappt keine Direktverbindung, laufen die
+        Spieldaten über unseren eigenen Server (Relay).
+      </p>
+
+      <h2>6. Anonyme Telemetrie</h2>
+      <p>
+        Um Abstürze und Ladezeiten zu verbessern, sendet das Spiel wenige anonyme Ereignisse (z. B. „Partie gestartet“,
+        Bildrate, Ladezeit, Fehlermeldung) ohne Kennungen an den Server, der sie an Azure Application Insights
+        weiterleitet. IP-Adressen werden dort maskiert und nicht gespeichert (Art. 6 Abs. 1 lit. f DSGVO).
+        Aufbewahrung: 30 Tage.
+      </p>
+
+      <h2>7. Deine Rechte</h2>
+      <p>
+        Du hast das Recht auf Auskunft, Berichtigung, Löschung, Einschränkung der Verarbeitung, Datenübertragbarkeit
+        und Widerspruch (Art. 15–21 DSGVO) sowie das Recht auf Beschwerde bei einer Datenschutz-Aufsichtsbehörde, z. B.
+        [zuständige Landesbehörde]. Da wir keine Personen-IDs speichern, können wir Daten meist nur zuordnen, wenn du
+        uns den Spielstand-Code nennst.
+      </p>
+      <p>Stand: [Datum]</p>
+      <p><a href="/">← Zurück zum Spiel</a> · <a href="/impressum.html">Impressum</a></p>
+    </main>
+  </body>
+</html>

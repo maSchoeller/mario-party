@@ -1,8 +1,9 @@
 // CTRL-07: the phone controller must load < 2 MB initially and must not contain a 3D engine.
 import { readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const dist = new URL('../apps/web/dist/', import.meta.url).pathname;
+const dist = fileURLToPath(new URL('../apps/web/dist/', import.meta.url));
 const html = readFileSync(join(dist, 'play.html'), 'utf8');
 const refs = [...html.matchAll(/(?:src|href)="\/([^"]+)"/g)].map((m) => m[1]);
 const seen = new Set();

@@ -53,6 +53,36 @@ export class CharacterRig {
     this.head.parent = this.body;
     this.head.position.y = 1.15;
 
+    this.armL = new TransformNode(`${name}_armL`, s.scene);
+    this.armR = new TransformNode(`${name}_armR`, s.scene);
+    for (const [arm, side] of [[this.armL, -1], [this.armR, 1]] as const) {
+      arm.parent = this.body;
+      arm.position.set(side * 0.48, 0.8, 0);
+    }
+    // Blender model (ASSET-02) if loaded, else the procedural placeholder
+    if (s.assets.has(character, 'body')) {
+      const lib = s.assets;
+      lib.attach(character, 'body', this.body);
+      lib.attach(character, 'head', this.head, { offset: this.head.position });
+      lib.attach(character, 'armL', this.armL, { offset: this.armL.position });
+      lib.attach(character, 'armR', this.armR, { offset: this.armR.position });
+    } else this.buildProcedural(name, look);
+
+    // player base: color + shape (ART-07)
+    if (color) {
+      const tess = { red: 16, blue: 3, green: 4, yellow: 4 }[color];
+      const b = cyl(s, `${name}_base`, { d: 1.35, h: 0.12, tess }, PLAYER_COLOR_HEX[color], this.root);
+      b.position.y = 0.06;
+      if (color === 'green') b.rotation.y = Math.PI / 4;
+      if (color === 'blue') b.rotation.y = Math.PI;
+      this.base = b;
+    }
+    for (const m of this.root.getChildMeshes()) s.castShadow(m, false);
+  }
+
+  private buildProcedural(name: string, look: Look) {
+    const s = this.stage;
+    const character = this.character;
     // torso
     const torso = sphere(s, `${name}_torso`, 1.05, look.body, 5, this.body);
     torso.scaling.set(1, 1.05, 0.9);
@@ -67,12 +97,8 @@ export class CharacterRig {
       foot.position.set(side * 0.26, 0.1, -0.12);
     }
     // arms
-    this.armL = new TransformNode(`${name}_armL`, s.scene);
-    this.armR = new TransformNode(`${name}_armR`, s.scene);
     for (const [arm, side] of [[this.armL, -1], [this.armR, 1]] as const) {
-      arm.parent = this.body;
-      arm.position.set(side * 0.48, 0.8, 0);
-      const a = sphere(s, `${name}_arm${side}`, 0.32, character === 'pingo' ? look.body : look.body, 3, arm);
+      const a = sphere(s, `${name}_arm${side}`, 0.32, look.body, 3, arm);
       a.scaling.set(0.8, 1.4, 0.8);
       a.position.y = -0.18;
     }
@@ -89,18 +115,7 @@ export class CharacterRig {
       cheek.position.set(side * 0.3, -0.12, -0.36);
       cheek.scaling.z = 0.4;
     }
-    this.decorate(name, character, look);
-
-    // player base: color + shape (ART-07)
-    if (color) {
-      const tess = { red: 16, blue: 3, green: 4, yellow: 4 }[color];
-      const b = cyl(s, `${name}_base`, { d: 1.35, h: 0.12, tess }, PLAYER_COLOR_HEX[color], this.root);
-      b.position.y = 0.06;
-      if (color === 'green') b.rotation.y = Math.PI / 4;
-      if (color === 'blue') b.rotation.y = Math.PI;
-      this.base = b;
-    }
-    for (const m of this.root.getChildMeshes()) s.castShadow(m, false);
+    this.decorate(name, this.character, look);
   }
 
   private eyes(name: string, look: Look, y: number, spread: number) {

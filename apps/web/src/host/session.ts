@@ -118,6 +118,11 @@ export class HostSession {
       onServerStatus: (st) => this.ui.serverStatus(st === 'open' ? null : st === 'waking' ? t('host.wakingServer') : t('common.loading')),
     });
     audio.onSubtitle = (text) => ui.subtitle(text);
+    // the recorded moderator says character names, never free-text nicknames (AUDIO-03)
+    audio.characterOf = (name) => {
+      const c = this.engine?.state.players.find((p) => p.name === name)?.character ?? this.slots.find((s) => s.name === name)?.character;
+      return c ? t(`char.${c}`) : null;
+    };
   }
 
   // ================================================================== start / restore
@@ -964,6 +969,7 @@ export class HostSession {
           if (ev.player !== undefined) params.player = this.pname(ev.player);
           if (typeof params.leader === 'number') params.leader = this.pname(params.leader);
           if (ev.key.startsWith('mod.item.') || ev.key === 'mod.shopBought') this.audio.sfx('item');
+          if (ev.key === 'mod.itemField') this.audio.sfx('itemJingle');
           await this.say(ev.key, params, 900);
           break;
         }
@@ -1148,7 +1154,7 @@ export class HostSession {
     );
     this.ui.setOverlay(card);
     this.audio.sfx('fanfare');
-    await this.say('mod.bonusStar', { category: `bonus.${ev.category}.name`, players: names.join(' und ') || t('bonus.nobody') }, 2200);
+    await this.say('mod.bonusStar', { category: `bonus.${ev.category}.name`, players: names.join(` ${t('voice.and')} `) || 'bonus.nobody' }, 2200);
     for (const i of ev.players) this.board?.rigs[i]?.setAnim('cheer');
     await this.sleep(1200);
     this.ui.setOverlay(null);

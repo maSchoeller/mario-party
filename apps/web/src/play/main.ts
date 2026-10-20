@@ -40,7 +40,9 @@ let code = normalizeCode(params.get('code') ?? localStorage.getItem('wb.lastCode
 let name = localStorage.getItem('wb.name') ?? '';
 let hostOnline = true;
 
-const tokenKey = (c: string) => `wb.token.${c}`;
+// the dev view (/dev) runs several simulated phones in one browser: keep their tokens apart
+const devSuffix = params.get('dev') ? `.dev${params.get('dev')}` : '';
+const tokenKey = (c: string) => `wb.token.${c}${devSuffix}`;
 
 const net = new PhoneNetwork({
   onJoined(token) {

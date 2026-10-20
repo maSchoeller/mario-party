@@ -15,5 +15,12 @@ app.append(
     h('a', { href: '/host' }, h('button', { class: 'primary', style: 'width:100%;font-size:1.3rem;background:#5cc08a;color:#fff' }, '📺 ', t('host.createLobby'))),
     h('a', { href: '/play' }, h('button', { style: 'width:100%;font-size:1.3rem' }, '📱 ', t('play.join'))),
     h('a', { href: '/dev', style: 'color:var(--ink-soft)' }, t('host.devPanel')),
+    h(
+      'p',
+      { style: 'margin:0;font-size:.85rem' },
+      h('a', { href: '/impressum.html', style: 'color:var(--ink-soft)' }, t('legal.imprint')),
+      ' · ',
+      h('a', { href: '/datenschutz.html', style: 'color:var(--ink-soft)' }, t('legal.privacy')),
+    ),
   ),
 );

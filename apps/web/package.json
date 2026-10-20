@@ -11,6 +11,7 @@
   "dependencies": {
     "@babylonjs/core": "^9.31.0",
     "@babylonjs/havok": "^1.3.14",
+    "@babylonjs/loaders": "^9.31.0",
     "@fontsource/nunito": "^5.2.0",
     "@wb/shared": "*",
     "qrcode": "^1.5.4"

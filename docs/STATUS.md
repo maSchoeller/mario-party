@@ -1,4 +1,4 @@
-# Umsetzungsstand je Anforderung (Stand 20.10.2026)
+# Umsetzungsstand je Anforderung (Stand 20.10.2026, v0.2)
 
 Legende: ✅ umgesetzt & lokal getestet · 🟡 umgesetzt mit Platzhalter/Einschränkung · ⛔ offen (externer Dienst/Gerät nötig, siehe [OPEN_POINTS.md](OPEN_POINTS.md))
 
@@ -30,7 +30,7 @@ Legende: ✅ umgesetzt & lokal getestet · 🟡 umgesetzt mit Platzhalter/Einsch
 | BOARD-02 | ✅ | Stern/Shop/Bahnhof/Seilbahn beim Vorbeilaufen (zählen keinen Schritt), Rest beim Stehenbleiben |
 | BOARD-03 | ✅ | Gezeiten, Ausbruch (+Lava, Münzregen, Brocken, Seilbahn), Zug nach Fahrplan + Tickets |
 | BOARD-04 | 🟡 | Vorspulen (Bandenchef hält Taste, ×3), AFK-Timeout (Computer entscheidet nach 35 s); Bot-Züge 3,5–18 s. Mit Menschen ungemessen |
-| BOARD-05 | 🟡 | Jede Aktion vom Moderator angesagt (Text immer); Stimme = Browser-TTS-Platzhalter |
+| BOARD-05 | ✅ | Jede Aktion vom Moderator angesagt (Untertitel immer), ElevenLabs-Stimme aus Bausteinen (`voice.test.ts`) |
 | ITEM-01/02 | ✅ | 8 Items, Einsatz am Handy vor dem Würfeln, max. 3, Ersetzen/Verwerfen |
 | CHAOS-01 | ✅ | Finale letzte 5 Runden: Zwischenstand, Blau/Rot ×2, Letzter dreht Rad (Münzen/Item/Stern-Rabatt) |
 | CHAOS-02/03 | ✅ | 3 aus 7 Bonus-Kategorien (eine immer aus dem Aufhol-Pool), einzeln enthüllt; Halbzeit-Aufholrad; Letzter nach Runde 10 gewinnt in 15–18 % der Bot-Partien ([BALANCING.md](BALANCING.md)) |
@@ -43,7 +43,7 @@ Legende: ✅ umgesetzt & lokal getestet · 🟡 umgesetzt mit Platzhalter/Einsch
 | MAP-01 | ✅ | 40–60 Felder, 2–4 Abzweigungen, 1–2 Shops, ≥ 5 Sternplätze – automatisch validiert (`validateMap`) |
 | MAP-02 | ✅ | Gimmick angekündigt + animiert (Wasserstand, Ausbruch/Kamerawackeln, Zugfahrt), HUD-Widget |
 | MAP-03 | ✅ | Übersichtskamera, Verfolgung des aktiven Spielers, Zoom bei Ereignissen |
-| MAP-04 | 🟡 | Eigener Loop je Map + Finale-Variante (prozedural, Suno offen) |
+| MAP-04 | ✅ | Suno-Loop je Map + Finale-Variante, Crossfade-Loop |
 | MAP-05 | ✅ | Einsteiger → Mittel → Komplex |
 | MAP-06 | ✅ | Maps als Daten (`packages/shared/src/maps`), Gimmick per ID |
 
@@ -72,16 +72,16 @@ Legende: ✅ umgesetzt & lokal getestet · 🟡 umgesetzt mit Platzhalter/Einsch
 | CTRL-06 | 🟡 | Gyro-Freigabe beim Beitritt; auf echtem iOS ungetestet ⛔ |
 | CTRL-07 | ✅ | ~72 KB initial, keine 3D-Engine (`scripts/check-bundle.mjs` in CI) |
 | ART-01 | ✅ | Eigene Figuren/Namen, keine Fremd-IP |
-| ART-02 | 🟡 | Idle/Laufen/Springen/Jubeln/Ärgern/Getroffen/Würfeln prozedural + Gebrabbel; finale Rigs offen |
+| ART-02 | ✅ | Blender-Figuren mit Teile-Rig; Idle/Laufen/Springen/Jubeln/Ärgern/Getroffen/Würfeln prozedural; Gebrabbel (ElevenLabs) |
 | ART-03 | ✅ | Unterschiedliche Silhouetten, Farbring + Form |
-| ART-04/05 | 🟡 | Flat-Shading, Pastell, Schatten, Nebel, Palette je Map – Platzhalter-Geometrie |
+| ART-04/05 | ✅ | Flat-Shading, Pastell, Schatten, Nebel; alle GLB-Materialien laufen über die zentrale Palette |
 | ART-06 | ✅ | Abgerundete halbtransparente Karten, Nunito, große Typo |
 | ART-07, A11Y-01 | ✅ | Form-Icons zusätzlich zur Farbe |
-| ASSET-01..04 | ⛔ | CC0-/KI-Assets + Blender offen; aktuelle Meshes weit unter Polygon-/Draw-Call-Budget |
+| ASSET-01..04 | 🟡 | GLB aus Blender-Skripten (Figur ≤ 1,8 k Dreiecke, Budget im Build geprüft); statt CC0/Meshy eigene Modelle, keine Mesh-Kompression ([Abweichungen](ASSETS_LICENSES.md#bewusste-abweichungen-von-der-asset-pipeline-der-spec)) |
 | ASSET-05 | ✅ | `docs/ASSETS_LICENSES.md` |
-| AUDIO-01..03 | 🟡/⛔ | Prozedurale Musik/SFX, TTS-Moderator; Suno/ElevenLabs offen |
+| AUDIO-01..03 | ✅ | Suno-Musik + Jingles, ElevenLabs-SFX + Moderator; prozeduraler Fallback |
 | AUDIO-04/05/06 | ✅ | Gebrabbel, Audio nur am Host, getrennte Lautstärken (gespeichert) |
-| AUDIO-07 | ⛔ | Tarifprüfung offen |
+| AUDIO-07 | 🟡 | Tarife dokumentiert (ElevenLabs Free = nicht-kommerziell, Suno über Drittanbieter = unklar) – Klärung vor Veröffentlichung ⛔ |
 
 ## Technik
 
@@ -105,8 +105,9 @@ Legende: ✅ umgesetzt & lokal getestet · 🟡 umgesetzt mit Platzhalter/Einsch
 | PERF-02 | ✅ | Host-Erstladen ~11 MB (inkl. Havok-WASM), Maps prozedural |
 | PERF-03/04 | ⛔ | Nur Chromium getestet |
 | PERF-05 | ✅ | „Server wird geweckt …“ mit automatischem Reconnect |
-| OPS-01..04 | ⛔/🟡 | Bicep/Workflows vorbereitet, nicht deployt |
+| OPS-01..04 | 🟡 | Bicep lokal valide (build/lint ohne Warnung), Workflows vorbereitet, nicht deployt ⛔ |
 | PRIV-01..03 | ✅ | Keine personenbezogenen Daten, anonyme Telemetrie ohne IDs/Cookies |
+| SEC-03 | 🟡 | Entwürfe Impressum/Datenschutz (`/impressum.html`, `/datenschutz.html`), Platzhalter ausfüllen |
 | SEC-01 | ✅ | Code/Token-Validierung, Rate-Limits (Nachrichten, Raumerstellung, Saves), Peers können nur den Host erreichen |
 | A11Y-02 | ✅ | Filter „Ohne Schütteln/Gyro“ |
 | A11Y-03 | ✅ | Untertitel für alle Ansagen |

@@ -2,8 +2,8 @@
 import { spawn } from 'node:child_process';
 
 const procs = [
-  spawn('npm', ['run', 'dev', '-w', '@wb/server'], { stdio: 'inherit', env: process.env }),
-  spawn('npm', ['run', 'dev', '-w', '@wb/web'], { stdio: 'inherit', env: process.env }),
+  spawn('npm', ['run', 'dev', '-w', '@wb/server'], { stdio: 'inherit', env: process.env, shell: process.platform === 'win32' }),
+  spawn('npm', ['run', 'dev', '-w', '@wb/web'], { stdio: 'inherit', env: process.env, shell: process.platform === 'win32' }),
 ];
 const stop = () => {
   for (const p of procs) p.kill('SIGTERM');

@@ -14,6 +14,7 @@ import {
   type AbstractMesh,
   type Mesh,
 } from '@babylonjs/core';
+import { AssetLibrary } from './assets';
 
 /**
  * Babylon engine + scene setup (TECH-01): WebGL2, Havok physics for visual effects,
@@ -35,6 +36,7 @@ export class Stage {
   readonly shadows: ShadowGenerator;
   readonly glow: GlowLayer;
   physics: HavokPlugin | null = null;
+  readonly assets: AssetLibrary = new AssetLibrary(this);
   private goal: CameraGoal | null = null;
   private camSpeed = 2.5;
   private shake = 0;

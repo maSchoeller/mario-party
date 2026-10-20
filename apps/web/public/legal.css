@@ -1,0 +1,27 @@
+body {
+  margin: 0;
+  background: #f4f8fb;
+  color: #3d3a55;
+  font: 16px/1.6 Nunito, system-ui, sans-serif;
+}
+main {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 2rem 16px 4rem;
+}
+h1 {
+  font-size: 2rem;
+}
+h2 {
+  font-size: 1.15rem;
+  margin-top: 2rem;
+}
+.draft {
+  background: #fff4d6;
+  border: 1px solid #f2c94c;
+  border-radius: 12px;
+  padding: 0.8rem 1rem;
+}
+a {
+  color: #4a6fd0;
+}

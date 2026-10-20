@@ -20,7 +20,7 @@ const unlock = () => audio.unlock();
 window.addEventListener('pointerdown', unlock);
 window.addEventListener('keydown', unlock);
 
-void stage.initPhysics().then(() => {
+void Promise.all([stage.initPhysics(), stage.assets.load()]).then(() => {
   session.boot();
   telemetry('load_time', { ms: Math.round(performance.now() - t0), physics: !!stage.physics });
 });

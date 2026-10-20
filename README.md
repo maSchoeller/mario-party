@@ -4,7 +4,8 @@
 
 - 📄 Anforderungs-Spec: [docs/spec/SPEC.md](docs/spec/SPEC.md)
 - ✅ Umsetzungsstand je Anforderung: [docs/STATUS.md](docs/STATUS.md)
-- ⛔ Offene Punkte (fehlende Dienste/Assets): [docs/OPEN_POINTS.md](docs/OPEN_POINTS.md)
+- ⛔ Offene Punkte: [docs/OPEN_POINTS.md](docs/OPEN_POINTS.md)
+- 🎨 Asset-Pipeline (Blender-Modelle, Suno-Musik, ElevenLabs-Stimme/SFX): [scripts/assets/README.md](scripts/assets/README.md)
 - 🧩 Minispiele bauen: [docs/MINIGAMES.md](docs/MINIGAMES.md)
 - 📜 Lizenz-Register (ASSET-05): [docs/ASSETS_LICENSES.md](docs/ASSETS_LICENSES.md)
 - ⚖️ Balancing & unabhängiger Review: [docs/BALANCING.md](docs/BALANCING.md)

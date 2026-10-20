@@ -301,6 +301,9 @@ export const de: Record<string, string> = {
   'stats.points': 'Punkte',
 
   // ------------------------------------------------------------------ moderator (BOARD-05, AUDIO-03)
+  'voice.and': 'und',
+  'legal.imprint': 'Impressum',
+  'legal.privacy': 'Datenschutz',
   'mod.welcome': 'Ahoi, Bande! Ich bin Käpt’n Plapperschnabel. Scannt den Code und rein ins Vergnügen!',
   'mod.intro': 'Willkommen auf {map}! Hier wird gewürfelt, gestichelt und geklaut!',
   'mod.gimmick.tides': 'Achtung, Gezeiten! Alle drei Runden wechseln Ebbe und Flut. Bei Ebbe gibt’s Abkürzungen über die Sandbänke!',

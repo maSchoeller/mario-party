@@ -5,6 +5,8 @@
 targetScope = 'resourceGroup'
 
 @description('Name prefix for all resources')
+@minLength(3)
+@maxLength(12)
 param prefix string = 'wuerfelbande'
 param location string = resourceGroup().location
 @description('Container image, e.g. ghcr.io/<owner>/wuerfel-bande-server:latest')
@@ -13,7 +15,8 @@ param serverImage string
 param budgetEmail string
 param budgetStartDate string = '2026-11-01'
 
-var storageName = take(toLower(replace('${prefix}st${uniqueString(resourceGroup().id)}', '-', '')), 24)
+// ≤ 24 chars, lowercase alphanumerics only: 9 (prefix) + 2 + 13 (uniqueString)
+var storageName = '${take(toLower(replace(prefix, '-', '')), 9)}st${uniqueString(resourceGroup().id)}'
 
 resource logs 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
   name: '${prefix}-logs'
