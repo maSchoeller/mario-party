@@ -1,0 +1,23 @@
+{
+  "name": "@wb/web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@babylonjs/core": "^9.31.0",
+    "@babylonjs/havok": "^1.3.14",
+    "@fontsource/nunito": "^5.2.0",
+    "@wb/shared": "*",
+    "qrcode": "^1.5.4"
+  },
+  "devDependencies": {
+    "@types/qrcode": "^1.5.5",
+    "@vitejs/plugin-basic-ssl": "^2.1.0",
+    "vite": "^7.3.0"
+  }
+}
