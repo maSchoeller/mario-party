@@ -7,6 +7,8 @@ import { TEAM_COLORS, clamp, faceAngle, moveWithStick, skill, steerTo, teamRanks
  * #9 Floß-Rumble (2v2, Joystick + Button „Schubsen“): push the other team off a rocking,
  * slowly shrinking raft. Players in the water stay out (no climbing back). The team with
  * more players on board at the end wins – or instantly, once both opponents are swimming.
+ * During the first SAFE_TIME seconds a railing keeps everybody on board (warm-up, MINI-03).
+ * Tie-break at the time limit (same number on board): the team with more successful pushes.
  */
 const DURATION = 45;
 const H0 = 5.5; // half size of the raft at start
@@ -14,11 +16,13 @@ const H_MIN = 3.2; // half size at the end
 const SPEED = 5;
 const BODY = 0.55; // player radius
 const PUSH_RANGE = 1.9;
-const PUSH_FORCE = 7;
+const PUSH_FORCE = 6.4;
 const PUSH_CD = 0.9;
 const KNOCK_DRAG = 3.2;
 const FALL_TIME = 0.6;
 const RESPAWN = 3; // practice only
+/** railing at the start: nobody can fall during the first seconds */
+export const SAFE_TIME = 6;
 
 interface P {
   team: number;
@@ -55,6 +59,8 @@ export interface FlossRumbleState {
   /** -1 = running, 0/1 = winning team, 2 = tie */
   winner: number;
   overAt: number | null;
+  /** successful pushes per team id (tie-break) */
+  hits: number[];
   splashes: { x: number; z: number; t: number }[];
 }
 
@@ -96,6 +102,7 @@ function doPush(s: FlossRumbleState, i: number): void {
     o.kx += kx * PUSH_FORCE * brace;
     o.kz += kz * PUSH_FORCE * brace;
     o.stun = 0.45;
+    s.hits[p.team] = (s.hits[p.team] ?? 0) + 1;
   });
 }
 
@@ -146,6 +153,7 @@ export const flossRumble: MinigameDef<FlossRumbleState> = {
       sway: { x: 0, z: 0 },
       winner: -1,
       overAt: null,
+      hits: [0, 0],
       splashes: [],
     };
   },
@@ -173,6 +181,9 @@ export const flossRumble: MinigameDef<FlossRumbleState> = {
       p.pushCd = Math.max(0, p.pushCd - dt);
       p.pushVis = Math.max(0, p.pushVis - dt);
       if (p.state === 'raft') {
+        const lim = H - BODY * 0.5;
+        // the railing only stops players from crossing the edge (not ones already outside)
+        const railing = !s.practice && s.t < SAFE_TIME && Math.abs(p.x) <= H + 0.15 && Math.abs(p.z) <= H + 0.15;
         const ctrl = p.stun > 0 ? 0.25 : 1;
         p.stun = Math.max(0, p.stun - dt);
         moveWithStick(p, { x: p.stick.x * ctrl, y: p.stick.y * ctrl }, SPEED, dt);
@@ -186,7 +197,17 @@ export const flossRumble: MinigameDef<FlossRumbleState> = {
           p.fx = p.stick.x / l;
           p.fz = p.stick.y / l;
         }
-        if (Math.abs(p.x) > H + 0.15 || Math.abs(p.z) > H + 0.15) {
+        if (railing) {
+          // the railing holds: stay on board
+          if (Math.abs(p.x) > lim) {
+            p.x = Math.sign(p.x) * lim;
+            p.kx = 0;
+          }
+          if (Math.abs(p.z) > lim) {
+            p.z = Math.sign(p.z) * lim;
+            p.kz = 0;
+          }
+        } else if (Math.abs(p.x) > H + 0.15 || Math.abs(p.z) > H + 0.15) {
           p.state = 'fall';
           p.fallT = 0;
           s.splashes.push({ x: p.x, z: p.z, t: 0.8 });
@@ -242,7 +263,14 @@ export const flossRumble: MinigameDef<FlossRumbleState> = {
     const na = onBoard(s, ta);
     const nb = onBoard(s, tb ?? 1 - ta);
     if (na === 0 || nb === 0 || s.t >= s.duration) {
-      s.winner = na === nb ? 2 : na > nb ? ta : tb ?? 1 - ta;
+      const hb = tb ?? 1 - ta;
+      if (na !== nb) s.winner = na > nb ? ta : hb;
+      else {
+        // same number on board: more successful pushes wins
+        const ha = s.hits[ta] ?? 0;
+        const hh = s.hits[hb] ?? 0;
+        s.winner = ha === hh ? 2 : ha > hh ? ta : hb;
+      }
       s.overAt = s.t + (s.t >= s.duration ? 0 : 1.2);
     }
   },
@@ -335,6 +363,18 @@ export const flossRumble: MinigameDef<FlossRumbleState> = {
         color: k % 2 ? '#b98350' : '#cf9a62',
       });
     }
+    if (!s.practice && s.t < SAFE_TIME) {
+      // railing (disappears when the warm-up is over)
+      const a = clamp(SAFE_TIME - s.t, 0, 1);
+      for (const [k, x, z, sx, sz] of [
+        [0, -H, 0, 0.2, 2 * H],
+        [1, H, 0, 0.2, 2 * H],
+        [2, 0, -H, 2 * H, 0.2],
+        [3, 0, H, 2 * H, 0.2],
+      ] as const) {
+        entities.push({ id: `rail${k}`, kind: 'box', x, y: 0.3 + bob, z, sx, sy: 0.6, sz, color: '#f4efe6', alpha: a });
+      }
+    }
     for (const side of [-1, 1]) {
       entities.push({ id: `beam${side}`, kind: 'box', x: 0, y: -0.38 + bob, z: side * (H - 0.5), sx: 2 * H + 0.6, sy: 0.3, sz: 0.5, rx: tiltX, rz: tiltZ, color: '#8a5a32' });
     }
@@ -373,10 +413,15 @@ export const flossRumble: MinigameDef<FlossRumbleState> = {
       hud: {
         timer: s.practice ? undefined : Math.max(0, s.duration - s.t),
         teams: [
-          { team: 0, labelKey: 'team.red', value: dots(0) },
-          { team: 1, labelKey: 'team.blue', value: dots(1) },
+          { team: 0, labelKey: 'team.red', value: `${dots(0)} · 👊 ${s.hits[0] ?? 0}` },
+          { team: 1, labelKey: 'team.blue', value: `${dots(1)} · 👊 ${s.hits[1] ?? 0}` },
         ],
-        message: s.winner >= 0 && s.winner !== 2 && s.t < s.duration ? { key: 'mg.flossRumble.overboard' } : undefined,
+        message:
+          s.winner >= 0 && s.winner !== 2 && s.t < s.duration
+            ? { key: 'mg.flossRumble.overboard' }
+            : !s.practice && s.t < SAFE_TIME
+              ? { key: 'mg.flossRumble.rail', params: { s: Math.ceil(SAFE_TIME - s.t) } }
+              : undefined,
       },
     };
   },

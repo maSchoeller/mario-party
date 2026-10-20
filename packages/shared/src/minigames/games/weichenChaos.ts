@@ -10,6 +10,9 @@ import { TEAM_COLORS, clamp, skill, teamRanksFromScores } from '../util';
  * station costs a point. Both teams get mirrored train sequences (fair).
  * Press times come from the phone clock (NET-05): a press that happened just before a train
  * reached the switch still counts, even if the message arrives a moment later.
+ * Tie-break (same score at the end – the mirrored trains make that common): the team whose
+ * switches were set correctly earlier, i.e. the bigger sum of lead times (time between the
+ * last flip and the train reaching the switch, capped at LEAD_CAP) over all correctly routed trains.
  */
 const DURATION = 45;
 const Z_START = 13;
@@ -22,6 +25,7 @@ const LEN_DIAG = Math.hypot(SID_DX, SID_DZ);
 const LEN_SIDING = LEN_DIAG + 2;
 const GRACE = 0.2;
 const TRAIN_SCALE = 0.75;
+const LEAD_CAP = 2;
 
 type Way = 'station' | 'siding';
 
@@ -35,6 +39,8 @@ interface Line {
   dsx: number;
   state: Way;
   flipVis: number;
+  /** time of the last flip (phone timestamp) */
+  flipAt: number;
 }
 
 interface Train {
@@ -45,6 +51,8 @@ interface Train {
   s: number;
   branch: Way | null;
   decidedAt: number;
+  /** seconds the switch was already in its position when the train reached it */
+  lead?: number;
 }
 
 interface BotMem {
@@ -62,6 +70,8 @@ export interface WeichenChaosState {
   lines: Line[];
   trains: Train[];
   scores: number[];
+  /** sum of lead times of correctly routed trains per team (tie-break) */
+  lead: number[];
   nextSpawn: number[];
   nextId: number;
   fx: { id: number; line: number; kind: 'good' | 'bad' | 'siding'; t: number }[];
@@ -89,9 +99,13 @@ function flip(s: WeichenChaosState, i: number, t: number): void {
     if (line.owner !== i) return;
     line.state = other(line.state);
     line.flipVis = 0.35;
+    line.flipAt = tp;
     // the press happened before the train reached the switch: it still takes the new way
     for (const tr of s.trains) {
-      if (tr.line === li && tr.branch !== null && tr.decidedAt > tp && tr.s - LEN_A < 1.5) tr.branch = line.state;
+      if (tr.line === li && tr.branch !== null && tr.decidedAt > tp && tr.s - LEN_A < 1.5) {
+        tr.branch = line.state;
+        tr.lead = tr.decidedAt - tp;
+      }
     }
   });
 }
@@ -109,7 +123,7 @@ export const weichenChaos: MinigameDef<WeichenChaosState> = {
       const m = players.filter((p) => p.team === team).map((p) => p.idx);
       const side = k === 0 ? -1 : 1;
       for (let slot = 0; slot < 2; slot++) {
-        lines.push({ team, owner: m[slot] ?? m[0], slot, x0: side * (slot === 0 ? 10 : 5), dsx: -side * SID_DX, state: 'station', flipVis: 0 });
+        lines.push({ team, owner: m[slot] ?? m[0], slot, x0: side * (slot === 0 ? 10 : 5), dsx: -side * SID_DX, state: 'station', flipVis: 0, flipAt: 0 });
       }
     });
     return {
@@ -121,6 +135,7 @@ export const weichenChaos: MinigameDef<WeichenChaosState> = {
       lines,
       trains: [],
       scores: teamIds.map(() => 0),
+      lead: teamIds.map(() => 0),
       nextSpawn: [0.6, 1.5],
       nextId: 1,
       fx: [],
@@ -158,12 +173,15 @@ export const weichenChaos: MinigameDef<WeichenChaosState> = {
       if (tr.branch === null && tr.s >= LEN_A) {
         tr.branch = line.state;
         tr.decidedAt = s.t - (tr.s - LEN_A) / v;
+        tr.lead = Math.max(0, tr.decidedAt - line.flipAt);
       }
     }
     const arrived = s.trains.filter((tr) => tr.branch !== null && tr.s - LEN_A >= (tr.branch === 'station' ? LEN_STATION : LEN_SIDING));
     for (const tr of arrived) {
       const line = s.lines[tr.line];
       const ti = s.teamIds.indexOf(line.team);
+      const correct = (tr.branch === 'station') === (tr.color === line.team);
+      if (correct) s.lead[ti] += Math.min(LEAD_CAP, tr.lead ?? 0);
       if (tr.branch === 'siding') s.fx.push({ id: tr.id, line: tr.line, kind: 'siding', t: 0.8 });
       else if (tr.color === line.team) {
         s.scores[ti]++;
@@ -178,7 +196,12 @@ export const weichenChaos: MinigameDef<WeichenChaosState> = {
     if (s.practice && s.scores.some((x) => x >= 99)) s.scores = s.scores.map(() => 0);
   },
   isOver: (s) => !s.practice && s.t >= s.duration,
-  result: (s) => teamRanksFromScores(s.players, (team) => s.scores[s.teamIds.indexOf(team)] ?? 0),
+  result: (s) =>
+    teamRanksFromScores(s.players, (team) => {
+      const k = s.teamIds.indexOf(team);
+      // score plus a fraction < 0.5 that grows with the lead time (tie-break)
+      return (s.scores[k] ?? 0) + 0.5 * (1 - 1 / (1 + (s.lead[k] ?? 0)));
+    }),
   bot(s, i, level: BotLevel, rng: Rng) {
     const li = s.lines.findIndex((l) => l.owner === i);
     if (li < 0) return [];

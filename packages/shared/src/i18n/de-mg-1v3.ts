@@ -17,10 +17,11 @@ export const deMg1v3: Record<string, string> = {
   // #16 Laternen-Jagd
   'mg.laternenJagd.name': 'Laternen-Jagd',
   'mg.laternenJagd.desc':
-    'Einer versteckt sich im Dunkeln, drei suchen mit Laternen und müssen ihn lange genug anleuchten. Wer rennt, hinterlässt leuchtende Fußspuren – wer schleicht, nicht!',
+    'Einer versteckt sich im Dunkeln, drei suchen mit Laternen und müssen ihn lange genug anleuchten. Das Trio wartet zuerst kurz am Tor und wird gegen Ende schneller. Wer rennt, hinterlässt leuchtende Fußspuren – wer schleicht, nicht!',
   'mg.laternenJagd.controls': 'Joystick: laufen · Solo: Joystick nur halb drücken = schleichen',
   'mg.laternenJagd.lit': 'Im Licht!',
   'mg.laternenJagd.caught': 'Erwischt!',
+  'mg.laternenJagd.hide': 'Versteck dich – Trio wartet!',
 
   // #17 Ballon-Bombardement
   'mg.ballonBombardement.name': 'Ballon-Bombardement',

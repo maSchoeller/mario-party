@@ -1,13 +1,14 @@
 import type { BotLevel } from '../../config';
 import type { Rng } from '../../rng';
 import type { ControllerLayout, MgEntity, MgInput, MgPlayer, MinigameDef } from '../types';
-import { TEAM_COLORS, skill, teamRanksFromScores } from '../util';
+import { TEAM_COLORS, clamp, skill, teamRanksFromScores } from '../util';
 
 /**
  * #11 Paket-Kette (2v2, Wischen): parcels arrive on a conveyor belt at the thrower (first
  * team member), who swipes them up to the partner. The sorter (second member) swipes each
  * parcel into the chute of its color (left / up / right). Right chute +1, wrong chute −1.
  * Both teams get the very same parcels at the same time (fair).
+ * Tie-break (same score at the end): the team that reached its score first.
  */
 const DURATION = 45;
 /** parcel colors; index = chute: 0 = left, 1 = up (back), 2 = right */
@@ -32,6 +33,8 @@ interface TeamState {
   flying: (Parcel & { t: number })[];
   hand: Parcel[];
   score: number;
+  /** time the current score was reached (tie-break: earlier wins) */
+  scoreAt: number;
   fx: { id: number; color: number; chute: number; ok: boolean | null; t: number }[];
   throwVis: number;
   sortVis: number;
@@ -65,9 +68,17 @@ function sortParcel(s: PaketKetteState, ts: TeamState, chute: number): void {
   const p = ts.hand.shift();
   if (!p) return;
   const ok = p.color === chute;
+  const before = ts.score;
   ts.score = ok ? ts.score + 1 : Math.max(0, ts.score - 1);
+  if (ts.score !== before) ts.scoreAt = s.t;
   ts.fx.push({ id: p.id, color: p.color, chute, ok, t: 0.6 });
   ts.sortVis = 0.3;
+}
+
+/** score plus a fraction < 1 that is bigger the earlier the score was reached */
+function tieBreakScore(s: PaketKetteState, ts: TeamState | undefined): number {
+  if (!ts) return 0;
+  return ts.score + 0.5 * (1 - clamp(ts.scoreAt / (s.duration + 1), 0, 1));
 }
 
 export const paketKette: MinigameDef<PaketKetteState> = {
@@ -80,7 +91,7 @@ export const paketKette: MinigameDef<PaketKetteState> = {
     const teamIds = [...new Set(players.map((p) => p.team))].sort();
     const teams: TeamState[] = teamIds.map((team) => {
       const m = players.filter((p) => p.team === team).map((p) => p.idx);
-      return { team, thrower: m[0], sorter: m[1] ?? m[0], belt: [], flying: [], hand: [], score: 0, fx: [], throwVis: 0, sortVis: 0 };
+      return { team, thrower: m[0], sorter: m[1] ?? m[0], belt: [], flying: [], hand: [], score: 0, scoreAt: 0, fx: [], throwVis: 0, sortVis: 0 };
     });
     return {
       t: 0,
@@ -146,7 +157,7 @@ export const paketKette: MinigameDef<PaketKetteState> = {
     }
   },
   isOver: (s) => !s.practice && s.t >= s.duration,
-  result: (s) => teamRanksFromScores(s.players, (team) => s.teams.find((ts) => ts.team === team)?.score ?? 0),
+  result: (s) => teamRanksFromScores(s.players, (team) => tieBreakScore(s, s.teams.find((ts) => ts.team === team))),
   bot(s, i, level: BotLevel, rng: Rng, dt) {
     const ts = s.teams[s.teamOf[i]];
     const sk = skill(level);

@@ -22,7 +22,7 @@ export const deMgDuel: Record<string, string> = {
   'mg.schnickSchnack.point': 'Punkt!',
   'mg.schnickSchnack.tie': 'Gleich! Nochmal!',
   'mg.schnickSchnack.sudden': 'Entscheidungsrunde!',
-  'mg.schnickSchnack.lot': 'Gleichstand – das Los entscheidet!',
+  'mg.schnickSchnack.lot': 'Gleichstand – Los entscheidet!',
 
   // Schnellzieher (reference game, other texts in de.ts – this key overrides the old
   // "Zwei Siege" text there since the duel is now best of 5)

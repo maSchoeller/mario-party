@@ -9,6 +9,9 @@ import { clamp, dist, dist2, faceAngle, moveWithStick, skill, steerTo, teamRanks
  * glowing footprints while running and a short sparkle every few seconds. Bushes hide
  * the solo from beams that are further away. Light the solo long enough → trio wins;
  * survive until time runs out → solo wins.
+ * Pacing (MINI-03): the trio starts at the gate and waits HIDE_TIME seconds, the first
+ * sparkle comes late; towards the end the seekers get faster, the sparkles more frequent and
+ * the light catches quicker – the hunt gets hotter instead of being decided in the first seconds.
  */
 const R = 10; // garden radius
 const DURATION = 45;
@@ -27,8 +30,9 @@ const BUSHES = 8;
 const BUSH_GAP = 3.6;
 /** inside a bush the solo is only seen by a lantern closer than this */
 const BUSH_SEE = 2.4;
-/** seconds of light (one lantern) until caught */
-const CATCH_TIME = 1.4;
+/** seconds of light (one lantern) until caught: CATCH_TIME at the start, CATCH_LATE at the end */
+const CATCH_TIME = 2.0;
+const CATCH_LATE = 1.2;
 const CATCH_DECAY = 2.5;
 /** sparkle interval: from SPARK_EVERY at the start down to SPARK_LATE at the end (the hunt gets hotter) */
 const SPARK_EVERY = 4.5;
@@ -255,7 +259,8 @@ export const laternenJagd: MinigameDef<LaternenJagdState> = {
     }
     // light
     s.litBy = litCount(s);
-    if (s.litBy > 0) s.caught += (dt / CATCH_TIME) * Math.min(1.5, s.litBy);
+    const catchTime = s.practice ? CATCH_TIME : CATCH_TIME + (CATCH_LATE - CATCH_TIME) * clamp(s.t / s.duration, 0, 1);
+    if (s.litBy > 0) s.caught += (dt / catchTime) * Math.min(1.5, s.litBy);
     else s.caught = Math.max(0, s.caught - CATCH_DECAY * dt);
     if (s.caught >= 1) {
       s.catches++;
@@ -470,7 +475,13 @@ export const laternenJagd: MinigameDef<LaternenJagdState> = {
           { team: 1, labelKey: 'team.trio', value: `🔦 ${Math.round(s.caught * 100)} %` },
         ],
         bars: [{ player: s.solo, value: s.caught }],
-        message: s.won ? { key: 'mg.laternenJagd.caught' } : s.litBy > 0 ? { key: 'mg.laternenJagd.lit' } : undefined,
+        message: s.won
+          ? { key: 'mg.laternenJagd.caught' }
+          : s.litBy > 0
+            ? { key: 'mg.laternenJagd.lit' }
+            : !s.practice && s.t < HIDE_TIME
+              ? { key: 'mg.laternenJagd.hide' }
+              : undefined,
       },
     };
   },

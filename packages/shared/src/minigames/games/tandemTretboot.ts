@@ -134,6 +134,7 @@ export const tandemTretboot: MinigameDef<TandemTretbootState> = {
         continue;
       }
       b.v *= Math.exp(-DRAG * dt);
+      const before = b.pos;
       b.pos += b.v * dt;
       if (b.lastT !== null && s.t - b.lastT > RESET_AFTER) {
         b.next = -1;
@@ -144,8 +145,11 @@ export const tandemTretboot: MinigameDef<TandemTretbootState> = {
         if (s.practice) {
           b.pos = 0;
         } else {
+          // exact crossing time inside this tick: two boats finishing in the same tick are
+          // ranked fairly (independent of the update order)
+          const f = b.pos > before ? (COURSE - before) / (b.pos - before) : 1;
           b.pos = COURSE;
-          b.finishedAt = s.t;
+          b.finishedAt = s.t - dt * (1 - clamp(f, 0, 1));
         }
       }
     }

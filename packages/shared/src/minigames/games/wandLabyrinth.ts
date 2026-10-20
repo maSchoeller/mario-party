@@ -15,12 +15,14 @@ const CH = 7; // cells in z
 const TW = CW * 2 + 1; // tiles
 const TH = CH * 2 + 1;
 const TS = 1.1; // tile size (world units)
-const STEP_TIME = 0.32; // seconds per cell at full stick
+const STEP_TIME = 0.4; // seconds per cell at full stick
 const COOLDOWN = 0.8;
 const SLIDE_TIME = 0.25;
 const DURATION = 40;
 const N_SLIDERS = 10; // per axis
 const BRAID = 0.03;
+const ROUTE_WEIGHT = 3;
+const ATTEMPTS = 20;
 const WALL_H = 1.3;
 const COLOR_H = '#ff9f43';
 const COLOR_V = '#a66bff';
@@ -126,7 +128,7 @@ function generate(rng: Rng): { walls: number[]; sliders: Slider[]; exit: Cell; s
   ];
   let best: { walls: number[]; sliders: Slider[]; exit: Cell; starts: Cell[] } | null = null;
   let bestImpact = -1;
-  for (let attempt = 0; attempt < 40 && (bestImpact < 0 || attempt < 12); attempt++) {
+  for (let attempt = 0; attempt < 40 && (bestImpact < 0 || attempt < ATTEMPTS); attempt++) {
     const walls = new Array<number>(TW * TH).fill(1);
     // perfect maze by randomized depth-first search
     const seen = new Array<boolean>(CW * CH).fill(false);
@@ -207,6 +209,8 @@ function generate(rng: Rng): { walls: number[]; sliders: Slider[]; exit: Cell; s
       const ds = per.map((p) => p[k]);
       impact += Math.max(...ds) - Math.min(...ds);
     }
+    // and no short cut: the shortest route of the trio counts too (MINI-03 play time)
+    impact += Math.min(...per.flat()) * ROUTE_WEIGHT;
     if (impact > bestImpact) {
       bestImpact = impact;
       best = { walls, sliders, exit, starts };
