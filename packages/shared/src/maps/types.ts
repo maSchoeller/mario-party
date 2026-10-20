@@ -106,6 +106,10 @@ export interface TerrainDef {
   cuts?: { x: number; z: number; rx: number; rz: number; rot?: number }[];
   /** additive hills (gaussian), h may be negative for basins */
   hills?: { x: number; z: number; r: number; h: number; rz?: number }[];
+  /** shallow lagoons: the sea floor rises to `y` inside (stilt huts, wading boats) */
+  shallows?: { x: number; z: number; rx: number; rz: number; rot?: number; y: number }[];
+  /** width of the sand strip along the coast (default 3.2) */
+  beach?: number;
   /** channels (river, lava stream, canal): carved below the water level */
   channels?: { points: [number, number][]; width: number; kind: 'water' | 'lava' }[];
   /** ground colors */

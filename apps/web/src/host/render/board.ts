@@ -161,10 +161,12 @@ export class BoardView {
     return this.terrain.clearance(x, z) > r + 0.6 && this.terrain.height(x, z) > this.terrain.def.water.high + 0.15;
   }
 
-  private place(node: TransformNode, x: number, z: number, yaw: number, scale = 1, y?: number): TransformNode {
+  /** Positions a static prop and freezes it – set every transform here, later changes are ignored. */
+  private place(node: TransformNode, x: number, z: number, yaw: number, scale: number | Vector3 = 1, y?: number): TransformNode {
     node.position.set(x, y ?? this.terrain.height(x, z) - 0.04, z);
     node.rotation.y = yaw;
-    node.scaling.setAll(scale);
+    if (typeof scale === 'number') node.scaling.setAll(scale);
+    else node.scaling.copyFrom(scale);
     node.freezeWorldMatrix();
     for (const m of node.getChildMeshes()) {
       m.receiveShadows = true;
@@ -352,14 +354,17 @@ export class BoardView {
       dir.normalize();
       const yaw = Math.atan2(dir.x, dir.z);
       if (e.kind === 'pier') {
-        const segs = Math.max(1, Math.round(len / 3));
+        // deck from tile rim to tile rim, segments butting exactly: posts under a tile poked
+        // their caps through the tile top, and overlapping segments doubled the posts (both flickered)
+        const from = 1.25;
+        const span = len - 2 * from;
+        if (span <= 0) continue;
+        const segs = Math.max(1, Math.round(span / 3));
         for (let i = 0; i < segs; i++) {
-          const t = (i + 0.5) / segs;
-          const p = a.add(dir.scale(len * t));
+          const p = a.add(dir.scale(from + (span * (i + 0.5)) / segs));
           const deck = Math.min(e.ya, e.yb) - 0.04;
           const node = lib.prop('pier', `pier${k++}`, this.root) ?? fallbackPier(s, `pier${k}`, this.root);
-          this.place(node, p.x, p.z, yaw, 1, deck - PIER_DECK);
-          node.scaling.set(1, 1, len / segs / 3 + 0.05);
+          this.place(node, p.x, p.z, yaw, new Vector3(1, 1, span / segs / 3), deck - PIER_DECK);
           this.keepOut.push({ x: p.x, z: p.z, r: 2 });
         }
       }
@@ -374,9 +379,13 @@ export class BoardView {
     for (const f of this.map.fields) {
       if (!f.tags?.includes('bridge')) continue;
       const dir = this.tangent(f);
+      // never reach under the neighbouring tiles (at a river mouth the water goes on and on)
+      const near = (id: string | undefined) => (id ? Math.hypot(getField(this.map, id).x - f.x, getField(this.map, id).z - f.z) - 1.3 : 9);
+      const back = Math.min(9, near(predecessors(this.map, f.id)[0]));
+      const fwd = Math.min(9, near(f.next[0]));
       let lo = 0;
       let hi = 0;
-      for (let t = -9; t <= 9; t += 0.25) {
+      for (let t = -back; t <= fwd; t += 0.25) {
         const x = f.x + dir.x * t;
         const z = f.z + dir.z * t;
         if (this.terrain.height(x, z) < water + 0.3) {
@@ -384,13 +393,18 @@ export class BoardView {
           hi = Math.max(hi, t);
         }
       }
-      const mid = (lo + hi) / 2;
-      const span = Math.max(4, hi - lo + 2.4);
+      // a little bank on either side, at least 4 long, within the tile rims
+      let a = Math.max(-back, lo - 1.2);
+      let b = Math.min(fwd, hi + 1.2);
+      const short = Math.max(0, 4 - (b - a)) / 2;
+      a = Math.max(-back, a - short);
+      b = Math.min(fwd, b + short);
+      const mid = (a + b) / 2;
+      const span = b - a;
       const node = s.assets.prop(bridgeId, `bridge_${f.id}`, this.root) ?? fallbackBridge(s, `bridge_${f.id}`, this.root);
       const x = f.x + dir.x * mid;
       const z = f.z + dir.z * mid;
-      this.place(node, x, z, Math.atan2(dir.x, dir.z), 1, this.fy(f.id) - 0.06 - BRIDGE_DECK);
-      node.scaling.set(1, 1, span / 7);
+      this.place(node, x, z, Math.atan2(dir.x, dir.z), new Vector3(1, 1, span / 7), this.fy(f.id) - 0.06 - BRIDGE_DECK);
       this.keepOut.push({ x, z, r: span / 2 });
     }
   }
@@ -750,9 +764,14 @@ export class BoardView {
     this.stage.setCamera({ alpha: -Math.PI / 2, beta: 0.78, radius: size * 1.0, target: this.center().add(new Vector3(0, 0, -3)) }, 1.6, instant);
   }
 
+  /** Keeps the camera on figure i, following it smoothly while it walks (ground height, not the hops). */
   focus(i: number, radius = 22): void {
-    const p = this.tokenPos(i);
-    this.stage.setCamera({ alpha: -Math.PI / 2 - p.x * 0.005, beta: 0.86, radius, target: p.add(new Vector3(0, 1, 0)) }, 2.4);
+    const node = this.rigs[i].root;
+    const follow = (out: Vector3) => {
+      const p = node.position;
+      out.set(p.x, this.groundAt(p.x, p.z) + 1, p.z);
+    };
+    this.stage.setCamera({ alpha: -Math.PI / 2 - node.position.x * 0.005, beta: 0.86, radius }, 2.4, false, follow);
   }
 
   focusField(id: string, radius = 20): void {

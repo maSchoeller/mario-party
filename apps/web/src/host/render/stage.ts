@@ -40,6 +40,8 @@ export class Stage {
   physics: HavokPlugin | null = null;
   readonly assets: AssetLibrary = new AssetLibrary(this);
   private goal: CameraGoal | null = null;
+  /** live camera target (e.g. a walking figure): the goal target follows it every frame */
+  private follow: ((out: Vector3) => void) | null = null;
   private camSpeed = 2.5;
   private shake = 0;
   private matCache = new Map<string, StandardMaterial>();
@@ -128,13 +130,15 @@ export class Stage {
     for (const fn of this.updaters) fn(dt);
     // camera easing
     if (this.goal) {
+      if (this.follow) this.follow(this.goal.target);
       const k = 1 - Math.exp(-this.camSpeed * rawDt);
       const c = this.camera;
       c.alpha += (this.goal.alpha - c.alpha) * k;
       c.beta += (this.goal.beta - c.beta) * k;
       c.radius += (this.goal.radius - c.radius) * k;
-      // copy in place: the `target` setter would rebuild alpha/beta/radius from the old position
-      c.target.copyFrom(Vector3.Lerp(c.target, this.goal.target, k));
+      // in place: the `target` setter would rebuild alpha/beta/radius from the old position
+      const t = c.target;
+      t.set(t.x + (this.goal.target.x - t.x) * k, t.y + (this.goal.target.y - t.y) * k, t.z + (this.goal.target.z - t.z) * k);
     }
     if (this.shake > 0) {
       this.shake = Math.max(0, this.shake - rawDt);
@@ -167,14 +171,20 @@ export class Stage {
     return this.quality;
   }
 
-  setCamera(goal: Partial<CameraGoal> & { target?: Vector3 }, speed = 2.5, instant = false): void {
+  /**
+   * Eases the camera towards `goal`. With `follow` the target is re-read every frame
+   * (a moving figure): the camera glides along instead of jumping to a new goal per step.
+   */
+  setCamera(goal: Partial<CameraGoal> & { target?: Vector3 }, speed = 2.5, instant = false, follow?: (out: Vector3) => void): void {
     const c = this.camera;
     this.goal = {
       alpha: goal.alpha ?? this.goal?.alpha ?? c.alpha,
       beta: goal.beta ?? this.goal?.beta ?? c.beta,
       radius: goal.radius ?? this.goal?.radius ?? c.radius,
-      target: goal.target?.clone() ?? this.goal?.target ?? c.target.clone(),
+      target: goal.target?.clone() ?? this.goal?.target.clone() ?? c.target.clone(),
     };
+    this.follow = follow ?? null;
+    if (follow) follow(this.goal.target);
     this.camSpeed = speed;
     if (instant) {
       c.alpha = this.goal.alpha;

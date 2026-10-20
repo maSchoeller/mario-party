@@ -85,8 +85,10 @@ export class Terrain {
     const L = this.land(x, z);
     const wl = d.water.low ?? d.water.high;
     let y: number;
-    if (L < 0) y = wl - 0.2 + Math.max(-6, L * 0.45);
-    else y = d.water.high - 0.25 + (d.base - d.water.high + 0.25) * smoothstep(0, 4.5, L);
+    if (L < 0) {
+      y = wl - 0.2 + Math.max(-6, L * 0.45);
+      for (const s of d.shallows ?? []) y = Math.max(y, y + (s.y - y) * smoothstep(0, 3, ellipse(x, z, s)));
+    } else y = d.water.high - 0.25 + (d.base - d.water.high + 0.25) * smoothstep(0, 4.5, L);
     const inland = smoothstep(1, 6, L);
     y += (fbm(x * 0.05, z * 0.05, 4, 3) - 0.5) * 0.9 * inland;
     for (const hl of d.hills ?? []) {
@@ -216,7 +218,7 @@ export class Terrain {
   private classify(x: number, z: number, y: number, L: number): Ground {
     const d = this.def;
     if (y < d.water.high - 0.02) return 'water';
-    if (L < 3.2 + (noise2(x * 0.2, z * 0.2, 4) - 0.5) * 2 && y < d.base + 0.5) return 'sand';
+    if (L < (d.beach ?? 3.2) + (noise2(x * 0.2, z * 0.2, 4) - 0.5) * 2 && y < d.base + 0.5) return 'sand';
     return 'grass';
   }
 
