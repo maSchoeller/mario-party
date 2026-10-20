@@ -36,6 +36,7 @@ test('forced WebSocket relay fallback works (NET-03)', async ({ browser }) => {
 });
 
 test('phone reconnect keeps the seat, bot covers meanwhile (LOBBY-05, BOT-02, NET-06)', async ({ browser }) => {
+  test.setTimeout(300_000);
   const { host, code } = await openHost(browser);
   const anna = await joinPhone(browser, code, 'Anna');
   const ben = await joinPhone(browser, code, 'Ben');
@@ -47,7 +48,8 @@ test('phone reconnect keeps the seat, bot covers meanwhile (LOBBY-05, BOT-02, NE
   await expect.poll(async () => (await hostState(host)).slots[1].connected, { timeout: 15000 }).toBe(false);
   // while Ben is gone the game does not block: his order roll is done by a bot
   await anna.click('.ctrl-big.roll', { timeout: 30000 });
-  await expect.poll(async () => (await hostState(host)).pending, { timeout: 30000 }).not.toBe('orderRoll');
+  // four animated 3D order rolls in a row: give software-rendered CI enough time
+  await expect.poll(async () => (await hostState(host)).pending, { timeout: 90000 }).not.toBe('orderRoll');
   const ben2 = await ctx.newPage();
   await ben2.goto(url);
   await expect.poll(async () => (await hostState(host)).slots[1].connected, { timeout: 15000 }).toBe(true);

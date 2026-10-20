@@ -989,9 +989,10 @@ export class HostSession {
           if (this.board) {
             this.board.focus(ev.player, 16);
             this.audio.sfx('dice');
-            await this.board.rollDice(ev.player, [ev.roll], this.speed(), (k) => this.audio.diceClack(k));
+            // the order roll is a warm-up: a bit quicker than a real turn roll
+            await this.board.rollDice(ev.player, [ev.roll], this.speed() * 1.35, (k) => this.audio.diceClack(k));
             this.ui.popAtPlayer(ev.player, `🎲 ${ev.value}`, 'good');
-            await this.sleep(500);
+            await this.sleep(350);
             void this.board.clearDice(this.speed());
           }
           break;
