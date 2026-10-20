@@ -401,7 +401,7 @@ button.primary {
 }
 .layer-gimmick .gimmick {
   position: absolute;
-  top: 9vh;
+  top: 13vh;
   right: 2vh;
   padding: 1.2vh 2vh;
   font-size: 2.4vh;
@@ -548,10 +548,12 @@ button.primary {
   top: 40%;
   width: 100%;
   text-align: center;
-  font-size: 9vh;
+  font-size: 6.5vh;
   font-weight: 900;
   color: #fff;
-  text-shadow: 0 0.6vh 0 rgba(60, 60, 100, 0.35);
+  text-shadow: 0 0.5vh 0 rgba(60, 60, 100, 0.45);
+  padding: 0 5vw;
+  box-sizing: border-box;
 }
 .results {
   padding: 3vh 5vh;

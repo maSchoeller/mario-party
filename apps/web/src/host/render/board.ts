@@ -78,6 +78,7 @@ export class BoardView {
     stage.castShadow(sm, false);
     tokens.forEach((tk, i) => {
       const rig = new CharacterRig(stage, tk.character, tk.color, `tok${i}`);
+      rig.root.scaling.setAll(1.5); // readable from the couch (ART-03)
       rig.root.parent = this.root;
       this.rigs.push(rig);
       this.positions.push(map.start);
@@ -117,7 +118,7 @@ export class BoardView {
     // sea / lava plane
     const sea = MeshBuilder.CreateGround('sea', { width: 400, height: 400, subdivisions: 2 }, s.scene);
     sea.position.y = theme === 'island' ? -0.35 : -1.2;
-    sea.material = s.mat(p.water, { emissive: theme === 'volcano' ? 0.5 : 0.05 });
+    sea.material = s.mat(p.water, { emissive: theme === 'volcano' ? 0.35 : 0 });
     sea.parent = this.root;
     s.receiveShadow(sea);
     this.water = theme === 'island' ? sea : null;
@@ -168,6 +169,12 @@ export class BoardView {
     tile.position.y = 0.1;
     s.receiveShadow(rim);
     s.receiveShadow(tile);
+    if ((f.y ?? 0) > 0.2) {
+      // elevated fields (summit path) stand on rock pillars
+      const pillar = cyl(s, `pillar_${f.id}`, { top: 2.2, bottom: 3.0, h: pos.y, tess: 7 }, '#7a6a72', this.root);
+      pillar.position.set(pos.x, pos.y / 2 - 0.3, pos.z);
+      s.receiveShadow(pillar);
+    }
     this.tiles.set(f.id, tile);
     const icon = FIELD_ICON[f.type];
     if (icon) {
@@ -234,11 +241,12 @@ export class BoardView {
         case 'volcano': {
           const n = new TransformNode(`volcano${i}`, s.scene);
           n.parent = this.root;
-          const v = cyl(s, 'volcanoCone', { top: 5, bottom: 22, h: 9, tess: 9 }, '#7a6a72', n);
-          v.position.y = 4.4;
-          const lava = cyl(s, 'volcanoLava', { d: 4.2, h: 0.4, tess: 9 }, '#ff7a3d', n);
+          // crater sits behind the summit path; the path crosses its flank
+          const v = cyl(s, 'volcanoCone', { top: 6, bottom: 20, h: 10, tess: 9 }, '#7a6a72', n);
+          v.position.y = 5;
+          const lava = cyl(s, 'volcanoLava', { d: 5, h: 0.4, tess: 9 }, '#ff7a3d', n);
           lava.material = s.mat('#ff7a3d', { emissive: 0.9 });
-          lava.position.y = 8.85;
+          lava.position.y = 10.05;
           s.castShadow(v, false);
           s.receiveShadow(v);
           node = n;
@@ -363,7 +371,7 @@ export class BoardView {
   overview(instant = false): void {
     const b = this.bounds();
     const size = Math.max(b.maxX - b.minX, (b.maxZ - b.minZ) * 1.5);
-    this.stage.setCamera({ alpha: -Math.PI / 2, beta: 0.78, radius: size * 1.15, target: this.center().add(new Vector3(0, 0, 2)) }, 1.6, instant);
+    this.stage.setCamera({ alpha: -Math.PI / 2, beta: 0.8, radius: size * 1.08, target: this.center().add(new Vector3(0, 0, -4)) }, 1.6, instant);
   }
 
   focus(i: number, radius = 22): void {
@@ -382,7 +390,7 @@ export class BoardView {
     if (same.length <= 1) return Vector3.Zero();
     const idx = same.indexOf(i);
     const a = (idx / same.length) * Math.PI * 2 + Math.PI / 4;
-    return new Vector3(Math.cos(a) * 0.75, 0, Math.sin(a) * 0.75);
+    return new Vector3(Math.cos(a) * 1.1, 0, Math.sin(a) * 1.1);
   }
 
   layoutTokens(instant = false): void {
@@ -448,6 +456,7 @@ export class BoardView {
     rig.setAnim('idle');
     rig.root.rotation.y = 0;
     this.layoutTokens();
+    void from;
   }
 
   // ------------------------------------------------------------------ star, bags, traps, arrows

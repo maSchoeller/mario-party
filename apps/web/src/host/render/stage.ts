@@ -50,22 +50,22 @@ export class Stage {
     const scene = new Scene(this.engine);
     this.scene = scene;
     scene.clearColor = new Color4(0.62, 0.83, 0.93, 1);
-    scene.ambientColor = new Color3(0.3, 0.3, 0.35);
+    scene.ambientColor = new Color3(0.22, 0.22, 0.26);
     scene.fogMode = Scene.FOGMODE_EXP2;
-    scene.fogDensity = 0.006;
+    scene.fogDensity = 0.004;
     scene.fogColor = new Color3(0.81, 0.91, 0.95);
 
     this.camera = new ArcRotateCamera('cam', -Math.PI / 2, 0.85, 60, Vector3.Zero(), scene);
-    this.camera.fov = 0.7;
+    this.camera.fov = 0.8;
     this.camera.minZ = 0.5;
     this.camera.maxZ = 600;
 
     const hemi = new HemisphericLight('hemi', new Vector3(0.2, 1, -0.3), scene);
-    hemi.intensity = 0.75;
+    hemi.intensity = 0.5;
     hemi.groundColor = new Color3(0.55, 0.55, 0.65);
     this.sun = new DirectionalLight('sun', new Vector3(-0.45, -1, 0.55), scene);
     this.sun.position = new Vector3(40, 80, -50);
-    this.sun.intensity = 0.95;
+    this.sun.intensity = 0.72;
     this.shadows = new ShadowGenerator(2048, this.sun);
     this.shadows.useBlurExponentialShadowMap = true;
     this.shadows.blurKernel = 24;
@@ -73,6 +73,14 @@ export class Stage {
     this.glow = new GlowLayer('glow', scene, { blurKernelSize: 32 });
     this.glow.intensity = 0.6;
 
+    // ?quality=0 forces the lowest quality (software rendering in automated tests)
+    const q = new URLSearchParams(location.search).get('quality');
+    if (q === '0') {
+      this.quality = 0;
+      this.shadows.getShadowMap()!.refreshRate = 0;
+      this.glow.isEnabled = false;
+      this.engine.setHardwareScalingLevel(1.5);
+    }
     scene.onBeforeRenderObservable.add(() => this.update());
     this.engine.runRenderLoop(() => scene.render());
     window.addEventListener('resize', () => this.engine.resize());
@@ -106,7 +114,8 @@ export class Stage {
       c.alpha += (this.goal.alpha - c.alpha) * k;
       c.beta += (this.goal.beta - c.beta) * k;
       c.radius += (this.goal.radius - c.radius) * k;
-      c.target = Vector3.Lerp(c.target, this.goal.target, k);
+      // copy in place: the `target` setter would rebuild alpha/beta/radius from the old position
+      c.target.copyFrom(Vector3.Lerp(c.target, this.goal.target, k));
     }
     if (this.shake > 0) {
       this.shake = Math.max(0, this.shake - rawDt);
@@ -152,7 +161,7 @@ export class Stage {
       c.alpha = this.goal.alpha;
       c.beta = this.goal.beta;
       c.radius = this.goal.radius;
-      c.target = this.goal.target.clone();
+      c.target.copyFrom(this.goal.target);
     }
   }
 
@@ -169,7 +178,7 @@ export class Stage {
       const c = Color3.FromHexString(hex);
       m.diffuseColor = c;
       m.specularColor = new Color3(0.06, 0.06, 0.06);
-      m.ambientColor = c.scale(0.4);
+      m.ambientColor = c.scale(0.3);
       if (opts.emissive) m.emissiveColor = c.scale(opts.emissive);
       if (opts.alpha !== undefined && opts.alpha < 1) {
         m.alpha = opts.alpha;

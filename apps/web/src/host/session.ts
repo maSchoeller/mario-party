@@ -121,12 +121,53 @@ export class HostSession {
 
   /** Called on page load. Restores a running session after a reload (SAVE-03). */
   boot(): void {
+    const demo = new URLSearchParams(location.search).get('demo');
+    if (demo) return this.startDemo(demo);
     const restored = this.restore();
     if (restored) {
       this.net.start();
       return;
     }
     this.showStart();
+  }
+
+  /**
+   * Local test/demo mode without phones: /host?demo=kokosnuss|vulkan|bimmelbahn|marathon
+   * (optional &rounds=20&ff=1&mg=<id> to force a minigame). Four CPU players play.
+   */
+  private startDemo(arg: string) {
+    const q = new URLSearchParams(location.search);
+    this.settings.mode = arg === 'marathon' ? 'marathon' : 'board';
+    if (MAP_IDS.includes(arg)) this.settings.mapId = arg;
+    const rounds = Number(q.get('rounds'));
+    if (rounds === 20 || rounds === 25 || rounds === 30) this.settings.rounds = rounds;
+    this.slots = CHARACTERS.map((character, i) => ({
+      slot: i,
+      token: null,
+      peerId: null,
+      name: t(`char.${character}`),
+      character,
+      color: PLAYER_COLORS[i],
+      connected: false,
+      cpu: true,
+      motion: false,
+      mode: 'relay' as LinkMode,
+    }));
+    this.phase = 'lobby';
+    this.net.start();
+    const forced = q.get('mg');
+    this.skipRun = !!forced;
+    this.startGame(true);
+    if (forced && this.engine) {
+      const def = ALL_MINIGAMES.find((m) => m.id === forced);
+      if (def) {
+        this.runId++;
+        const players = def.format === 'duel' ? [0, 1] : [0, 1, 2, 3];
+        const teams = def.format === '2v2' ? [0, 0, 1, 1] : def.format === '1v3' ? [0, 1, 1, 1] : def.format === 'duel' ? [0, 1] : [0, 1, 2, 3];
+        void this.runMinigame({ kind: 'minigame', game: def.id, format: def.format, players, teams, purpose: 'round' });
+      }
+    }
+    if (q.get('ff') === '1') this.setFastForward(true);
   }
 
   private showStart(error?: string) {
@@ -405,6 +446,7 @@ export class HostSession {
       // reconnect to the existing seat (LOBBY-05); the bot hands back control (BOT-02)
       const wasGone = !s.connected;
       s.peerId = peerId;
+      s.mode = this.net.peerMode(peerId) ?? s.mode;
       s.connected = true;
       s.motion = msg.motion;
       if (wasGone && this.phase === 'game') void this.audio.say('mod.reconnect', { player: s.name }, 800, this.speed());
@@ -433,7 +475,7 @@ export class HostSession {
       }
       const slot = this.slots.length;
       const free = CHARACTERS.find((c) => !this.slots.some((x) => x.character === c)) ?? null;
-      s = { slot, token, peerId, name, character: free, color: PLAYER_COLORS[slot], connected: true, cpu: false, motion: msg.motion, mode: 'connecting' };
+      s = { slot, token, peerId, name, character: free, color: PLAYER_COLORS[slot], connected: true, cpu: false, motion: msg.motion, mode: this.net.peerMode(peerId) ?? 'connecting' };
       this.slots.push(s);
       if (this.chief === null) this.chief = slot; // LOBBY-03: first phone is chief
       this.audio.sfx('ding');
@@ -460,6 +502,7 @@ export class HostSession {
     target.connected = true;
     target.unclaimed = false;
     target.motion = claimer.motion;
+    target.mode = this.net.peerMode(peerId) ?? 'connecting';
     if (this.engine) this.engine.state.players[slot].isBot = false;
     this.fixChief();
     this.runner?.refreshBots();
@@ -674,9 +717,11 @@ export class HostSession {
     this.ui.setOverlay(null);
     this.setupBoard();
     telemetry('game_started', { mode: this.settings.mode, map: this.settings.mapId, rounds: this.settings.rounds, humans, bots: 4 - humans });
-    void this.runGame();
+    if (!this.skipRun) void this.runGame();
     this.persist();
   }
+
+  private skipRun = false;
 
   private backToLobby() {
     this.runId++;

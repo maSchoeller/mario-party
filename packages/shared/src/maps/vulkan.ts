@@ -75,7 +75,7 @@ export const VULKAN: MapDef = {
     fog: '#f3cdbd',
   },
   decor: [
-    { kind: 'volcano', x: 0, z: -2, s: 1 },
+    { kind: 'volcano', x: 6, z: -6, s: 1 },
     { kind: 'obsidian', x: -18, z: 8 },
     { kind: 'obsidian', x: 16, z: -12 },
     { kind: 'obsidian', x: 30, z: 4 },

@@ -44,6 +44,7 @@ export class HostAudio {
   private timer: ReturnType<typeof setInterval> | null = null;
   private voice: SpeechSynthesisVoice | null = null;
   onSubtitle: (text: string | null) => void = () => {};
+  private lineId = 0;
 
   constructor() {
     try {
@@ -232,6 +233,7 @@ export class HostAudio {
   /** Moderator line: subtitle always (A11Y-03) + voice (AUDIO-03). Resolves when done. */
   say(key: string, params?: Params, minMs = 1400, speed = 1): Promise<void> {
     const text = t(key, params);
+    this.lineId++;
     this.onSubtitle(text);
     const est = Math.max(minMs, text.length * 55) / speed;
     return new Promise((resolve) => {
@@ -239,6 +241,9 @@ export class HostAudio {
       const finish = () => {
         if (done) return;
         done = true;
+        // keep the subtitle a moment, then clear it unless a newer line replaced it
+        const mine = this.lineId;
+        setTimeout(() => mine === this.lineId && this.onSubtitle(null), 1200);
         resolve();
       };
       if ('speechSynthesis' in window && this.vol.voice > 0 && this.unlocked && speed <= 1) {

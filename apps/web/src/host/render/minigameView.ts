@@ -11,7 +11,7 @@ import type { Stage } from './stage';
  */
 const ENV: Record<MgView['env'], { sky: [string, string]; fog: string; ground: string | null; emissive?: number }> = {
   water: { sky: ['#9fd3ec', '#e8f4fa'], fog: '#cfe8f2', ground: '#86c8e0' },
-  lava: { sky: ['#f2b49b', '#fbe3d0'], fog: '#f3cdbd', ground: '#ff7a3d', emissive: 0.6 },
+  lava: { sky: ['#f2b49b', '#fbe3d0'], fog: '#f3cdbd', ground: '#e8603a', emissive: 0.25 },
   grass: { sky: ['#a9d6ee', '#eef6e8'], fog: '#dbeee0', ground: '#b9d7a1' },
   night: { sky: ['#1d2140', '#2b3060'], fog: '#1d2140', ground: '#2d3a3a' },
   sky: { sky: ['#a9c8f0', '#eef3fb'], fog: '#dfe7f2', ground: null },
@@ -79,7 +79,7 @@ export class MinigameView {
     const hemi = this.stage.scene.lights.find((l) => l.name === 'hemi');
     if (hemi && this.hemiBackup !== null) hemi.intensity = this.hemiBackup;
     this.hemiBackup = null;
-    this.stage.sun.intensity = 0.95;
+    this.stage.sun.intensity = 0.72;
   }
 
   private create(e: MgEntity): Item {
