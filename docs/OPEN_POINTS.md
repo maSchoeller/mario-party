@@ -11,7 +11,7 @@ Stand 20.10.2026 (v0.3). Alles andere ist lokal lauffähig und getestet, siehe [
 | **Maps** | Alle 3 Maps neu mit 61–73 Feldern und 4–5 Abzweigungen. Die Landschaft wird aus den Map-Daten gebaut (Höhen, Fluss/Lava/Kanal, Brücken, Steg, Gebäude an den Feldern, Vegetation). | Kokosnuss: Bei Flut sind Furt **und** Sandbank gesperrt. |
 | **Stimme** | Neue deutsche Stimme „DiMario“. Sie spricht nur noch an Höhepunkten und die Würfelzahl, sonst gibt es nur Untertitel. Die Browser-Sprachausgabe ist entfernt. | Welche Momente vertont sind: `VOICE_LINES` in `packages/shared/src/i18n/voice.ts`. |
 | **Ton** | Master-Kompressor, Equal-Power-Crossfades, Mini-Fades gegen Klicks bei allen Effekten, weiches Ducking unter der Stimme, Pause blendet den Ton ab, Würfel-Klacken bei jedem Aufprall. | – |
-| **Ladezeit** | Die Modelle sind zusammen 7,3 MB groß (vorher 0,9 MB), der Brettaufbau dauert 0,6–0,9 s. | Vor öffentlichem Deployment: meshopt-Kompression der GLBs (spart grob 60 %). |
+| **Ladezeit** | v0.3.1: Die Modelle sind meshopt-komprimiert, 7,3 MB → 1,95 MB (−73 %), optisch identisch. Der Decoder wird mit der App ausgeliefert. | ✅ Erledigt |
 
 
 ## 1. Erledigt in v0.2
@@ -31,8 +31,8 @@ Stand 20.10.2026 (v0.3). Alles andere ist lokal lauffähig und getestet, siehe [
 
 | Thema | Spec | Was fehlt |
 |---|---|---|
-| **Nutzungsrechte Audio** | AUDIO-07 | ElevenLabs läuft im **Free-Tarif** (nur nicht-kommerziell, Namensnennung). Suno läuft über den **inoffiziellen** Drittanbieter sunoapi.org, die Rechtelage ist unklar. Vor öffentlicher Freigabe klären oder mit bezahlten Konten neu erzeugen (ein Befehl je Skript). Details: [ASSETS_LICENSES.md](ASSETS_LICENSES.md). |
-| **Moderator-Stimme** | AUDIO-03 | Erledigt in v0.3: deutsche Bibliotheksstimme „DiMario“, nur ganze Sätze. Offen: die Lizenzbedingungen der Bibliotheksstimme prüfen. |
+| **Nutzungsrechte Audio** | AUDIO-07 | ElevenLabs ✅ (v0.3.1): Alle Stimm- und SFX-Dateien sind im bezahlten Tarif erzeugt, kommerziell nutzbar. **Offen bleibt Suno:** Die Musik läuft über den inoffiziellen Drittanbieter sunoapi.org, die Rechtelage ist unklar. Vor öffentlicher Freigabe klären oder mit eigenem Suno-Pro-Konto neu erzeugen. Details: [ASSETS_LICENSES.md](ASSETS_LICENSES.md). |
+| **Moderator-Stimme** | AUDIO-03 | ✅ Erledigt: deutsche Bibliotheksstimme „DiMario“, nur ganze Sätze. Lizenz geprüft (kommerziell erlaubt, keine Namensnennung, Kündigungsfrist 730 Tage), siehe [ASSETS_LICENSES.md](ASSETS_LICENSES.md#elevenlabs-stimme-dimario-geprüft-am-20102026). |
 | **Azure-Deployment** | OPS-01..04, 12 | Subscription, Ressourcengruppe, Service Principal (OIDC), Budget-E-Mail. `infra/main.bicep` ist lokal valide, ein `what-if` gegen Azure steht aus. |
 | **GitHub Container Registry** | 12 | Push-Rechte/Package-Sichtbarkeit |
 | **Application Insights** | PRIV-02 | Connection-String (Weiterleitung ungetestet gegen Azure) |

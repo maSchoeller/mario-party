@@ -33,7 +33,9 @@ Für eine andere Sprache: Wörterbuch ergänzen, Skript mit dem neuen Wörterbuc
 node scripts/assets/build.mjs
 ```
 
-- `models`: `blender/characters.py` + Prop-Bibliotheken → GLB (Dreiecks-Budget wird geprüft)
+- `models`: `blender/characters.py` + Prop-Bibliotheken → GLB nach `assets-src/models` (Dreiecks-Budget wird geprüft),
+  danach `compress.mjs`: meshopt-Kompression mit `gltfpack` nach `apps/web/public/media/models` (~73 % kleiner;
+  der Decoder wird mit der App ausgeliefert, kein CDN). Nur neu komprimieren: `node scripts/assets/build.mjs compress`
   - `props.py` → `props.glb` (gemeinsame Props + Feld-Gebäude), `props_island.py`, `props_volcano.py`,
     `props_city.py` → `props_<thema>.glb`; Bausteine in `propkit.py`, Budgets: Streu-Vegetation ≤ 300
     (Gras ≤ 40), normale Props ≤ 2.500, Landmarken ≤ 6.000 Dreiecke pro Prop
@@ -41,9 +43,9 @@ node scripts/assets/build.mjs
 - `audio`: `blender/audio.py` → Stille kürzen, Lautheit angleichen, MP3
 
 Blender-Pfad bei Bedarf über `BLENDER=/pfad/zu/blender` setzen. Vorschau-Renderings:
-`blender -b -P scripts/assets/blender/preview.py -- --out vorschau.png apps/web/public/media/models/foxy.glb`,
+`blender -b -P scripts/assets/blender/preview.py -- --out vorschau.png assets-src/models/foxy.glb`,
 Kontaktbogen einer Prop-Bibliothek (EEVEE, Licht wie im Spiel, `tint` = `--tint`):
-`blender -b -P scripts/assets/blender/preview.py -- --sheet --out assets-src/previews/props/props_city.png apps/web/public/media/models/props_city.glb`.
+`blender -b -P scripts/assets/blender/preview.py -- --sheet --out assets-src/previews/props/props_city.png assets-src/models/props_city.glb`.
 
 ## Konventionen
 

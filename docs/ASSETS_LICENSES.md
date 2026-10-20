@@ -9,8 +9,21 @@ Erzeugung und Nachbearbeitung sind skriptbasiert: siehe [scripts/assets/README.m
 
 | Dienst | Genutzter Tarif (20.10.2026) | Rechtslage laut Anbieter (zu prüfen!) | Konsequenz |
 |---|---|---|---|
-| **ElevenLabs** (Stimme, SFX, Gebrabbel) | v0.2: **Free**. Ab v0.3 (20.10.2026): **bezahlter Tarif** (Monatsabo). Moderator-Stimme und alle in v0.3 neu erzeugten Clips stammen aus dem bezahlten Tarif. | Free-Tarif: nur **nicht-kommerziell** und **mit Namensnennung**. Bezahlte Tarife erlauben laut Anbieter kommerzielle Nutzung. Bei Bibliotheksstimmen gelten zusätzlich die Bedingungen der Stimmen-Anbieter. | Die SFX aus v0.2 (Free) vor öffentlicher Freigabe einmal neu erzeugen (`node scripts/assets/sfx.mjs <key>`). Lizenzlage der Bibliotheksstimme „DiMario“ prüfen. |
+| **ElevenLabs** (Stimme, SFX, Gebrabbel) | **Bezahlter Tarif** (seit 20.10.2026). Seit v0.3.1 sind **alle** ElevenLabs-Dateien im bezahlten Tarif erzeugt; die 19 SFX/Gebrabbel aus dem Free-Tarif wurden neu generiert. | Geprüft am 20.10.2026, siehe [Abschnitt unten](#elevenlabs-stimme-dimario-geprüft-am-20102026). Kurz: kommerzielle Nutzung erlaubt, Rechte am Output bleiben bei uns, keine Namensnennung nötig. | ✅ Erledigt. Neue Clips lassen sich nur mit aktivem bezahltem Tarif erzeugen. |
 | **Suno** über **sunoapi.org** (Musik, Jingles) | Credits bei sunoapi.org (Drittanbieter, **keine offizielle Suno-API**) | Suno vergibt Eigentum/kommerzielle Rechte nur an Ausgaben aus bezahlten Suno-Abos. Welche Rechte über sunoapi.org entstehen, ist unklar (dortige AGB + Suno-AGB prüfen). | **Rechtlich größtes Risiko.** Vor öffentlicher Nutzung klären oder Musik mit eigenem Suno-Pro/Premier-Konto neu erzeugen. Die prozedurale Musik bleibt als Fallback eingebaut. |
+
+## ElevenLabs-Stimme „DiMario“ (geprüft am 20.10.2026)
+
+Keine Rechtsberatung, sondern eine Zusammenfassung der Anbieterbedingungen. Für ein kommerzielles Release gegebenenfalls juristisch bestätigen lassen.
+
+| Frage | Ergebnis | Quelle |
+|---|---|---|
+| Dürfen wir die Clips kommerziell nutzen? | **Ja.** Mit bezahltem Abo ist kommerzielle Nutzung erlaubt (§1(c)(ii)); im Free-Tarif nur nicht-kommerziell (§1(c)(i)). | [ElevenLabs Terms of Use EU](https://elevenlabs.io/terms-of-use-eu) |
+| Wem gehören die Aufnahmen? | **Uns.** „you retain all rights in and to your Output“ (§4(c)(ii)). ElevenLabs erhält eine nicht-exklusive Lizenz zur Verbesserung seiner Dienste (§4(d)). | Terms of Use EU |
+| Müssen wir ElevenLabs oder den Sprecher nennen? | **Nein.** Weder die Bedingungen noch das Voice Library Addendum verlangen eine Namensnennung. Eine freiwillige Nennung im Impressum schadet nicht. | Terms of Use EU, [Voice Library Addendum EU](https://elevenlabs.io/vlaeu) |
+| Was passiert, wenn der Sprecher die Stimme zurückzieht? | Die Stimme bleibt während der **Kündigungsfrist von 730 Tagen** nutzbar. Vorher erzeugte Aufnahmen bleiben **dauerhaft** nutzbar: „Outputs generated … prior to the end of the Notice Period will continue to exist and remain available for use thereafter“ (Addendum §4). | Voice Library Addendum EU, Stimmen-Daten per API |
+| Was passiert nach Ende unseres Abos? | Die Rechte an den bereits erzeugten Dateien enden laut Bedingungen nicht (§4(c)(ii)). Wir haben alle Dateien lokal im Repo (§14: selbst exportieren). **Neue** Clips gehen nur mit aktivem bezahltem Abo. | Terms of Use EU |
+| Gibt es Einschränkungen für die Stimme? | Professioneller Stimmklon aus der Bibliothek. „Voice mixing“ ist nicht erlaubt (machen wir nicht), es gilt die Prohibited Use Policy (harmlose Spielansagen). | ElevenLabs-API `GET /v1/voices/DQ4rTqXxHr077oQgsA9D` |
 
 ## Ausgelieferte Fremd-Bestandteile
 
@@ -21,6 +34,8 @@ Erzeugung und Nachbearbeitung sind skriptbasiert: siehe [scripts/assets/README.m
 | Babylon.js glTF-Loader | `@babylonjs/loaders` 9.31 | Apache-2.0 | GLB-Modelle laden (ASSET-03) | 2026-10-20 |
 | Havok Physics (Web) | `@babylonjs/havok` | MIT (Havok-Web-Build von Babylon.js) | Physik-Effekte Host | 2026-10-20 |
 | qrcode | `qrcode` (npm) | MIT | QR-Code in der Lobby | 2026-10-20 |
+| meshoptimizer (Decoder) | `meshoptimizer` (npm, Arseny Kapoulkine) | MIT | Entpackt die meshopt-komprimierten GLBs im Browser; wird mit der App ausgeliefert (kein CDN) | 2026-10-20 |
+| gltfpack (nur Build) | `gltfpack` (npm, Arseny Kapoulkine) | MIT | Komprimiert die GLBs (`scripts/assets/compress.mjs`); nicht ausgeliefert | 2026-10-20 |
 | ws | `ws` (npm) | MIT | WebSocket-Server | 2026-10-20 |
 | @azure/data-tables | Microsoft | MIT | Spielstände in Table Storage | 2026-10-20 |
 
