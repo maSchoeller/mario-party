@@ -657,3 +657,44 @@ table.stats td:first-child {
   font-weight: 800;
   font-size: 2.4vh;
 }
+
+.settings-dock {
+  position: fixed;
+  left: 50%;
+  bottom: 1vh;
+  transform: translateX(-50%) translateX(42vw);
+  pointer-events: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 1vh;
+  opacity: 0.35;
+}
+.settings-dock:hover {
+  opacity: 1;
+}
+.settings-dock .gear {
+  font-size: 2.4vh;
+  min-height: 0;
+  min-width: 0;
+  padding: 0.5vh 1vh;
+  background: transparent;
+  box-shadow: none;
+}
+.volume {
+  padding: 1.5vh 2vh;
+  display: flex;
+  flex-direction: column;
+  gap: 1vh;
+  font-weight: 800;
+  font-size: 1.8vh;
+}
+.volume.hidden {
+  display: none;
+}
+.volume label {
+  display: flex;
+  justify-content: space-between;
+  gap: 1vh;
+  align-items: center;
+}

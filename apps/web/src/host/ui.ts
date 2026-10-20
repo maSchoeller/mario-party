@@ -330,6 +330,22 @@ export class HostUI {
       );
   }
 
+  /** Gear button with separate volumes for music / effects / voice (AUDIO-06). */
+  volumeControls(get: () => Record<'music' | 'sfx' | 'voice', number>, set: (k: 'music' | 'sfx' | 'voice', v: number) => void): void {
+    const panel = h('div', { class: 'volume card hidden' });
+    const render = () => {
+      clear(panel);
+      const v = get();
+      for (const k of ['music', 'sfx', 'voice'] as const) {
+        const input = h('input', { type: 'range', min: 0, max: 100, value: Math.round(v[k] * 100) });
+        input.addEventListener('input', () => set(k, Number(input.value) / 100));
+        panel.append(h('label', {}, t(`host.volume${k === 'sfx' ? 'Sfx' : k[0].toUpperCase() + k.slice(1)}`), input));
+      }
+    };
+    const gear = h('button', { class: 'gear', title: t('host.settings'), onclick: () => (render(), panel.classList.toggle('hidden')) }, '⚙️');
+    this.root.append(h('div', { class: 'settings-dock' }, panel, gear));
+  }
+
   serverStatus(text: string | null): void {
     const id = 'server-status';
     this.root.querySelector(`#${id}`)?.remove();

@@ -49,13 +49,13 @@ export function mountController(layout: ControllerLayout, ctx: ControllerCtx): M
     case 'button':
       return pressButton(layout, ctx);
     case 'tilt':
-      return tilt(ctx);
+      return tilt(ctx, layout.labelKey);
     case 'shake':
-      return shake(ctx);
+      return shake(ctx, layout.labelKey);
     case 'draw':
       return draw(layout, ctx);
     case 'swipe':
-      return swipe(ctx);
+      return swipe(ctx, layout.labelKey);
     case 'choice':
       return choice(layout, ctx);
     case 'number':
@@ -182,10 +182,10 @@ function pressButton(layout: Extract<ControllerLayout, { kind: 'button' }>, ctx:
 
 // ---------------------------------------------------------------- motion (with fallbacks)
 
-function tilt(ctx: ControllerCtx): MountedController {
+function tilt(ctx: ControllerCtx, labelKey?: string): MountedController {
   if (motionAvailable()) {
     const ball = h('div', { class: 'tilt-ball' });
-    const el = h('div', { class: 'ctrl-tilt' }, h('div', { class: 'tilt-dish' }, ball), h('p', {}, t('ctrl.tilt')));
+    const el = h('div', { class: 'ctrl-tilt' }, h('div', { class: 'tilt-dish' }, ball), h('p', {}, t(labelKey ?? 'ctrl.tilt')));
     let last = 0;
     const stop = startTilt((x, y) => {
       ball.style.transform = `translate(${x * 60}px, ${-y * 60}px)`;
@@ -199,10 +199,10 @@ function tilt(ctx: ControllerCtx): MountedController {
   }
   // fallback: on-screen pad (A11Y, desktop testing, denied permission)
   const pad = stickPad((x, y) => ctx.send({ type: 'tilt', x: round(x), y: round(y) }, true));
-  return { el: h('div', { class: 'ctrl-tilt fallback' }, pad.el, h('p', {}, t('ctrl.tiltFallback'))), destroy: pad.destroy };
+  return { el: h('div', { class: 'ctrl-tilt fallback' }, pad.el, h('p', {}, labelKey ? `${t(labelKey)} – ` : '', t('ctrl.tiltFallback'))), destroy: pad.destroy };
 }
 
-function shake(ctx: ControllerCtx): MountedController {
+function shake(ctx: ControllerCtx, labelKey?: string): MountedController {
   const meter = h('div', { class: 'shake-meter' });
   const bump = (p: number) => {
     meter.style.transform = `scale(${1 + p * 0.4})`;
@@ -213,7 +213,7 @@ function shake(ctx: ControllerCtx): MountedController {
       ctx.send({ type: 'shake', power: round(power) });
       bump(power);
     });
-    return { el: h('div', { class: 'ctrl-shake' }, meter, h('p', {}, t('ctrl.shake'))), destroy: stop };
+    return { el: h('div', { class: 'ctrl-shake' }, meter, h('p', {}, t(labelKey ?? 'ctrl.shake'))), destroy: stop };
   }
   const btn = h('button', { class: 'ctrl-big mash' }, t('ctrl.shake'));
   btn.addEventListener('pointerdown', (e) => {
@@ -294,8 +294,8 @@ function draw(layout: Extract<ControllerLayout, { kind: 'draw' }>, ctx: Controll
   };
 }
 
-function swipe(ctx: ControllerCtx): MountedController {
-  const zone = h('div', { class: 'swipe-zone' }, h('span', {}, '⬆️'), h('p', {}, t('ctrl.swipe')));
+function swipe(ctx: ControllerCtx, labelKey?: string): MountedController {
+  const zone = h('div', { class: 'swipe-zone' }, h('span', {}, '⬆️'), h('p', {}, t(labelKey ?? 'ctrl.swipe')));
   let start: { x: number; y: number } | null = null;
   const fire = (dir: 'up' | 'down' | 'left' | 'right') => {
     ctx.send({ type: 'swipe', dir });

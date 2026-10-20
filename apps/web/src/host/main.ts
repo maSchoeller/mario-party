@@ -13,6 +13,7 @@ const stage = new Stage(canvas);
 const ui = new HostUI(document.getElementById('ui')!);
 const audio = new HostAudio();
 const session = new HostSession(stage, ui, audio);
+ui.volumeControls(() => audio.volumes(), (k, v) => audio.setVolume(k, v));
 
 // audio needs one user gesture; after a reload the first click/key re-enables it
 const unlock = () => audio.unlock();
