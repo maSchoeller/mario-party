@@ -1,0 +1,21 @@
+{
+  "name": "@wb/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/main.ts",
+    "start": "tsx src/main.ts",
+    "build": "tsc -p . --noEmit"
+  },
+  "dependencies": {
+    "@wb/shared": "*",
+    "ws": "^8.18.0"
+  },
+  "optionalDependencies": {
+    "@azure/data-tables": "^13.3.0"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.5.12"
+  }
+}
