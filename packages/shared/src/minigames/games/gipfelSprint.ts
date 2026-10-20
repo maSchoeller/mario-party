@@ -2,7 +2,8 @@ import type { MgEntity, MinigameDef } from '../types';
 import { ranksFromScores, rowSpawn } from '../util';
 
 /** #3 Gipfel-Sprint (FFA, Mashen): tap as fast as possible to run up the volcano. */
-const GOAL = 90; // taps to the top
+const GOAL = 220; // taps to the top (~30 s for an average masher, MINI-03)
+const DURATION = 40;
 
 interface P {
   progress: number;
@@ -24,11 +25,11 @@ export const gipfelSprint: MinigameDef<GipfelSprintState> = {
   format: 'ffa',
   control: 'tap',
   theme: 'volcano',
-  duration: 30,
+  duration: DURATION,
   setup(players, _rng, opts) {
     return {
       t: 0,
-      duration: 30,
+      duration: DURATION,
       practice: opts.practice,
       n: players.length,
       ps: players.map(() => ({ progress: 0, finishedAt: null, tapAcc: 0, speedVis: 0 })),

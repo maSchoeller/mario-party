@@ -1,6 +1,7 @@
 import type { Rng } from '../../rng';
 import type { MgEntity, MgInput, MgPlayer, MinigameDef } from '../types';
 import { faceAngle, ranksFromScores, ringSpawn } from '../util';
+import { BOT_DISPLAY_LAG } from './botLag';
 
 /**
  * #8 Lava-Seilspringen (FFA, Timing-Button): a glowing lava beam sweeps around the centre
@@ -15,14 +16,14 @@ import { faceAngle, ranksFromScores, ringSpawn } from '../util';
 const RP = 4; // radius of the player circle
 const BEAM_IN = 0.9;
 const BEAM_OUT = 6.9;
-const JUMP = 0.6; // fixed jump duration
+const JUMP = 0.72; // fixed jump duration
 const JUMP_H = 1.5;
 const SAFE = 0.06; // take-off / landing frames that don't count as "in the air"
 const GRACE = 0.2;
 const MAX_LAG = 0.5; // presses older than this are clamped
 const COUNTDOWN = 2;
 const OMEGA0 = 1.7;
-const OMEGA_ACC = 0.1;
+const OMEGA_ACC = 0.085;
 const OMEGA_MAX = 6.2;
 const OUT_R = 9.6;
 
@@ -145,7 +146,9 @@ export const lavaSeil: MinigameDef<LavaSeilState> = {
     // the faster the beam, the harder the timing
     const sigma = { easy: 0.075, medium: 0.06, hard: 0.05 }[level] * (1 + s.omega / 3);
     p.botFor = tc;
-    p.botPress = tc - JUMP / 2 + rng.noise() * sigma;
+    // humans see the beam a little late (TV + touch latency, see botLag.ts) and therefore
+    // jump late on average – bots get the same handicap
+    p.botPress = tc - JUMP / 2 + BOT_DISPLAY_LAG + rng.noise() * sigma;
     return [];
   },
   view(s) {

@@ -220,7 +220,7 @@ describe('lavaSeil', () => {
     lavaSeil.input(s, 1, { type: 'press', t: tc - 0.1 }); // still in the air: ignored
     expect(s.ps[1].jumps).toHaveLength(1);
     for (let k = 0; k < 30; k++) lavaSeil.tick(s, 1 / 60, rng);
-    expect(s.ps[1].out).toBeNull(); // in the air at tc (0.45 < 0.6 − 0.06)
+    expect(s.ps[1].out).toBeNull(); // in the air at tc (0.45 < JUMP − SAFE = 0.72 − 0.06)
 
     const s2 = lavaSeil.setup(humans(), Rng.fromSeed(13), { practice: false });
     const r2 = Rng.fromSeed(13);

@@ -1,6 +1,7 @@
 import type { Rng } from '../../rng';
 import type { ControllerLayout, MgEntity, MgHud, MinigameDef } from '../types';
 import { clamp, ranksFromScores, rowSpawn, skill } from '../util';
+import { BOT_DISPLAY_LAG } from './botLag';
 
 /**
  * Final minigame Gipfelsturm (FFA, mixed controls, never drawn randomly): a three-stage
@@ -28,7 +29,7 @@ export const TRACK = 16;
 export const GAPS = [2.5, 5.5, 8.5, 11.5, 14];
 export const GAP_W = 0.8;
 export const RUN_SPEED = 2.4;
-export const AIR = 0.65;
+export const AIR = 0.75;
 export const JUMP_LEN = RUN_SPEED * AIR;
 const JUMP_H = 1.1;
 /** wait this long after reaching an edge for a late-arriving earlier press (NET-05) */
@@ -289,9 +290,10 @@ export const gipfelsturm: MinigameDef<GipfelsturmState> = {
       if (p.jump || p.fallUntil !== null || p.gap >= GAPS.length) return [];
       const g = GAPS[p.gap];
       if (p.botX === null) {
-        // aim for the middle of the takeoff window, timing noise depends on skill
+        // aim for the middle of the takeoff window, timing noise depends on skill; plus the
+        // display lag a human has (sees the runner a bit late, see botLag.ts)
         const sigma = { easy: 0.15, medium: 0.085, hard: 0.05 }[level];
-        p.botX = g - (JUMP_LEN - GAP_W) / 2 + rng.noise() * sigma * RUN_SPEED;
+        p.botX = g - (JUMP_LEN - GAP_W) / 2 + (BOT_DISPLAY_LAG + rng.noise() * sigma) * RUN_SPEED;
       }
       if (p.jx >= p.botX) {
         const t = s.t - (p.jx - p.botX) / RUN_SPEED;

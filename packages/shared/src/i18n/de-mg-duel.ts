@@ -24,16 +24,21 @@ export const deMgDuel: Record<string, string> = {
   'mg.schnickSchnack.sudden': 'Entscheidungsrunde!',
   'mg.schnickSchnack.lot': 'Gleichstand – das Los entscheidet!',
 
+  // Schnellzieher (reference game, other texts in de.ts – this key overrides the old
+  // "Zwei Siege" text there since the duel is now best of 5)
+  'mg.schnellzieher.desc': 'Warte auf „JETZT!“ und tippe als Erster. Frühstart verliert die Runde! Drei Siege gewinnen.',
+
   // Memo-Duell
   'mg.memoDuell.name': 'Memo-Duell',
-  'mg.memoDuell.desc': 'Merke dir, welche Farben nacheinander aufleuchten, und tippe sie genauso nach. Wer sich länger nicht vertippt, gewinnt!',
+  'mg.memoDuell.desc': 'Merke dir, welche Farben nacheinander aufleuchten, und tippe sie genauso nach. Jeder Fehler kostet ein Herz – wer beide Herzen verliert, hat verloren!',
   'mg.memoDuell.controls': 'Farb-Pads: Reihenfolge nachtippen',
   'mg.memoDuell.watch': 'Gut aufpassen!',
   'mg.memoDuell.go': 'Jetzt nachtippen!',
-  'mg.memoDuell.longer': 'Beide richtig – es wird länger!',
+  'mg.memoDuell.longer': 'Beide richtig – länger!',
+  'mg.memoDuell.life': 'Fehler – ein Herz weg!',
   'mg.memoDuell.retry': 'Beide daneben – nochmal!',
   'mg.memoDuell.decided': 'Entschieden!',
-  'mg.memoDuell.time': 'Zeit um – der Schnellere gewinnt!',
+  'mg.memoDuell.time': 'Zeit um – Tempo entscheidet!',
 
   // Gipfelsturm (Finale)
   'mg.gipfelsturm.name': 'Gipfelsturm',

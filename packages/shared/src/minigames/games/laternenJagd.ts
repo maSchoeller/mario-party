@@ -25,9 +25,11 @@ const BUSH_R = 1.3;
 /** inside a bush the solo is only seen by a lantern closer than this */
 const BUSH_SEE = 2.4;
 /** seconds of light (one lantern) until caught */
-const CATCH_TIME = 1.8;
+const CATCH_TIME = 1.4;
 const CATCH_DECAY = 0.5;
 const SPARK_EVERY = 4;
+/** first sparkle a bit later: the solo needs a moment to sneak away from the start */
+const FIRST_SPARK = 5;
 const SPARK_TIME = 0.5;
 const STEP_DIST = 0.85;
 const STEP_LIFE = 1.8;
@@ -111,14 +113,22 @@ function litCount(s: LaternenJagdState): number {
 
 function placeSolo(s: LaternenJagdState, rng: Rng): void {
   const sp = s.ps[s.solo];
-  // the spot furthest away from all seekers out of a few candidates
+  // the spot furthest away from all seekers and their beams out of a few candidates (far out
+  // in the garden, between the beams) – nobody should be caught in the first seconds
   let best = { x: 0, z: R - 2 };
   let bestD = -1;
-  for (let k = 0; k < 8; k++) {
+  for (let k = 0; k < 16; k++) {
     const a = rng.next() * Math.PI * 2;
-    const r = (0.55 + rng.next() * 0.35) * R;
+    const r = (0.72 + rng.next() * 0.18) * R;
     const c = { x: Math.cos(a) * r, z: Math.sin(a) * r };
-    const d = Math.min(...s.trio.map((i) => dist(s.ps[i].x, s.ps[i].z, c.x, c.z)));
+    const d = Math.min(
+      ...s.trio.map((i) => {
+        const q = s.ps[i];
+        const bx = q.x - Math.sin(q.ry) * BEAM_LEN * 0.6;
+        const bz = q.z - Math.cos(q.ry) * BEAM_LEN * 0.6;
+        return Math.min(dist(q.x, q.z, c.x, c.z), dist(bx, bz, c.x, c.z));
+      }),
+    );
     if (d > bestD) {
       bestD = d;
       best = c;
@@ -173,7 +183,7 @@ export const laternenJagd: MinigameDef<LaternenJagdState> = {
       bushes,
       caught: 0,
       litBy: 0,
-      sparkIn: 3,
+      sparkIn: FIRST_SPARK,
       spark: 0,
       steps: [],
       stepAcc: 0,

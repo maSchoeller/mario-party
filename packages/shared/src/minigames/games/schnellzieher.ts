@@ -1,12 +1,19 @@
 import type { MgEntity, MinigameDef } from '../types';
 import { skill } from '../util';
+import { BOT_DISPLAY_LAG } from './botLag';
 
 /**
  * #18 Schnellzieher (Duell, Reaktion): wait for "JETZT!", first press wins the round.
- * A press before the signal loses the round. Best of 3. Press times are measured on the
- * phone with a synchronized clock (NET-05) so network latency doesn't decide.
+ * A press before the signal loses the round. Best of 5 (first to 3 round wins). Press times
+ * are measured on the phone with a synchronized clock (NET-05) so network latency doesn't
+ * decide. Emergency brake: after MAX_ROUNDS rounds or at TIME_LIMIT the leader wins (a tie
+ * in round wins stays a tie).
  */
 const GRACE = 0.35; // wait for late-arriving earlier presses
+const WINS = 3;
+const MAX_ROUNDS = 7;
+const TIME_LIMIT = 55;
+const PAUSE = 2.2; // after a decided round
 
 export interface SchnellzieherState {
   t: number;
@@ -29,7 +36,7 @@ export const schnellzieher: MinigameDef<SchnellzieherState> = {
   format: 'duel',
   control: 'tap',
   theme: 'any',
-  duration: 40,
+  duration: 45,
   setup(_players, rng, opts) {
     return {
       t: 0,
@@ -58,7 +65,7 @@ export const schnellzieher: MinigameDef<SchnellzieherState> = {
       s.roundWinner = 1 - i;
       s.wins[1 - i]++;
       s.phase = 'resolved';
-      s.nextAt = s.t + 2;
+      s.nextAt = s.t + PAUSE;
       return;
     }
     if (s.resolveAt === 0) s.resolveAt = s.t + GRACE;
@@ -72,7 +79,7 @@ export const schnellzieher: MinigameDef<SchnellzieherState> = {
         if (a !== null && (b === null || a <= b)) s.roundWinner = 0;
         else s.roundWinner = 1;
         s.phase = 'resolved';
-        s.nextAt = s.t + 2;
+        s.nextAt = s.t + PAUSE;
       } else if (s.t - s.signalAt > 3) {
         s.roundWinner = null; // nobody pressed
         s.phase = 'resolved';
@@ -81,11 +88,11 @@ export const schnellzieher: MinigameDef<SchnellzieherState> = {
       if (s.phase === 'resolved' && s.roundWinner !== null) s.wins[s.roundWinner]++;
     }
     if (s.phase === 'resolved' && s.t >= s.nextAt) {
-      if (!s.practice && (s.wins[0] >= 2 || s.wins[1] >= 2 || s.round >= 5)) {
+      if (!s.practice && (s.wins[0] >= WINS || s.wins[1] >= WINS || s.round >= MAX_ROUNDS || s.t >= TIME_LIMIT)) {
         s.phase = 'done';
         return;
       }
-      if (s.practice && (s.wins[0] >= 2 || s.wins[1] >= 2)) s.wins = [0, 0];
+      if (s.practice && (s.wins[0] >= WINS || s.wins[1] >= WINS)) s.wins = [0, 0];
       s.round++;
       s.presses = [null, null];
       s.falseStart = null;
@@ -107,7 +114,9 @@ export const schnellzieher: MinigameDef<SchnellzieherState> = {
     }
     if (s.phase !== 'signal') return [];
     if (s.botPlan[i] === null) {
-      const base = { easy: 0.42, medium: 0.31, hard: 0.24 }[level];
+      // reaction plus the display lag a human has on top (TV picture + touch, see botLag.ts):
+      // effectively hard ≈ 0.34 s, medium ≈ 0.41 s, easy ≈ 0.52 s
+      const base = { easy: 0.42, medium: 0.31, hard: 0.24 }[level] + BOT_DISPLAY_LAG;
       s.botPlan[i] = s.signalAt + base + rng.noise() * 0.05 * (1.2 - skill(level).accuracy);
     }
     if (s.t >= s.botPlan[i]!) return [{ type: 'press', t: s.botPlan[i]! }];

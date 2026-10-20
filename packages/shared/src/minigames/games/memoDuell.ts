@@ -1,14 +1,18 @@
 import type { BotLevel } from '../../config';
 import type { Rng } from '../../rng';
 import type { ControllerLayout, MgEntity, MgHud, MinigameDef } from '../types';
+import { BOT_DISPLAY_LAG } from './botLag';
 
 /**
  * #20 Memo-Duell (Duell, Tippen): the TV lights up a growing color sequence on 4 big pads,
- * both players repeat it at the same time on their phone pads. A wrong pad = out for this
- * round. One correct, one wrong → the correct one wins. Both correct → sequence grows by
- * one. Both wrong → whoever got further wins (equal → replay same length).
+ * both players repeat it at the same time on their phone pads. A wrong pad (or running out
+ * of time) = out for this round and costs one of LIVES hearts. Whoever loses the last heart
+ * loses the duel. If at least one player was correct, the sequence grows by one; if both
+ * were wrong, a new sequence of the same length follows. Both lose their last heart in the
+ * same round → whoever got further wins (equal → both get a heart back, replay).
  * Emergency brake: from SOFT_LIMIT on, a round where both are correct is decided by speed;
- * at HARD_LIMIT the game ends immediately (further in the current round, then faster).
+ * at HARD_LIMIT the game ends immediately (more hearts, then further in the current round,
+ * then faster).
  */
 export const PAD_COLORS = ['#e8464b', '#3f7fe0', '#4cbf5a', '#f2c230'];
 const PAD_DARK = ['#6e2a2c', '#22406e', '#275f2e', '#7a6320'];
@@ -20,6 +24,8 @@ const OFF = 0.18;
 const JUDGE = 1.8;
 const SOFT_LIMIT = 46;
 const HARD_LIMIT = 58;
+/** hearts per player – one mistake must not end the duel after a few seconds (MINI-03) */
+export const LIVES = 2;
 
 /** Time one pad stays lit while showing a sequence of length len (gets a bit faster). */
 export function onTime(len: number): number {
@@ -28,6 +34,8 @@ export function onTime(len: number): number {
 const inputLimit = (len: number) => 2.5 + 0.9 * len;
 
 interface P {
+  /** hearts left */
+  lives: number;
   /** correct presses in the current round */
   pos: number;
   failed: boolean;
@@ -53,13 +61,14 @@ export interface MemoDuellState {
   lit: number | null;
   /** index of the lit step inside the sequence (changes → new tone) */
   litStep: number | null;
-  outcome: 'longer' | 'retry' | 'decided' | null;
+  /** longer: both correct · life: a heart lost, sequence grows · retry: both wrong, same length */
+  outcome: 'longer' | 'life' | 'retry' | 'decided' | null;
   winner: number | null;
   /** decided by the time limit */
   byTime: boolean;
 }
 
-const newP = (): P => ({ pos: 0, failed: false, done: false, roundTime: 0, totalTime: 0, lastPress: -9, botNext: null });
+const newP = (): P => ({ lives: LIVES, pos: 0, failed: false, done: false, roundTime: 0, totalTime: 0, lastPress: -9, botNext: null });
 
 function showDuration(len: number): number {
   return LEAD_IN + len * (onTime(len) + OFF);
@@ -82,9 +91,10 @@ function randomSeq(len: number, rng: Rng): number[] {
   return Array.from({ length: len }, () => rng.int(0, 3));
 }
 
-/** Who leads right now: further in the current round, then faster (overall). */
+/** Who leads right now: more hearts, then further in the current round, then faster (overall). */
 function leaderByProgress(s: MemoDuellState): number | null {
   const [a, b] = s.ps;
+  if (a.lives !== b.lives) return a.lives > b.lives ? 0 : 1;
   const inRound = s.phase === 'input' || s.phase === 'judge';
   const pa = inRound ? a.pos : 0;
   const pb = inRound ? b.pos : 0;
@@ -99,19 +109,26 @@ function judge(s: MemoDuellState): void {
   const [a, b] = s.ps;
   let winner: number | null = null;
   let outcome: MemoDuellState['outcome'];
+  for (const p of s.ps) if (!p.done) p.lives = Math.max(0, p.lives - 1);
   if (a.done && b.done) {
     if (!s.practice && s.t >= SOFT_LIMIT && Math.abs(a.roundTime - b.roundTime) > 1e-6) {
       winner = a.roundTime < b.roundTime ? 0 : 1;
       s.byTime = true;
     }
     outcome = winner === null ? 'longer' : 'decided';
-  } else if (a.done !== b.done) {
-    winner = a.done ? 0 : 1;
+  } else if (a.lives > 0 && b.lives > 0) {
+    outcome = a.done || b.done ? 'life' : 'retry';
+  } else if (a.lives !== b.lives) {
+    winner = a.lives > b.lives ? 0 : 1;
     outcome = 'decided';
   } else if (a.pos !== b.pos) {
+    // both lost their last heart in the same round
     winner = a.pos > b.pos ? 0 : 1;
     outcome = 'decided';
-  } else outcome = 'retry';
+  } else {
+    for (const p of s.ps) p.lives = 1;
+    outcome = 'retry';
+  }
   for (const p of s.ps) if (p.done) p.totalTime += p.roundTime;
   s.outcome = outcome;
   s.winner = winner;
@@ -219,9 +236,12 @@ export const memoDuell: MinigameDef<MemoDuellState> = {
       // practice: start over
       s.winner = null;
       s.byTime = false;
-      for (const p of s.ps) p.totalTime = 0;
+      for (const p of s.ps) {
+        p.totalTime = 0;
+        p.lives = LIVES;
+      }
       s.seq = randomSeq(START_LEN, rng);
-    } else if (s.outcome === 'longer') s.seq.push(rng.int(0, 3));
+    } else if (s.outcome === 'longer' || s.outcome === 'life') s.seq.push(rng.int(0, 3));
     else s.seq = randomSeq(s.seq.length, rng);
     s.round++;
     startShow(s);
@@ -233,8 +253,8 @@ export const memoDuell: MinigameDef<MemoDuellState> = {
     if (s.phase !== 'input' || p.done || p.failed) return [];
     const len = s.seq.length;
     if (p.botNext === null) {
-      // think time before the first press
-      p.botNext = s.t + { easy: 0.9, medium: 0.65, hard: 0.5 }[level] * (0.8 + rng.next() * 0.4);
+      // think time before the first press, plus the display lag a human has (botLag.ts)
+      p.botNext = s.t + BOT_DISPLAY_LAG + { easy: 0.9, medium: 0.65, hard: 0.5 }[level] * (0.8 + rng.next() * 0.4);
     }
     if (s.t < p.botNext) return [];
     p.botNext = s.t + { easy: 0.7, medium: 0.5, hard: 0.38 }[level] * (0.8 + rng.next() * 0.4);
@@ -276,6 +296,7 @@ export const memoDuell: MinigameDef<MemoDuellState> = {
       if (champ === i || (decided && s.winner === i)) anim = 'cheer';
       else if (champ === 1 - i || (decided && s.winner === 1 - i)) anim = 'sad';
       else if (s.phase === 'input' && p.failed) anim = 'hit';
+      else if (s.phase === 'judge' && s.outcome === 'life' && !p.done) anim = 'hit';
       else if (s.phase === 'input' && p.done) anim = 'cheer';
       else if (s.t - p.lastPress < 0.25) anim = 'jump';
       entities.push({ id: `p${i}`, kind: 'player', player: i, x: px, y: 0, z: -2.2, ry: 0, anim });
@@ -306,13 +327,14 @@ export const memoDuell: MinigameDef<MemoDuellState> = {
     });
     const hud: MgHud = {
       timer: s.practice ? undefined : Math.max(0, HARD_LIMIT - s.t),
-      scores: [0, 1].map((i) => ({ player: i, value: `${s.phase === 'show' ? 0 : s.ps[i].pos}/${len}` })),
+      scores: [0, 1].map((i) => ({ player: i, value: `${'❤️'.repeat(s.ps[i].lives) || '💔'} ${s.phase === 'show' ? 0 : s.ps[i].pos}/${len}` })),
     };
     if (s.phase === 'show') hud.message = { key: 'mg.memoDuell.watch' };
     else if (s.phase === 'input') hud.message = { key: 'mg.memoDuell.go' };
     else if (s.phase === 'judge' || s.phase === 'done') {
       if (s.byTime) hud.message = { key: 'mg.memoDuell.time' };
       else if (s.outcome === 'longer') hud.message = { key: 'mg.memoDuell.longer' };
+      else if (s.outcome === 'life') hud.message = { key: 'mg.memoDuell.life' };
       else if (s.outcome === 'retry') hud.message = { key: 'mg.memoDuell.retry' };
       else hud.message = { key: 'mg.memoDuell.decided' };
     }

@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { GAP_W, GAPS, gipfelsturm, JUMP_LEN, RUN_SPEED, TAPS, type GipfelsturmState } from '../../src/minigames/games/gipfelsturm';
-import { memoDuell } from '../../src/minigames/games/memoDuell';
+import { LIVES, memoDuell } from '../../src/minigames/games/memoDuell';
 import { schnickSchnack } from '../../src/minigames/games/schnickSchnack';
-import { makeMgPlayers } from '../../src/minigames/headless';
+import { makeMgPlayers, runMinigameHeadless } from '../../src/minigames/headless';
 import { MINIGAMES, pickMinigame } from '../../src/minigames/registry';
 import type { MgPlayer } from '../../src/minigames/types';
 import { Rng } from '../../src/rng';
@@ -94,17 +94,30 @@ describe('memoDuell rules', () => {
     expect(seen).toEqual(s.seq);
     expect(memoDuell.layout(s, 0)).toMatchObject({ kind: 'pads', active: true });
   });
-  it('a mistake knocks a player out of the round; the one without mistake wins', () => {
+  it('a mistake knocks a player out of the round and costs a heart; the last heart decides', () => {
     const rng = Rng.fromSeed(5);
     const s = memoDuell.setup(humans('duel'), rng, { practice: false });
-    toInput(s, rng);
-    memoDuell.input(s, 1, { type: 'pad', idx: (s.seq[0] + 1) % 4 });
-    expect(s.ps[1].failed).toBe(true);
-    expect(memoDuell.layout(s, 1)).toMatchObject({ kind: 'wait', labelKey: 'ctrl.memoFail' });
-    for (const idx of s.seq) memoDuell.input(s, 0, { type: 'pad', idx });
-    let k = 0;
-    while (!memoDuell.isOver(s) && k++ < 200) memoDuell.tick(s, DT, rng);
+    for (let round = 1; round <= LIVES; round++) {
+      toInput(s, rng);
+      memoDuell.input(s, 1, { type: 'pad', idx: (s.seq[0] + 1) % 4 });
+      expect(s.ps[1].failed).toBe(true);
+      expect(memoDuell.layout(s, 1)).toMatchObject({ kind: 'wait', labelKey: 'ctrl.memoFail' });
+      for (const idx of s.seq) memoDuell.input(s, 0, { type: 'pad', idx });
+      let k = 0;
+      while (!memoDuell.isOver(s) && s.phase !== 'show' && k++ < 200) memoDuell.tick(s, DT, rng);
+      expect(s.ps[1].lives).toBe(LIVES - round);
+      expect(s.ps[0].lives).toBe(LIVES);
+      // not over before the last heart is gone
+      expect(memoDuell.isOver(s)).toBe(round === LIVES);
+    }
     expect(memoDuell.result(s)).toEqual([0, 1]);
+  });
+  it('lasts long enough with medium bots (median ≥ 25 s, rarely < 15 s, MINI-03)', () => {
+    const secs: number[] = [];
+    for (let seed = 1; seed <= 12; seed++) secs.push(runMinigameHeadless(memoDuell, makeMgPlayers('duel'), seed * 101).seconds);
+    secs.sort((a, b) => a - b);
+    expect(secs[secs.length >> 1]).toBeGreaterThanOrEqual(25);
+    expect(secs[1]).toBeGreaterThanOrEqual(12);
   });
   it('both correct → the sequence grows by one (same beginning)', () => {
     const rng = Rng.fromSeed(6);
