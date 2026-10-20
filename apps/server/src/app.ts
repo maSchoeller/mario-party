@@ -234,8 +234,10 @@ export function createApp(opts: AppOptions) {
           }
         }
         if (!roomLimiter.take(ip)) return conn.send({ t: 'error', code: 'too_many_rooms' });
-        const room = registry.createRoom(conn);
-        return conn.send({ t: 'host.created', code: room.code, hostToken: room.hostToken, resumed: false });
+        const wanted = msg.resume && isValidCode(normalizeCode(String(msg.resume.code)), BALANCE.roomCodeLength) ? { code: normalizeCode(String(msg.resume.code)), hostToken: String(msg.resume.hostToken) } : undefined;
+        const room = registry.createRoom(conn, wanted);
+        // "resumed" also when an expired/lost room was recreated with the same code
+        return conn.send({ t: 'host.created', code: room.code, hostToken: room.hostToken, resumed: !!wanted && room.code === wanted.code });
       }
       case 'peer.join': {
         if (registry.lookup(conn)) return conn.send({ t: 'error', code: 'bad_message' });

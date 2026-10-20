@@ -1,12 +1,13 @@
 import { Vector3 } from '@babylonjs/core';
-import { BALANCE, CHARACTERS, PLAYER_COLORS, type CharacterId, type PlayerColor } from '@wb/shared/config';
-import { botAction } from '@wb/shared/game/bots';
+import { BALANCE, CHARACTERS, PLAYER_COLOR_HEX, PLAYER_COLORS, type CharacterId, type PlayerColor } from '@wb/shared/config';
+import { botAction, distance } from '@wb/shared/game/bots';
 import { ActionError, createGame, GameEngine } from '@wb/shared/game/engine';
 import { ITEMS } from '@wb/shared/game/items';
 import type { Action, GameEvent, GameState, Pending, PlayerSetup } from '@wb/shared/game/types';
 import { t } from '@wb/shared/i18n/index';
 import { getField, getMap, MAP_IDS, MAPS } from '@wb/shared/maps/index';
 import { ALL_MINIGAMES } from '@wb/shared/minigames/all';
+import { minigameBotLevel } from '@wb/shared/minigames/types';
 import type {
   ControllerView,
   HostToPhone,
@@ -64,6 +65,8 @@ interface Persisted {
 }
 
 const SESSION_KEY = 'wb.host.session';
+const AFK_WARN_SEC = 25;
+const AFK_LIMIT_SEC = 35;
 
 export class HostSession {
   readonly net: HostNetwork;
@@ -832,7 +835,45 @@ export class HostSession {
       this.refreshHud();
       this.pushViews();
       if (this.isBotSeat(p.player)) this.scheduleBot();
+      else this.startAfkTimer(p.player);
     });
+  }
+
+  private afkTimer: ReturnType<typeof setInterval> | null = null;
+  private afkLeft: number | null = null;
+
+  /** BOARD-04: an idle phone must not block the game – warn after 25 s, bot decides after 35 s. */
+  private startAfkTimer(player: number) {
+    if (this.afkTimer) clearInterval(this.afkTimer);
+    let waited = 0;
+    this.afkLeft = null;
+    this.afkTimer = setInterval(() => {
+      const a = this.awaiting;
+      if (!a || a.player !== player) {
+        if (this.afkTimer) clearInterval(this.afkTimer);
+        this.afkTimer = null;
+        this.afkLeft = null;
+        return;
+      }
+      if (this.paused || this.presenting) return;
+      waited++;
+      if (waited >= AFK_WARN_SEC) {
+        this.afkLeft = AFK_LIMIT_SEC - waited;
+        this.ui.toast(t('host.afk', { player: this.pname(player), sec: this.afkLeft }), 1100);
+        if (waited === AFK_WARN_SEC) {
+          const s = this.slots[player];
+          if (s) this.send(s, { t: 'vibrate', ms: 300 });
+        }
+        this.pushViews();
+      }
+      if (waited >= AFK_LIMIT_SEC && this.engine) {
+        if (this.afkTimer) clearInterval(this.afkTimer);
+        this.afkTimer = null;
+        this.afkLeft = null;
+        this.awaiting = null;
+        a.resolve(botAction(this.engine, a.pending as never, this.botRng));
+      }
+    }, 1000);
   }
 
   private scheduleBot() {
@@ -853,9 +894,10 @@ export class HostSession {
     this.board?.setEnabled(false);
     this.ui.setHud(null, [], 'none');
     this.ui.setGimmick(null);
+    const formLevels: Record<number, ReturnType<typeof minigameBotLevel>> = {};
     const runner = new MinigameRunner(this.stage, this.ui, this.audio, p, e.rng.int(1, 2 ** 30), {
       isBot: (gi) => this.isBotSeat(gi),
-      botLevel: (gi) => e.state.players[gi].botLevel,
+      botLevel: (gi) => (formLevels[gi] ??= minigameBotLevel(e.state.players[gi].botLevel, this.botRng)),
       playerInfo: (gi) => ({ name: e.state.players[gi].name, character: e.state.players[gi].character, color: e.state.players[gi].color }),
       pushViews: () => this.pushViews(),
       isPaused: () => this.paused,
@@ -1044,6 +1086,9 @@ export class HostSession {
             this.board.rigs.forEach((r) => r.setAnim('idle'));
           }
           break;
+        case 'standings':
+          await this.showStandings(ev.ranking);
+          break;
         case 'finale':
           this.audio.playMusic(e.map.musicKey as 'island', true);
           await this.ui.banner('🔥 FINALE 🔥', 1800 / this.speed(), 'finale');
@@ -1065,6 +1110,29 @@ export class HostSession {
     }
     this.presenting = false;
     this.pushViews();
+  }
+
+  /** Interim ranking (CHAOS-01: the moderator announces the standings). */
+  private async showStandings(ranking: number[]) {
+    const e = this.engine!;
+    this.ui.setOverlay(
+      h(
+        'div',
+        { class: 'results card' },
+        h('h2', {}, t('host.standings')),
+        ranking.map((i, k) =>
+          h(
+            'div',
+            { class: `rrow rank${k}`, style: `--pc:${PLAYER_COLOR_HEX[e.state.players[i].color]}` },
+            h('span', { class: 'place' }, `${k + 1}.`),
+            h('strong', {}, e.state.players[i].name),
+            h('span', { class: 'reward' }, `★ ${e.state.players[i].stars} · ● ${e.state.players[i].coins}`),
+          ),
+        ),
+      ),
+    );
+    await this.sleep(3200);
+    this.ui.setOverlay(null);
   }
 
   private async revealBonus(ev: Extract<GameEvent, { type: 'bonusStar' }>) {
@@ -1286,6 +1354,8 @@ export class HostSession {
         return { kind: 'orderRoll' };
       case 'turnMenu':
         return { kind: 'turnMenu', canUseItem: p.canUseItem, items: e.state.players[p.player].items.map((id) => ({ id, usable: p.canUseItem && ITEMS[id].usable })) };
+      case 'miniPick':
+        return { kind: 'miniPick', options: p.options };
       case 'branch': {
         const from = getField(e.map, e.state.players[p.player].field);
         return {
@@ -1294,7 +1364,8 @@ export class HostSession {
             const f = getField(e.map, id);
             // screen angle: +x right, +z up on the TV
             const angle = (Math.atan2(f.x - from.x, f.z - from.z) * 180) / Math.PI;
-            return { id, angle, labelKey: f.tags?.includes('sandbank') ? 'host.tideLow' : f.tags?.includes('summit') ? 'field.cablecar' : undefined };
+            // show how far the star is along each way (review finding: arrows alone don't help)
+            return { id, angle, labelKey: f.tags?.includes('sandbank') ? 'host.tideLow' : undefined, starDistance: distance(e, id, e.state.starField) + 1 };
           }),
         };
       }
@@ -1336,6 +1407,7 @@ export class HostSession {
         chief: this.chief === s.slot,
         paused: this.paused,
         round: this.engine && this.phase === 'game' && this.engine.state.config.mode === 'board' ? { round: this.engine.state.round, total: this.engine.state.config.rounds } : undefined,
+        afk: this.awaiting?.player === s.slot && this.afkLeft !== null ? { secondsLeft: this.afkLeft } : null,
         view: this.resuming && s.unclaimed !== false && this.phase === 'lobby' ? this.claimEnvelope().view : this.viewFor(s),
       };
       this.send(s, { t: 'view', v: env });

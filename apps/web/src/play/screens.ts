@@ -22,7 +22,7 @@ export function screenKey(env: ViewEnvelope): string {
     case 'wait':
       return `wait:${env.chief}:${env.paused}`;
     case 'decide':
-      return `decide:${JSON.stringify(v.decision)}:${JSON.stringify(env.me?.items)}`;
+      return `decide:${JSON.stringify(v.decision)}:${JSON.stringify(env.me?.items)}:${!!env.afk}`;
     case 'mgIntro':
       return `mgIntro:${v.game}:${env.paused}`;
     case 'mg':
@@ -69,6 +69,7 @@ export function renderScreen(app: PlayApp, env: ViewEnvelope, opts: RenderOpts):
       break;
     case 'decide':
       body = decide(app, env, v.decision);
+      if (env.afk) body.prepend(h('div', { class: 'afk card pad', 'data-dynamic': true }, '⏰ ', t('play.afkWarning', { sec: env.afk.secondsLeft })));
       break;
     case 'mgIntro':
       body = mgIntro(app, env, v, opts);
@@ -304,6 +305,13 @@ function decide(app: PlayApp, env: ViewEnvelope, d: PhoneDecision): HTMLElement 
             )
           : h('section', { class: 'card pad' }, inventory(env)),
       );
+    case 'miniPick':
+      return h(
+        'div',
+        { class: 'decide' },
+        h('h2', {}, '🎯 ', t('play.miniPick')),
+        h('div', { class: 'yes-no' }, d.options.map((n) => h('button', { class: 'ctrl-big roll', onclick: () => act({ t: 'action', action: { type: 'pickSteps', steps: n } }) }, String(n)))),
+      );
     case 'branch':
       return h(
         'div',
@@ -318,23 +326,26 @@ function decide(app: PlayApp, env: ViewEnvelope, d: PhoneDecision): HTMLElement 
               { class: 'arrow', onclick: () => act({ t: 'action', action: { type: 'branch', to: o.id } }) },
               h('span', { style: `display:inline-block;transform:rotate(${o.angle}deg)` }, '⬆'),
               o.labelKey ? h('small', {}, t(o.labelKey)) : null,
+              o.starDistance !== undefined && o.starDistance < 900 ? h('small', {}, t('play.starDistance', { n: o.starDistance })) : null,
             ),
           ),
         ),
       );
     case 'shop': {
-      let replaceIdx: number | null = d.full ? 0 : null;
+      let replaceIdx: number | null = null;
       const replaceRow = d.full
         ? h(
             'div',
             { class: 'replace-row' },
             h('p', {}, t('play.inventoryFullBuy')),
             me.items.map((it, i) => {
-              const b = h('button', { class: `item-chip ${i === 0 ? 'on' : ''}` }, ITEM_EMOJI[it], ' ', t(`item.${it}.name`));
+              const b = h('button', { class: 'item-chip' }, ITEM_EMOJI[it], ' ', t(`item.${it}.name`));
               b.addEventListener('click', () => {
                 replaceIdx = i;
                 b.parentElement?.querySelectorAll('button').forEach((x) => x.classList.remove('on'));
                 b.classList.add('on');
+                // buying is possible only after an item to replace was picked
+                b.closest('.decide')?.querySelectorAll<HTMLButtonElement>('.item-btn[data-affordable]').forEach((x) => (x.disabled = false));
               });
               return b;
             }),
@@ -350,7 +361,12 @@ function decide(app: PlayApp, env: ViewEnvelope, d: PhoneDecision): HTMLElement 
           d.offer.map((o) =>
             h(
               'button',
-              { class: 'item-btn', disabled: !o.affordable, onclick: () => act({ t: 'action', action: { type: 'buy', item: o.id, replace: replaceIdx ?? undefined } }) },
+              {
+                class: 'item-btn',
+                disabled: !o.affordable || d.full,
+                'data-affordable': o.affordable ? '1' : undefined,
+                onclick: () => act({ t: 'action', action: { type: 'buy', item: o.id, replace: replaceIdx ?? undefined } }),
+              },
               h('span', { class: 'emoji' }, ITEM_EMOJI[o.id]),
               h('strong', {}, t(`item.${o.id}.name`)),
               h('small', {}, t(`item.${o.id}.desc`)),
@@ -359,6 +375,7 @@ function decide(app: PlayApp, env: ViewEnvelope, d: PhoneDecision): HTMLElement 
           ),
         ),
         replaceRow,
+        d.full ? h('p', { class: 'muted' }, t('play.pickReplace')) : null,
         h('button', { class: 'secondary', onclick: () => act({ t: 'action', action: { type: 'buy', item: null } }) }, t('play.leaveShop')),
       );
     }
@@ -399,7 +416,7 @@ function decide(app: PlayApp, env: ViewEnvelope, d: PhoneDecision): HTMLElement 
       return h(
         'div',
         { class: 'decide' },
-        h('div', { class: 'wheel-preview' }, d.segments.map((s) => h('span', { title: t(`wheel.${s}`) }, WHEEL_EMOJI[s] ?? '?'))),
+        h('div', { class: 'wheel-preview' }, d.segments.map((s) => h('span', {}, WHEEL_EMOJI[s] ?? '?', h('small', {}, t(`wheel.${s}`))))),
         h('button', { class: 'ctrl-big roll', onclick: () => act({ t: 'action', action: { type: 'stopWheel' } }) }, t('play.wheelStop')),
       );
   }

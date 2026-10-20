@@ -2,16 +2,24 @@
  * Headless full-game simulation with 4 bots (acceptance: complete 20-round games on
  * every map without crash). Usage: npm run simulate -- [games=3] [rounds=20]
  */
-import { CHARACTERS, PLAYER_COLORS, type RoundCount } from '../src/config';
+import { CHARACTERS, PLAYER_COLORS, type BotLevel, type RoundCount } from '../src/config';
 import { botAction } from '../src/game/bots';
 import { createGame, GameEngine } from '../src/game/engine';
 import type { GameConfig, GameEvent, GameState, PlayerSetup } from '../src/game/types';
 import { MAP_IDS } from '../src/maps';
 import { makeMgPlayers, runMinigameHeadless } from '../src/minigames/headless';
 import { getMinigame } from '../src/minigames/registry';
+import { minigameBotLevel } from '../src/minigames/types';
 import { Rng } from '../src/rng';
 
-export function simulateGame(mapId: string, seed: number, rounds: RoundCount = 20, mode: 'board' | 'marathon' = 'board', seats = 4) {
+export function simulateGame(
+  mapId: string,
+  seed: number,
+  rounds: RoundCount = 20,
+  mode: 'board' | 'marathon' = 'board',
+  seats = 4,
+  levels: BotLevel[] = ['easy', 'medium', 'hard', 'hard'],
+) {
   const config: GameConfig = { mode, mapId, rounds, seed, teamMode: 'fields', disabledMinigames: [], noMotion: false };
   const setups: PlayerSetup[] = Array.from({ length: seats }, (_, i) => ({
     id: `p${i}`,
@@ -19,7 +27,7 @@ export function simulateGame(mapId: string, seed: number, rounds: RoundCount = 2
     character: CHARACTERS[i],
     color: PLAYER_COLORS[i],
     isBot: true,
-    botLevel: (['easy', 'medium', 'hard', 'hard'] as const)[i],
+    botLevel: levels[i] ?? 'medium',
   }));
   let state: GameState = createGame(config, setups);
   let engine = new GameEngine(state);
@@ -33,7 +41,10 @@ export function simulateGame(mapId: string, seed: number, rounds: RoundCount = 2
     const p = engine.pending;
     if (p.kind === 'minigame') {
       const def = getMinigame(p.game);
-      const players = makeMgPlayers(p.format, p.teams, 'medium', p.players.length);
+      const players = makeMgPlayers(p.format, p.teams, 'medium', p.players.length).map((mp, k) => ({
+        ...mp,
+        botLevel: minigameBotLevel(engine.state.players[p.players[k]].botLevel, botRng),
+      }));
       const res = runMinigameHeadless(def, players, seed + guard);
       minigames.push(p.game);
       events.push(...engine.submitMinigame(res.ranks));
@@ -59,7 +70,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       const count = (type: string) => events.filter((e) => e.type === type).length;
       const gimmick = count('tide') + count('eruption') + count('train');
       console.log(
-        `${mapId} #${g}: ${Date.now() - t0}ms winner=${state.ranking?.[0]} stars=${state.players.map((p) => p.stars)} coins=${state.players.map((p) => p.coins)} starsBought=${state.players.map((p) => p.stats.starsBought)} minigames=${minigames.length} gimmickEvents=${gimmick} duels=${events.filter((e) => e.type === 'minigameResult').length - minigames.length + minigames.length}`,
+        `${mapId} #${g}: ${Date.now() - t0}ms winner=${state.ranking?.[0]} stars=${state.players.map((p) => p.stars)} coins=${state.players.map((p) => p.coins)} starsBought=${state.players.map((p) => p.stats.starsBought)} minigames=${minigames.length} gimmickEvents=${gimmick} duels=${minigames.length - state.round}`,
       );
     }
   }

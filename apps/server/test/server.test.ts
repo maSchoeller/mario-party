@@ -169,6 +169,22 @@ describe('server', () => {
   });
 });
 
+describe('server restart', () => {
+  it('a host can recreate its room with the old code and phones keep their tokens', () => {
+    const reg = new RoomRegistry();
+    const host: Conn = { id: 'h', send: () => {}, close: () => {} };
+    const token = 'a'.repeat(32);
+    const room = reg.createRoom(host, { code: 'ABCD', hostToken: 'b'.repeat(32) });
+    expect(room.code).toBe('ABCD');
+    const res = reg.join({ id: 'p', send: () => {}, close: () => {} }, 'ABCD', token);
+    expect('peer' in res && res.peer.token).toBe(token);
+    // a normal (not restored) room does not accept unknown tokens
+    const other = reg.createRoom({ id: 'h2', send: () => {}, close: () => {} });
+    const res2 = reg.join({ id: 'p2', send: () => {}, close: () => {} }, other.code, token);
+    expect('peer' in res2 && res2.peer.token).not.toBe(token);
+  });
+});
+
 describe('room registry expiry (LOBBY-06)', () => {
   it('removes rooms after 2 h of inactivity', () => {
     let t = 0;

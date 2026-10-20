@@ -152,7 +152,18 @@ export interface MinigameDef<S = any> {
 
 /** Helper: bot skill parameters by level. */
 export const BOT_SKILL: Record<BotLevel, { reaction: number; accuracy: number; speed: number }> = {
-  easy: { reaction: 0.55, accuracy: 0.55, speed: 0.6 },
+  easy: { reaction: 0.45, accuracy: 0.6, speed: 0.68 },
   medium: { reaction: 0.35, accuracy: 0.75, speed: 0.8 },
-  hard: { reaction: 0.22, accuracy: 0.92, speed: 0.95 },
+  hard: { reaction: 0.28, accuracy: 0.88, speed: 0.92 },
 };
+
+/**
+ * "Tagesform": bots don't play every minigame at their nominal level, so a strong bot can
+ * have an off day and a weak one a lucky run (couch chaos instead of esports).
+ */
+export function minigameBotLevel(base: BotLevel, rng: Rng): BotLevel {
+  const r = rng.next();
+  if (base === 'hard') return r < 0.6 ? 'hard' : r < 0.9 ? 'medium' : 'easy';
+  if (base === 'easy') return r < 0.6 ? 'easy' : r < 0.9 ? 'medium' : 'hard';
+  return r < 0.2 ? 'easy' : r < 0.8 ? 'medium' : 'hard';
+}

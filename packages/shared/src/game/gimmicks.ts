@@ -79,6 +79,11 @@ function erupt(e: GameEngine): void {
     g.lava = { group, until: e.state.round + 1 };
     e.emit({ type: 'lava', group, active: true });
     washBlocked(e, 'mod.lavaFlee');
+    if (!e.isOpen(e.state.starField)) {
+      // the star must stay reachable: it flees from the lava
+      e.emit({ type: 'announce', key: 'mod.starFlees' });
+      e.moveStar();
+    }
   }
   // coin rain on random open fields
   const landable = e.map.fields.filter((f) => !PASS_FIELDS.includes(f.type) && e.isOpen(f.id));

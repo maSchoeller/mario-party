@@ -18,6 +18,8 @@ export class PhoneNetwork {
   private link: PeerLink | null = null;
   private code = '';
   private token: string | undefined;
+  private joinedOnce = false;
+  private retries = 0;
 
   constructor(private readonly ev: PhoneNetworkEvents) {
     this.socket.onMessage((m) => this.handle(m));
@@ -56,6 +58,8 @@ export class PhoneNetwork {
   private handle(m: ServerToClient) {
     switch (m.t) {
       case 'peer.joined':
+        this.joinedOnce = true;
+        this.retries = 0;
         this.token = m.sessionToken;
         this.newLink();
         this.ev.onJoined(m.sessionToken);
@@ -74,6 +78,12 @@ export class PhoneNetwork {
         this.ev.onHostBack();
         break;
       case 'error':
+        if (m.code === 'room_not_found' && this.joinedOnce && this.retries < 15) {
+          // server restarted: the host recreates the room with the same code in a moment
+          this.retries++;
+          setTimeout(() => this.code && this.socket.send({ t: 'peer.join', code: this.code, sessionToken: this.token }), 2000);
+          break;
+        }
         this.ev.onError(m.code);
         if (m.code === 'room_not_found' || m.code === 'kicked' || m.code === 'room_full') {
           this.code = '';

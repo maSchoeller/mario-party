@@ -231,12 +231,23 @@ export class HostUI {
 
   // ------------------------------------------------------------------ minigames
 
-  minigameIntro(game: string, format: string, players: MgPlayer[], names: string[], ready: boolean[], remaining: number, teamLabels: string[]): void {
+  minigameIntro(
+    game: string,
+    format: string,
+    players: MgPlayer[],
+    names: string[],
+    ready: boolean[],
+    remaining: number,
+    teamLabels: string[],
+    controls: string[] = [],
+  ): void {
+    // side panel so the practice game stays visible (MINI-04)
     const el = h(
       'div',
       { class: 'mg-intro card' },
       h('div', { class: 'format pill' }, t(`format.${format}`)),
       h('h1', {}, t(`mg.${game}.name`)),
+      controls.length ? h('div', { class: 'pictos' }, controls.map((c) => h('span', { class: 'picto' }, CONTROL_PICTO[c] ?? '🎮'))) : null,
       h('p', { class: 'desc' }, t(`mg.${game}.desc`)),
       h('p', { class: 'controls' }, '🎮 ', t(`mg.${game}.controls`)),
       h(
@@ -352,6 +363,21 @@ export class HostUI {
     if (text) this.root.append(h('div', { id, class: 'server-status card' }, text));
   }
 }
+
+/** Controller pictograms per layout kind for the explanation screen (MINI-04). */
+export const CONTROL_PICTO: Record<string, string> = {
+  joystick: '🕹️',
+  mash: '👆💨',
+  button: '🔴👆',
+  tilt: '📱↔️',
+  shake: '📳',
+  draw: '✍️',
+  swipe: '👉',
+  choice: '🔘',
+  number: '🔢',
+  pads: '🟥🟦',
+  wait: '👀',
+};
 
 export function formatTime(sec: number): string {
   const s = Math.max(0, Math.ceil(sec));

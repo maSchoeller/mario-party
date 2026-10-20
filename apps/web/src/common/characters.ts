@@ -27,5 +27,7 @@ export const WHEEL_EMOJI: Record<string, string> = {
   item: '🎁',
   swapCoins: '🔄',
   bonusDuel: '⚔️',
-  starDiscount: '⭐',
+  starDiscount: '🏷️',
+  star: '⭐',
+  stealStar: '🦹',
 };

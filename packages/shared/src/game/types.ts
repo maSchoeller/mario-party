@@ -54,12 +54,14 @@ export interface PlayerState extends PlayerSetup {
 }
 
 export interface WheelSegment {
-  id: 'coins5' | 'coins10' | 'coinsMinus5' | 'item' | 'swapCoins' | 'bonusDuel' | 'starDiscount' | 'coins15';
+  id: 'coins5' | 'coins10' | 'coinsMinus5' | 'item' | 'swapCoins' | 'bonusDuel' | 'starDiscount' | 'coins15' | 'star' | 'stealStar';
 }
 
 export type Pending =
   | { kind: 'orderRoll'; player: number }
   | { kind: 'turnMenu'; player: number; canUseItem: boolean }
+  /** Mini-Würfel: the player chooses 1, 2 or 3 steps (precise landing) */
+  | { kind: 'miniPick'; player: number; options: number[] }
   | { kind: 'branch'; player: number; options: string[] }
   | { kind: 'shop'; player: number; offer: ItemId[] }
   | { kind: 'buyStar'; player: number; price: number }
@@ -67,7 +69,7 @@ export type Pending =
   | { kind: 'cablecar'; player: number; price: number; target: string }
   | { kind: 'itemReplace'; player: number; newItem: ItemId }
   | { kind: 'duelPick'; player: number; options: number[]; stake: number }
-  | { kind: 'wheel'; player: number; segments: WheelSegment['id'][]; reason: 'lucky' | 'finale' }
+  | { kind: 'wheel'; player: number; segments: WheelSegment['id'][]; reason: 'lucky' | 'finale' | 'catchup' }
   | {
       kind: 'minigame';
       game: string;
@@ -83,6 +85,7 @@ export type Pending =
 
 export type Action =
   | { type: 'roll' }
+  | { type: 'pickSteps'; steps: number }
   | { type: 'useItem'; item: ItemId }
   | { type: 'branch'; to: string }
   | { type: 'buy'; item: ItemId | null; replace?: number }
@@ -147,6 +150,7 @@ export interface GameState {
   bonus?: BonusCategoryResult[];
   ranking?: number[];
   finaleStarted: boolean;
+  catchupDone?: boolean;
 }
 
 export type GameEvent =
@@ -173,6 +177,7 @@ export type GameEvent =
   | { type: 'timetable'; next: number[] }
   | { type: 'coinBag'; field: string; amount: number; placed: boolean; player?: number }
   | { type: 'finale' }
+  | { type: 'standings'; ranking: number[] }
   | { type: 'minigameResult'; game: string; players: number[]; ranks: number[]; rewards: number[] }
   | { type: 'bonusStar'; category: string; players: number[]; value: number }
   | { type: 'gameOver'; ranking: number[] }

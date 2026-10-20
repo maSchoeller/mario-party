@@ -25,6 +25,8 @@ export interface Room {
   /** valid session tokens of this room (LOBBY-05 reconnect) */
   tokens: Set<string>;
   lastActivity: number;
+  /** recreated after a server restart */
+  restored?: boolean;
 }
 
 export const ROOM_TTL_MS = 2 * 60 * 60 * 1000; // LOBBY-06
@@ -36,7 +38,17 @@ export class RoomRegistry {
 
   constructor(private readonly now: () => number = Date.now) {}
 
-  createRoom(host: Conn): Room {
+  /**
+   * Creates a room. After a server restart (rooms live in memory) a host may ask for its old
+   * code + token back, so phones can reconnect without scanning again.
+   */
+  createRoom(host: Conn, restore?: { code: string; hostToken: string }): Room {
+    if (restore && !this.rooms.has(restore.code) && /^[0-9a-f]{32}$/.test(restore.hostToken)) {
+      const room: Room = { code: restore.code, hostToken: restore.hostToken, host, peers: new Map(), tokens: new Set(), lastActivity: this.now(), restored: true };
+      this.rooms.set(room.code, room);
+      this.connRoom.set(host.id, { room, role: 'host' });
+      return room;
+    }
     let code = '';
     for (let i = 0; i < 1000; i++) {
       code = randomCode(BALANCE.roomCodeLength, () => randomBytes(4).readUInt32LE() / 0x100000000);
@@ -75,6 +87,9 @@ export class RoomRegistry {
     const room = this.rooms.get(code);
     if (!room) return { error: 'room_not_found' };
     let token = sessionToken;
+    // a restored room (server restart) does not know old tokens yet: accept well-formed ones
+    // as long as there is room, so phones keep their seat at the host
+    if (token && !room.tokens.has(token) && /^[0-9a-f]{32}$/.test(token) && room.tokens.size < MAX_TOKENS_PER_ROOM && room.restored) room.tokens.add(token);
     if (token && !room.tokens.has(token)) token = undefined;
     if (!token) {
       if (room.tokens.size >= MAX_TOKENS_PER_ROOM) return { error: 'room_full' };

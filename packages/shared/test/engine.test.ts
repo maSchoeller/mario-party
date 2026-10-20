@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { simulateGame } from '../scripts/simulate';
 import { BALANCE, CHARACTERS, PLAYER_COLORS } from '../src/config';
 import { computeBonus } from '../src/game/bonus';
-import { createGame, GameEngine, minigameRewards } from '../src/game/engine';
+import { createGame, GameEngine, marathonPoints, minigameRewards } from '../src/game/engine';
+import { botAction as botActionFor } from '../src/game/bots';
+import { COMEBACK_CATEGORIES } from '../src/game/bonus';
 import type { GameConfig, PlayerSetup } from '../src/game/types';
 import { getMap, MAP_IDS, validateMap } from '../src/maps';
 import { ALL_MINIGAMES } from '../src/minigames/all';
@@ -102,9 +104,9 @@ describe('engine rules', () => {
     expect(e.isFinale()).toBe(false);
   });
   it('minigame rewards follow the balancing table', () => {
-    expect(minigameRewards('ffa', [0, 1, 2, 3], [0, 1, 2, 3])).toEqual([10, 5, 2, 0]);
-    expect(minigameRewards('2v2', [0, 0, 1, 1], [0, 0, 1, 1])).toEqual([10, 10, 0, 0]);
-    expect(minigameRewards('1v3', [0, 1, 1, 1], [0, 1, 1, 1])).toEqual([15, 0, 0, 0]);
+    expect(minigameRewards('ffa', [0, 1, 2, 3], [0, 1, 2, 3])).toEqual([...BALANCE.minigameFfaRewards]);
+    expect(minigameRewards('2v2', [0, 0, 1, 1], [0, 0, 1, 1])).toEqual([BALANCE.minigameTeamReward, BALANCE.minigameTeamReward, 0, 0]);
+    expect(minigameRewards('1v3', [0, 1, 1, 1], [0, 1, 1, 1])).toEqual([BALANCE.minigameSoloReward, 0, 0, 0]);
   });
   it('bonus stars: shared top value gives everyone a star, zero gives nobody', () => {
     const e = new GameEngine(createGame(config('kokosnuss'), setups()));
@@ -137,5 +139,97 @@ describe('engine rules', () => {
     const rng = Rng.fromSeed(1);
     for (let k = 0; k < 30; k++) expect(pickMinigame('ffa', rng, [], { disabledMinigames: disabled, noMotion: false })).toBe('kokosRegen');
     for (let k = 0; k < 30; k++) expect(MINIGAMES[pickMinigame('2v2', rng, [], { disabledMinigames: [], noMotion: true })].motion).toBeFalsy();
+  });
+});
+
+describe('review fixes', () => {
+  const started = (mapId = 'kokosnuss') => {
+    const e = new GameEngine(createGame(config(mapId), setups()));
+    e.start();
+    for (let i = 0; i < 4; i++) e.act(i, { type: 'roll' });
+    return e;
+  };
+
+  it('Mini-Würfel lets the player choose 1–3 steps', () => {
+    const e = started();
+    const p = e.state.order[0];
+    e.state.players[p].items = ['miniDice'];
+    e.state.pending = { kind: 'turnMenu', player: p, canUseItem: true };
+    e.act(p, { type: 'useItem', item: 'miniDice' });
+    e.act(p, { type: 'roll' });
+    expect(e.pending).toMatchObject({ kind: 'miniPick', options: [1, 2, 3] });
+    const events = e.act(p, { type: 'pickSteps', steps: 2 });
+    expect(events.find((ev) => ev.type === 'dice')).toMatchObject({ total: 2 });
+  });
+
+  it('star purchases do not count as shopping (Kauflaune)', () => {
+    const e = started();
+    e.state.players[0].coins = 100;
+    e.spend(0, 20, 'star');
+    expect(e.state.players[0].stats.coinsSpent).toBe(0);
+    e.spend(0, 5, 'shop');
+    expect(e.state.players[0].stats.coinsSpent).toBe(5);
+  });
+
+  it('every game draws one comeback bonus category and has a half-time comeback wheel', () => {
+    for (const seed of [1, 2, 3]) {
+      const { state, events } = simulateGame('vulkan', seed, 20);
+      expect(state.bonus!.some((b) => COMEBACK_CATEGORIES.includes(b.id as never))).toBe(true);
+      const catchup = events.find((ev) => ev.type === 'announce' && (ev as { key: string }).key === 'mod.catchup');
+      expect(catchup).toBeTruthy();
+      expect(events.filter((ev) => ev.type === 'standings').length).toBe(2);
+    }
+  });
+
+  it('team 0 ("Team Rot") holds the players from red fields', () => {
+    const e = started();
+    const colors = ['red', 'blue', 'red', 'blue'] as const;
+    e.state.players.forEach((p, i) => (p.lastColor = colors[i]));
+    // play the round to its minigame with bots
+    const rng = Rng.fromSeed(3);
+    while (e.pending && e.pending.kind !== 'minigame') {
+      e.state.players.forEach((p, i) => (p.lastColor = colors[i]));
+      const p = e.pending;
+      if (p.kind === 'gameOver') break;
+      // force neutral landings to keep the colors
+      e.act(p.player, botActionFor(e, p, rng));
+      e.state.players.forEach((pl, i) => (pl.lastColor = colors[i]));
+    }
+    const p = e.pending!;
+    if (p.kind === 'minigame' && p.purpose === 'round' && p.format === '2v2') expect(p.teams).toEqual([0, 1, 0, 1]);
+  });
+
+  it('marathon team games: winners 3, solo winner 5, losers 0', () => {
+    expect(marathonPoints('2v2', [0, 0, 1, 1], [0, 0, 1, 1])).toEqual([3, 3, 0, 0]);
+    expect(marathonPoints('1v3', [0, 1, 1, 1], [0, 1, 1, 1])).toEqual([5, 0, 0, 0]);
+    expect(marathonPoints('ffa', [0, 1, 2, 3], [1, 0, 3, 2])).toEqual([2, 4, 0, 1]);
+  });
+
+  it('the star flees from lava so it stays reachable', () => {
+    const e = started('vulkan');
+    e.state.starField = 's4';
+    e.state.gimmick.eruption = BALANCE.eruptionThreshold - 1;
+    e.state.gimmick.lavaNext = 0; // summit group
+    const pl = e.state.order[0];
+    e.state.players[pl].field = 'r2';
+    // landing on a red field triggers the eruption via the gimmick hook
+    (e as unknown as { gimmick: { onRedField(e: GameEngine, p: number): void } }).gimmick.onRedField(e, pl);
+    expect(e.state.gimmick.lava?.group).toBe(0);
+    expect(e.isOpen(e.state.starField)).toBe(true);
+  });
+
+  it('a trap on a player with 0 coins keeps their shield', () => {
+    const e = started();
+    const p = e.state.order[0];
+    const victim = e.state.players[p];
+    victim.coins = 0;
+    victim.items = ['shield'];
+    const target = getMap('kokosnuss').fields.find((f) => f.id === 'k2')!;
+    e.state.traps.push({ field: target.id, owner: (p + 1) % 4 });
+    victim.field = 'k1';
+    e.state.turn = { player: p, dice: [1], remaining: 1, rolled: true, usedItem: null, glove: false, starSteal: false, passResolved: null, landed: false, stepsTaken: 0 };
+    e.state.pending = null;
+    (e as unknown as { continueMove(): void }).continueMove();
+    expect(victim.items).toContain('shield');
   });
 });

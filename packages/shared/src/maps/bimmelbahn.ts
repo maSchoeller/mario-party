@@ -22,7 +22,7 @@ b.get('c12').label = 'station.east';
 b.get('c26').label = 'station.west';
 
 // Middle street west -> east, crossing X at the market square.
-const midW = b.seq('mw', 'BSR', (i) => ({ x: -18 + 6 * i, z: 0 }));
+const midW = b.seq('mw', 'BLR', (i) => ({ x: -18 + 6 * i, z: 0 }));
 b.add('x', 'blue', 0, 0, { tags: ['track'] });
 const midE = b.seq('me', 'IBL', (i) => ({ x: 6 + 6 * i, z: 0 }));
 b.link('c29', midW[0]);

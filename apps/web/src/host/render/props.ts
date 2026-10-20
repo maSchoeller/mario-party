@@ -173,7 +173,13 @@ export function labelPlane(scene: Scene, name: string, text: string, opts: { siz
     ctx.fill();
   }
   ctx.fillStyle = opts.color ?? '#3d3a55';
-  ctx.font = `900 ${opts.font ?? 150}px Nunito, sans-serif`;
+  let fontSize = opts.font ?? 150;
+  ctx.font = `900 ${fontSize}px Nunito, sans-serif`;
+  // shrink long texts so they always fit (e.g. "Team Rot")
+  while (fontSize > 28 && ctx.measureText(text).width > 236) {
+    fontSize -= 6;
+    ctx.font = `900 ${fontSize}px Nunito, sans-serif`;
+  }
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillText(text, 128, 138);

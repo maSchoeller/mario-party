@@ -647,3 +647,26 @@ button.primary.done {
   font-size: 1.1rem;
   margin: 0.3rem 0;
 }
+
+.wheel-preview {
+  flex-wrap: wrap;
+}
+.wheel-preview span {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  font-size: 2rem;
+  background: #fff;
+  border-radius: 14px;
+  padding: 0.3rem 0.5rem;
+  min-width: 80px;
+}
+.wheel-preview small {
+  font-size: 0.75rem;
+  font-weight: 800;
+}
+.afk {
+  background: #fff1d6;
+  font-weight: 900;
+  text-align: center;
+}

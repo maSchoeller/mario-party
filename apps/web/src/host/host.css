@@ -432,13 +432,26 @@ button.primary {
 }
 
 /* minigames */
+.layer-overlay:has(.mg-intro) {
+  justify-content: flex-start;
+}
 .mg-intro {
-  width: 70vh;
-  padding: 3vh 4vh;
+  width: 34vw;
+  max-height: 92vh;
+  overflow: hidden;
+  margin-left: 2vw;
+  padding: 2.5vh 3vh;
   text-align: center;
 }
+.mg-intro .pictos {
+  display: flex;
+  justify-content: center;
+  gap: 2vh;
+  font-size: 7vh;
+  margin: 1vh 0;
+}
 .mg-intro h1 {
-  font-size: 6vh;
+  font-size: 4.6vh;
   margin: 1vh 0;
 }
 .mg-intro .desc {
@@ -544,16 +557,19 @@ button.primary {
   color: #3f6fc0;
 }
 .mg-message {
+  /* dark pill at the top: readable on any background from 3 m (review finding) */
   position: absolute;
-  top: 40%;
-  width: 100%;
+  top: 9vh;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: 80vw;
   text-align: center;
-  font-size: 6.5vh;
+  font-size: 5vh;
   font-weight: 900;
   color: #fff;
-  text-shadow: 0 0.5vh 0 rgba(60, 60, 100, 0.45);
-  padding: 0 5vw;
-  box-sizing: border-box;
+  background: rgba(45, 42, 70, 0.82);
+  border-radius: 3vh;
+  padding: 1vh 3vh;
 }
 .results {
   padding: 3vh 5vh;

@@ -4,7 +4,7 @@ import type { FieldDef, MapDef } from '../maps/types';
 import { MINIGAMES, pickMinigame } from '../minigames/registry';
 import type { MgFormat } from '../minigames/types';
 import { Rng } from '../rng';
-import { BONUS_CATEGORIES, computeBonus } from './bonus';
+import { BONUS_CATEGORIES, COMEBACK_CATEGORIES, computeBonus } from './bonus';
 import { GIMMICKS, type Gimmick } from './gimmicks';
 import { ITEMS, ITEM_IDS, type ItemId } from './items';
 import type {
@@ -21,7 +21,9 @@ import type {
 export class ActionError extends Error {}
 
 const LUCKY_WHEEL: WheelSegment['id'][] = ['coins5', 'coins10', 'item', 'swapCoins', 'coinsMinus5', 'bonusDuel'];
-const FINALE_WHEEL: WheelSegment['id'][] = ['coins10', 'item', 'starDiscount', 'coins15', 'item', 'starDiscount'];
+const FINALE_WHEEL: WheelSegment['id'][] = ['coins10', 'item', 'starDiscount', 'coins15', 'item', 'star'];
+/** Mid-game comeback wheel for the last place (CHAOS-03: trailing players can still win). */
+const CATCHUP_WHEEL: WheelSegment['id'][] = ['stealStar', 'star', 'swapCoins', 'coins10', 'stealStar', 'item'];
 
 export function createGame(config: GameConfig, setups: PlayerSetup[]): GameState {
   // GAME-01: bots fill up to 4; with 3+ humans bots can be switched off -> 3 seats
@@ -182,7 +184,8 @@ export class GameEngine {
 
   spend(i: number, amount: number, reason: string): void {
     const real = -this.changeCoins(i, -amount, reason);
-    this.player(i).stats.coinsSpent += real;
+    // star purchases do not count for the "Kauflaune" bonus – it would reward the leader
+    if (reason !== 'star') this.player(i).stats.coinsSpent += real;
   }
 
   changeStars(i: number, delta: number, reason: string): void {
@@ -292,7 +295,16 @@ export class GameEngine {
           return;
         }
         if (a.type !== 'roll') throw new ActionError('expected roll or useItem');
+        if (this.state.turn?.usedItem === 'miniDice') {
+          this.state.pending = { kind: 'miniPick', player: p.player, options: [1, 2, 3] };
+          return;
+        }
         this.roll(p.player);
+        return;
+      }
+      case 'miniPick': {
+        if (a.type !== 'pickSteps' || !p.options.includes(a.steps)) throw new ActionError('expected pickSteps 1..3');
+        this.roll(p.player, a.steps);
         return;
       }
       case 'branch': {
@@ -465,7 +477,7 @@ export class GameEngine {
     this.state.pending = { kind: 'turnMenu', player: i, canUseItem: false };
   }
 
-  private roll(i: number): void {
+  private roll(i: number, fixed?: number): void {
     const t = this.state.turn!;
     let values: number[];
     switch (t.usedItem) {
@@ -476,7 +488,7 @@ export class GameEngine {
         values = [this.rng.int(1, BALANCE.diceMax), this.rng.int(1, BALANCE.diceMax), this.rng.int(1, BALANCE.diceMax)];
         break;
       case 'miniDice':
-        values = [this.rng.int(1, 3)];
+        values = [fixed ?? this.rng.int(1, 3)];
         break;
       default:
         values = [this.rng.int(1, BALANCE.diceMax)];
@@ -536,14 +548,14 @@ export class GameEngine {
     if (!t.glove && !t.starSteal) return;
     for (const o of this.all()) {
       if (o === i || this.player(o).field !== field) continue;
-      if (t.glove) {
+      if (t.glove && this.player(o).coins > 0) {
         t.glove = false;
         if (this.blockedByShield(o)) continue;
         const amount = this.rng.int(BALANCE.stealMin, BALANCE.stealMax);
         const taken = -this.changeCoins(o, -amount, 'steal');
         this.changeCoins(i, taken, 'steal');
         this.emit({ type: 'announce', key: 'mod.steal', params: { coins: taken }, player: i });
-      } else if (t.starSteal && this.player(o).stars > 0) {
+      } else if (!t.glove && t.starSteal && this.player(o).stars > 0) {
         t.starSteal = false;
         if (this.blockedByShield(o)) continue;
         this.changeStars(o, -1, 'steal');
@@ -622,7 +634,8 @@ export class GameEngine {
 
   moveStar(): void {
     const from = this.state.starField;
-    const candidates = this.map.starSpots.filter((s) => s !== from);
+    const open = this.map.starSpots.filter((s) => s !== from && this.isOpen(s));
+    const candidates = open.length ? open : this.map.starSpots.filter((s) => s !== from);
     const to = this.rng.pick(candidates);
     this.state.starField = to;
     this.emit({ type: 'starMoved', from, to });
@@ -639,7 +652,9 @@ export class GameEngine {
     if (trapIdx >= 0) {
       const trap = this.state.traps.splice(trapIdx, 1)[0];
       this.emit({ type: 'trap', field: f.id, owner: trap.owner, placed: false });
-      if (!this.blockedByShield(i)) {
+      if (this.player(i).coins === 0) {
+        // nothing to lose – the trap is used up, the shield is kept
+      } else if (!this.blockedByShield(i)) {
         const paid = -this.changeCoins(i, -BALANCE.trapPenalty, 'trap');
         this.changeCoins(trap.owner, paid, 'trap');
         this.emit({ type: 'announce', key: 'mod.trap', params: { coins: paid }, player: i });
@@ -679,7 +694,8 @@ export class GameEngine {
         pl.lastColor = 'neutral';
         const options = this.all().filter((o) => o !== i);
         this.emit({ type: 'announce', key: 'mod.duel', player: i });
-        this.state.pending = { kind: 'duelPick', player: i, options, stake: BALANCE.duelStake };
+        // the challenger cannot risk more than they own
+        this.state.pending = { kind: 'duelPick', player: i, options, stake: Math.min(BALANCE.duelStake, pl.coins) };
         break;
       }
       default:
@@ -688,7 +704,7 @@ export class GameEngine {
     if (!this.state.pending) this.endTurn();
   }
 
-  private applyWheel(i: number, seg: WheelSegment['id'], reason: 'lucky' | 'finale'): void {
+  private applyWheel(i: number, seg: WheelSegment['id'], reason: 'lucky' | 'finale' | 'catchup'): void {
     this.emit({ type: 'announce', key: `mod.wheel.${seg}`, player: i });
     switch (seg) {
       case 'coins5':
@@ -709,6 +725,21 @@ export class GameEngine {
       case 'starDiscount':
         this.player(i).starDiscount = true;
         break;
+      case 'star':
+        this.changeStars(i, 1, 'wheel');
+        break;
+      case 'stealStar': {
+        // take a star from the leader – or 10 coins if nobody else has a star
+        const leader = this.standings().find((o) => o !== i && this.player(o).stars > 0);
+        if (leader === undefined) {
+          this.changeCoins(i, 10, 'wheel');
+        } else {
+          this.changeStars(leader, -1, 'steal');
+          this.changeStars(i, 1, 'steal');
+          this.emit({ type: 'announce', key: 'mod.starSteal', player: i });
+        }
+        break;
+      }
       case 'swapCoins': {
         const o = this.rng.pick(this.all().filter((x) => x !== i));
         const a = this.player(i).coins;
@@ -789,13 +820,16 @@ export class GameEngine {
     const blue = this.all().filter((i) => colors[i] === 'blue');
     let format: MgFormat;
     let teams: number[];
-    if (this.n < 4 || blue.length === 0 || blue.length === this.n) {
-      // 3 seats (bots off): team formats need 4 players, so every round game is FFA
+    const split = blue.length === 1 || blue.length === this.n - 1;
+    if (this.n < 4 || blue.length === 0 || blue.length === this.n || (split && !this.rng.chance(BALANCE.oneVsThreeChance))) {
+      // 3 seats (bots off): team formats need 4 players, so every round game is FFA.
+      // A 1:3 split only sometimes becomes a 1v3 game – otherwise 1v3 would be half of all games.
       format = 'ffa';
       teams = this.all();
     } else if (blue.length === 2) {
       format = '2v2';
-      teams = this.all().map((i) => (colors[i] === 'blue' ? 0 : 1));
+      // team 0 is shown as "Team Rot" in the minigames, so it holds the red-field players
+      teams = this.all().map((i) => (colors[i] === 'red' ? 0 : 1));
     } else {
       format = '1v3';
       const soloColor = blue.length === 1 ? 'blue' : 'red';
@@ -832,11 +866,23 @@ export class GameEngine {
     this.emit({ type: 'roundStart', round: s.round, total: s.config.rounds });
     this.gimmick.onRoundStart?.(this);
     this.emit({ type: 'autosave' });
+    if (s.config.mode === 'board' && !s.catchupDone && s.round === Math.floor(s.config.rounds / 2)) {
+      // half time: the last place gets a comeback spin (CHAOS-03)
+      s.catchupDone = true;
+      const st = this.standings();
+      this.emit({ type: 'standings', ranking: st });
+      const last = st[st.length - 1];
+      s.turn = null;
+      s.pending = { kind: 'wheel', player: last, segments: CATCHUP_WHEEL, reason: 'catchup' };
+      this.emit({ type: 'announce', key: 'mod.catchup', player: last });
+      return;
+    }
     if (this.isFinale() && !s.finaleStarted) {
       s.finaleStarted = true;
       this.emit({ type: 'finale' });
       const st = this.standings();
-      this.emit({ type: 'announce', key: 'mod.finale', params: { leader: st[0] } });
+      this.emit({ type: 'standings', ranking: st });
+      this.emit({ type: 'announce', key: 'mod.finale', params: { leader: st[0], stars: this.player(st[0]).stars } });
       const last = st[st.length - 1];
       // last place spins the finale wheel (CHAOS-01)
       s.turn = null;
@@ -852,7 +898,11 @@ export class GameEngine {
     s.stage = 'bonus';
     s.pending = null;
     this.emit({ type: 'announce', key: 'mod.bonusIntro' });
-    const cats = this.rng.shuffle([...BONUS_CATEGORIES]).slice(0, 3);
+    // CHAOS-02/03: one category always comes from the comeback pool so the bonus does not
+    // simply reward the leader (review finding)
+    const comeback = this.rng.pick(COMEBACK_CATEGORIES);
+    const rest = this.rng.shuffle(BONUS_CATEGORIES.filter((c) => c !== comeback)).slice(0, 2);
+    const cats = this.rng.shuffle([comeback, ...rest]);
     s.bonus = [];
     for (const c of cats) {
       const res = computeBonus(c, s.players);
@@ -913,7 +963,7 @@ export class GameEngine {
   private finishMarathonGame(p: Extract<Pending, { kind: 'minigame' }>, ranks: number[]): void {
     const s = this.state;
     const mult = p.double ? 2 : 1;
-    const rewards = ranks.map((r) => (BALANCE.marathonPoints[r] ?? 0) * mult);
+    const rewards = marathonPoints(p.format, p.teams, ranks).map((v) => v * mult);
     p.players.forEach((pi, k) => {
       this.player(pi).points += rewards[k];
       if (ranks[k] === 0) this.player(pi).stats.minigameWins++;
@@ -940,6 +990,12 @@ function formatOf(game: string): MgFormat {
   const def = MINIGAMES[game];
   if (!def) throw new Error(`unknown minigame ${game}`);
   return def.format;
+}
+
+/** Marathon points: FFA by placement, team games winners take it all (review finding). */
+export function marathonPoints(format: MgFormat, teams: number[], ranks: number[]): number[] {
+  if (format === 'ffa' || format === 'duel') return ranks.map((r) => BALANCE.marathonPoints[r] ?? 0);
+  return ranks.map((r, k) => (r === 0 ? (format === '1v3' && teams[k] === 0 ? 5 : 3) : 0));
 }
 
 /** Coins per participant for a round minigame (5.1). */

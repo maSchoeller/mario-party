@@ -162,6 +162,7 @@ export class MinigameRunner {
           this.ready,
           this.introLeft,
           this.players.map((p) => this.teamLabel(p.team)),
+          [...new Set(this.players.map((p) => this.def.layout(this.state as never, p.idx).kind))],
         );
         this.ui.mgHud(null, this.players, '');
       } else if (this.phase === 'play') {

@@ -81,7 +81,8 @@ export interface MeInfo {
 export type PhoneDecision =
   | { kind: 'orderRoll' }
   | { kind: 'turnMenu'; canUseItem: boolean; items: { id: ItemId; usable: boolean }[] }
-  | { kind: 'branch'; options: { id: string; angle: number; labelKey?: string }[] }
+  | { kind: 'miniPick'; options: number[] }
+  | { kind: 'branch'; options: { id: string; angle: number; labelKey?: string; starDistance?: number }[] }
   | { kind: 'shop'; offer: { id: ItemId; price: number; affordable: boolean }[]; full: boolean; titleKey: string }
   | { kind: 'buyStar'; price: number }
   | { kind: 'station'; destinations: { id: string; labelKey: string }[]; hasTicket: boolean; ticketPrice: number; canBuy: boolean }
@@ -89,6 +90,11 @@ export type PhoneDecision =
   | { kind: 'itemReplace'; newItem: ItemId }
   | { kind: 'duelPick'; options: { player: number; name: string; character: CharacterId; coins: number }[] }
   | { kind: 'wheel'; segments: string[] };
+
+export interface AfkInfo {
+  /** seconds until the computer decides for an idle player (BOARD-04) */
+  secondsLeft: number;
+}
 
 export interface MinigameCatalogEntry {
   id: string;
@@ -125,6 +131,7 @@ export interface ViewEnvelope {
   chief: boolean;
   paused: boolean;
   round?: { round: number; total: number };
+  afk?: AfkInfo | null;
   view: ControllerView;
 }
 
