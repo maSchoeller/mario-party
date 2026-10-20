@@ -11,9 +11,9 @@ import { makeMgPlayers, runMinigameHeadless } from '../src/minigames/headless';
 import { getMinigame } from '../src/minigames/registry';
 import { Rng } from '../src/rng';
 
-export function simulateGame(mapId: string, seed: number, rounds: RoundCount = 20, mode: 'board' | 'marathon' = 'board') {
+export function simulateGame(mapId: string, seed: number, rounds: RoundCount = 20, mode: 'board' | 'marathon' = 'board', seats = 4) {
   const config: GameConfig = { mode, mapId, rounds, seed, teamMode: 'fields', disabledMinigames: [], noMotion: false };
-  const setups: PlayerSetup[] = [0, 1, 2, 3].map((i) => ({
+  const setups: PlayerSetup[] = Array.from({ length: seats }, (_, i) => ({
     id: `p${i}`,
     name: `Bot ${i}`,
     character: CHARACTERS[i],
@@ -33,7 +33,7 @@ export function simulateGame(mapId: string, seed: number, rounds: RoundCount = 2
     const p = engine.pending;
     if (p.kind === 'minigame') {
       const def = getMinigame(p.game);
-      const players = makeMgPlayers(p.format, p.teams);
+      const players = makeMgPlayers(p.format, p.teams, 'medium', p.players.length);
       const res = runMinigameHeadless(def, players, seed + guard);
       minigames.push(p.game);
       events.push(...engine.submitMinigame(res.ranks));

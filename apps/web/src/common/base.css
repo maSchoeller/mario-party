@@ -1,0 +1,95 @@
+@import '@fontsource/nunito/500.css';
+@import '@fontsource/nunito/700.css';
+@import '@fontsource/nunito/800.css';
+@import '@fontsource/nunito/900.css';
+
+:root {
+  --font: 'Nunito', ui-rounded, 'SF Pro Rounded', system-ui, sans-serif;
+  --ink: #3d3a55;
+  --ink-soft: #6c6888;
+  --card: rgba(255, 255, 255, 0.86);
+  --card-solid: #ffffff;
+  --pill: rgba(110, 118, 175, 0.86);
+  --accent: #f4a259;
+  --good: #5cc08a;
+  --bad: #e8676b;
+  --blue: #5f8fe0;
+  --gold: #f0c04a;
+  --red-p: #e8676b;
+  --blue-p: #5f8fe0;
+  --green-p: #5cc08a;
+  --yellow-p: #f0c04a;
+  --radius: 22px;
+  --shadow: 0 6px 24px rgba(40, 40, 80, 0.16);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  font-family: var(--font);
+  color: var(--ink);
+}
+
+button {
+  font-family: inherit;
+  font-weight: 800;
+  border: none;
+  border-radius: 18px;
+  cursor: pointer;
+  min-height: 48px;
+  min-width: 48px;
+  color: var(--ink);
+  background: var(--card-solid);
+  box-shadow: 0 3px 0 rgba(0, 0, 0, 0.12);
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+button:active {
+  transform: translateY(2px);
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.12);
+}
+
+button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+input,
+select {
+  font-family: inherit;
+  font-size: 1.2rem;
+  border-radius: 14px;
+  border: 2px solid #d9d6ea;
+  padding: 0.6rem 0.8rem;
+  min-height: 48px;
+  color: var(--ink);
+  background: #fff;
+}
+
+.card {
+  background: var(--card);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+
+.pill {
+  background: var(--pill);
+  color: #fff;
+  border-radius: 999px;
+  font-weight: 900;
+}
+
+.shape {
+  display: inline-block;
+  font-weight: 900;
+}

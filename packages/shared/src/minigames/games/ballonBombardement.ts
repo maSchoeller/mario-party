@@ -269,8 +269,8 @@ export const ballonBombardement: MinigameDef<BallonBombardementState> = {
       const x = STATION_X[f.slot];
       const color = PLAYER_COLOR_HEX[s.players[s.trio[f.slot]].color];
       if (f.kind === 'done') {
-        entities.push({ id: `fx${f.id}`, kind: 'balloon', x, y: 4 + (1.6 - f.t) * 5, z: 2.2, sx: 2.9, sy: 2.9, sz: 2.9, color, alpha: Math.min(1, f.t) });
-        entities.push({ id: `fxs${f.id}`, kind: 'star', x, y: 6.5 + (1.6 - f.t) * 2, z: 2, sx: 1.2, sy: 1.2, sz: 1.2, color: '#ffd23f', alpha: Math.min(1, f.t) });
+        entities.push({ id: `fx${f.id}`, kind: 'balloon', x, y: 4 + (1.6 - f.t) * 5, z: 2.2, sx: 2.9, sy: 2.9, sz: 2.9, color, alpha: Math.min(0.95, f.t) });
+        entities.push({ id: `fxs${f.id}`, kind: 'star', x, y: 6.5 + (1.6 - f.t) * 2, z: 2, sx: 1.2, sy: 1.2, sz: 1.2, color: '#ffd23f', alpha: Math.min(0.95, f.t) });
       } else if (f.kind === 'miss') {
         entities.push({ id: `fx${f.id}`, kind: 'cone', x: x + 1.8, y: 1 - (0.6 - f.t) * 1.5, z: 2.6, rx: Math.PI / 2, sx: 0.25, sy: 0.8, sz: 0.25, color: '#ffd23f', alpha: f.t * 1.6 });
       } else {

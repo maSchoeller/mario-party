@@ -24,7 +24,8 @@ const LUCKY_WHEEL: WheelSegment['id'][] = ['coins5', 'coins10', 'item', 'swapCoi
 const FINALE_WHEEL: WheelSegment['id'][] = ['coins10', 'item', 'starDiscount', 'coins15', 'item', 'starDiscount'];
 
 export function createGame(config: GameConfig, setups: PlayerSetup[]): GameState {
-  if (setups.length !== 4) throw new Error('a game always has 4 players (bots fill up)');
+  // GAME-01: bots fill up to 4; with 3+ humans bots can be switched off -> 3 seats
+  if (setups.length < 3 || setups.length > 4) throw new Error('a game has 3 or 4 seats');
   const map = getMap(config.mapId);
   const rng = Rng.fromSeed(config.seed);
   const players: PlayerState[] = setups.map((s) => ({
@@ -55,7 +56,7 @@ export function createGame(config: GameConfig, setups: PlayerSetup[]): GameState
     config,
     rng: rng.state,
     players,
-    order: [0, 1, 2, 3],
+    order: setups.map((_, i) => i),
     orderRolls: [],
     round: 1,
     turnIdx: 0,
@@ -144,6 +145,15 @@ export class GameEngine {
   }
 
   // ---------------------------------------------------------------- helpers
+
+  /** number of seats (3 or 4) */
+  get n(): number {
+    return this.state.players.length;
+  }
+
+  all(): number[] {
+    return this.state.players.map((_, i) => i);
+  }
 
   player(i: number): PlayerState {
     return this.state.players[i];
@@ -242,7 +252,7 @@ export class GameEngine {
 
   /** Placement order: stars, coins; equal stays equal (rank sharing). */
   standings(): number[] {
-    return [0, 1, 2, 3].sort((a, b) => this.compare(a, b));
+    return this.all().sort((a, b) => this.compare(a, b));
   }
 
   private compare(a: number, b: number): number {
@@ -260,11 +270,11 @@ export class GameEngine {
         const value = this.rng.int(1, BALANCE.diceMax);
         this.state.orderRolls[p.player] = value;
         this.emit({ type: 'orderRoll', player: p.player, value });
-        if (p.player < 3) {
+        if (p.player < this.n - 1) {
           this.state.pending = { kind: 'orderRoll', player: p.player + 1 };
         } else {
-          const tiebreak = [0, 1, 2, 3].map(() => this.rng.next());
-          this.state.order = [0, 1, 2, 3].sort(
+          const tiebreak = this.all().map(() => this.rng.next());
+          this.state.order = this.all().sort(
             (x, y) => this.state.orderRolls[y] - this.state.orderRolls[x] || tiebreak[y] - tiebreak[x],
           );
           this.emit({ type: 'order', order: [...this.state.order] });
@@ -429,7 +439,7 @@ export class GameEngine {
     this.emit({ type: 'announce', key: `mod.item.${item}`, player: i });
     switch (item) {
       case 'warpShell': {
-        const others = [0, 1, 2, 3].filter((o) => o !== i);
+        const others = this.all().filter((o) => o !== i);
         const o = this.rng.pick(others);
         const mine = pl.field;
         const theirs = this.player(o).field;
@@ -524,7 +534,7 @@ export class GameEngine {
   private passOthers(i: number, field: string): void {
     const t = this.state.turn!;
     if (!t.glove && !t.starSteal) return;
-    for (const o of [0, 1, 2, 3]) {
+    for (const o of this.all()) {
       if (o === i || this.player(o).field !== field) continue;
       if (t.glove) {
         t.glove = false;
@@ -667,7 +677,7 @@ export class GameEngine {
         break;
       case 'duel': {
         pl.lastColor = 'neutral';
-        const options = [0, 1, 2, 3].filter((o) => o !== i);
+        const options = this.all().filter((o) => o !== i);
         this.emit({ type: 'announce', key: 'mod.duel', player: i });
         this.state.pending = { kind: 'duelPick', player: i, options, stake: BALANCE.duelStake };
         break;
@@ -700,7 +710,7 @@ export class GameEngine {
         this.player(i).starDiscount = true;
         break;
       case 'swapCoins': {
-        const o = this.rng.pick([0, 1, 2, 3].filter((x) => x !== i));
+        const o = this.rng.pick(this.all().filter((x) => x !== i));
         const a = this.player(i).coins;
         const b = this.player(o).coins;
         this.changeCoins(i, b - a, 'swap');
@@ -708,7 +718,7 @@ export class GameEngine {
         break;
       }
       case 'bonusDuel': {
-        const o = this.rng.pick([0, 1, 2, 3].filter((x) => x !== i));
+        const o = this.rng.pick(this.all().filter((x) => x !== i));
         this.startDuel(i, o, 0, true);
         break;
       }
@@ -760,7 +770,7 @@ export class GameEngine {
     this.state.pending = null;
     this.state.turn = null;
     this.state.turnIdx++;
-    if (this.state.turnIdx < 4) {
+    if (this.state.turnIdx < this.n) {
       this.beginTurn();
       return;
     }
@@ -776,22 +786,23 @@ export class GameEngine {
       if (s.config.teamMode === 'random' || p.lastColor === 'neutral') return this.rng.chance(0.5) ? 'blue' : 'red';
       return p.lastColor;
     });
-    const blue = [0, 1, 2, 3].filter((i) => colors[i] === 'blue');
+    const blue = this.all().filter((i) => colors[i] === 'blue');
     let format: MgFormat;
     let teams: number[];
-    if (blue.length === 0 || blue.length === 4) {
+    if (this.n < 4 || blue.length === 0 || blue.length === this.n) {
+      // 3 seats (bots off): team formats need 4 players, so every round game is FFA
       format = 'ffa';
-      teams = [0, 1, 2, 3];
+      teams = this.all();
     } else if (blue.length === 2) {
       format = '2v2';
-      teams = [0, 1, 2, 3].map((i) => (colors[i] === 'blue' ? 0 : 1));
+      teams = this.all().map((i) => (colors[i] === 'blue' ? 0 : 1));
     } else {
       format = '1v3';
       const soloColor = blue.length === 1 ? 'blue' : 'red';
-      teams = [0, 1, 2, 3].map((i) => (colors[i] === soloColor ? 0 : 1));
+      teams = this.all().map((i) => (colors[i] === soloColor ? 0 : 1));
     }
     const game = pickMinigame(format, this.rng, s.minigameHistory, s.config);
-    s.pending = { kind: 'minigame', game, format, players: [0, 1, 2, 3], teams, purpose: 'round' };
+    s.pending = { kind: 'minigame', game, format, players: this.all(), teams, purpose: 'round' };
     this.emit({ type: 'announce', key: 'mod.minigameTime', params: { format: `format.${format}` } });
   }
 
@@ -826,7 +837,7 @@ export class GameEngine {
       this.emit({ type: 'finale' });
       const st = this.standings();
       this.emit({ type: 'announce', key: 'mod.finale', params: { leader: st[0] } });
-      const last = st[3];
+      const last = st[st.length - 1];
       // last place spins the finale wheel (CHAOS-01)
       s.turn = null;
       s.pending = { kind: 'wheel', player: last, segments: FINALE_WHEEL, reason: 'finale' };
@@ -850,8 +861,8 @@ export class GameEngine {
       for (const w of res.players) this.changeStars(w, 1, 'bonus');
     }
     // final ranking: stars, coins, then dice decision (5.1)
-    const dice = [0, 1, 2, 3].map(() => this.rng.next());
-    s.ranking = [0, 1, 2, 3].sort((a, b) => this.compare(a, b) || dice[b] - dice[a]);
+    const dice = this.all().map(() => this.rng.next());
+    s.ranking = this.all().sort((a, b) => this.compare(a, b) || dice[b] - dice[a]);
     s.stage = 'over';
     s.pending = { kind: 'gameOver' };
     this.emit({ type: 'announce', key: 'mod.winner', player: s.ranking[0] });
@@ -864,7 +875,7 @@ export class GameEngine {
     const s = this.state;
     s.stage = 'marathon';
     const games: string[] = [];
-    const formats: MgFormat[] = ['ffa', 'ffa', 'ffa', 'ffa', '2v2', '2v2', '1v3', '1v3', 'ffa'];
+    const formats: MgFormat[] = this.n < 4 ? Array(9).fill('ffa') : ['ffa', 'ffa', 'ffa', 'ffa', '2v2', '2v2', '1v3', '1v3', 'ffa'];
     this.rng.shuffle(formats);
     for (const f of formats) games.push(pickMinigame(f, this.rng, games, s.config, true));
     games.push('gipfelsturm');
@@ -878,21 +889,21 @@ export class GameEngine {
     const m = s.marathon!;
     const game = m.games[m.idx];
     const format = formatOf(game);
-    let teams = [0, 1, 2, 3];
+    let teams = this.all();
     if (format === '2v2') {
-      const shuffled = this.rng.shuffle([0, 1, 2, 3]);
+      const shuffled = this.rng.shuffle(this.all());
       teams = [0, 0, 0, 0];
       teams[shuffled[2]] = 1;
       teams[shuffled[3]] = 1;
     } else if (format === '1v3') {
       const solo = this.rng.int(0, 3);
-      teams = [0, 1, 2, 3].map((i) => (i === solo ? 0 : 1));
+      teams = this.all().map((i) => (i === solo ? 0 : 1));
     }
     s.pending = {
       kind: 'minigame',
       game,
       format,
-      players: [0, 1, 2, 3],
+      players: this.all(),
       teams,
       purpose: 'marathon',
       double: m.idx === m.games.length - 1,
@@ -916,8 +927,8 @@ export class GameEngine {
       this.queueMarathonGame();
       return;
     }
-    const dice = [0, 1, 2, 3].map(() => this.rng.next());
-    s.ranking = [0, 1, 2, 3].sort((a, b) => this.player(b).points - this.player(a).points || dice[b] - dice[a]);
+    const dice = this.all().map(() => this.rng.next());
+    s.ranking = this.all().sort((a, b) => this.player(b).points - this.player(a).points || dice[b] - dice[a]);
     s.stage = 'over';
     s.pending = { kind: 'gameOver' };
     this.emit({ type: 'announce', key: 'mod.winner', player: s.ranking[0] });

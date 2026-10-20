@@ -25,7 +25,7 @@ const BUSH_R = 1.3;
 /** inside a bush the solo is only seen by a lantern closer than this */
 const BUSH_SEE = 2.4;
 /** seconds of light (one lantern) until caught */
-const CATCH_TIME = 2;
+const CATCH_TIME = 1.8;
 const CATCH_DECAY = 0.5;
 const SPARK_EVERY = 4;
 const SPARK_TIME = 0.5;
@@ -249,7 +249,7 @@ export const laternenJagd: MinigameDef<LaternenJagdState> = {
         p.think = sk.reaction * (0.7 + rng.next() * 0.6);
         const seekers = s.trio.map((k) => s.ps[k]);
         const threat = Math.min(...seekers.map((q) => dist(q.x, q.z, p.x, p.z)));
-        const danger = s.litBy > 0 || threat < BEAM_LEN + { easy: 0.9, medium: 1.3, hard: 1.7 }[level] || seekers.some((q) => lights(q, p.x, p.z));
+        const danger = s.litBy > 0 || threat < BEAM_LEN + { easy: 1.1, medium: 1.3, hard: 1.6 }[level] || seekers.some((q) => lights(q, p.x, p.z));
         const score = (x: number, z: number) => {
           let v = Math.min(...seekers.map((q) => dist(q.x, q.z, x, z)));
           if (inBush(s, x, z)) v += 2.5;
@@ -265,7 +265,7 @@ export const laternenJagd: MinigameDef<LaternenJagdState> = {
         // once spooked, keep re-checking quickly
         if (danger) p.think = 0.12 + sk.reaction * 0.5 * (0.7 + rng.next() * 0.6);
         if (danger) {
-          if (rng.chance(sk.accuracy + 0.15)) {
+          if (rng.chance(sk.accuracy + 0.3)) {
             // flee: pushed away from every seeker (closer = stronger), sideways out of beams,
             // and away from the fence
             let fx = 0;
@@ -290,10 +290,8 @@ export const laternenJagd: MinigameDef<LaternenJagdState> = {
               fx -= (p.x / r) * (r - (R - 3.5)) * 0.6;
               fz -= (p.z / r) * (r - (R - 3.5)) * 0.6;
             }
-            const len = Math.hypot(fx, fz) || 1;
             const ang = Math.atan2(fz, fx) + rng.noise() * (1 - sk.accuracy) * 0.8;
             p.target = { x: p.x + Math.cos(ang) * 4, z: p.z + Math.sin(ang) * 4 };
-            void len;
           }
         } else if (!p.target || dist2(p.x, p.z, p.target.x, p.target.z) < 0.3 || here < 5) {
           if (rng.chance(sk.accuracy + 0.1)) {
@@ -363,7 +361,7 @@ export const laternenJagd: MinigameDef<LaternenJagdState> = {
       { id: 'moon', kind: 'sphere', x: -R + 1, y: 9, z: R + 4, sx: 2.5, sy: 2.5, sz: 2.5, color: '#f4f1d0', glow: true },
     ];
     s.bushes.forEach((b, k) =>
-      entities.push({ id: `bush${k}`, kind: 'sphere', x: b.x, y: 0.7, z: b.z, sx: BUSH_R * 2.1, sy: 1.6, sz: BUSH_R * 2.1, color: '#2f6b3a' }),
+      entities.push({ id: `bush${k}`, kind: 'sphere', x: b.x, y: 0.7, z: b.z, sx: BUSH_R * 2.1, sy: 1.6, sz: BUSH_R * 2.1, color: '#3d7d47' }),
     );
     for (const i of s.trio) {
       const p = s.ps[i];
@@ -399,11 +397,10 @@ export const laternenJagd: MinigameDef<LaternenJagdState> = {
         y: 0,
         z: sp.z,
         ry: sp.ry,
-        alpha: s.litBy > 0 || s.won ? 1 : 0.6,
         anim: s.won ? 'sad' : s.litBy > 0 ? 'hit' : Math.hypot(sp.vx, sp.vz) > 0.6 ? 'walk' : 'idle',
       });
     }
-    if (s.spark > 0) entities.push({ id: 'spark', kind: 'star', x: sp.x, y: 2.3, z: sp.z, sx: 0.9, sy: 0.9, sz: 0.9, color: '#b8f0ff', glow: true, alpha: Math.min(1, s.spark * 3) });
+    if (s.spark > 0) entities.push({ id: 'spark', kind: 'star', x: sp.x, y: 2.3, z: sp.z, sx: 0.9, sy: 0.9, sz: 0.9, color: '#b8f0ff', glow: true });
     for (const st of s.steps) {
       if (st.t > STEP_LIFE) continue;
       entities.push({ id: `st${st.id}`, kind: 'cylinder', x: st.x, y: 0.03, z: st.z, sx: 0.45, sy: 0.02, sz: 0.6, ry: st.ry, color: '#9fe3ff', glow: true, alpha: (st.t / STEP_LIFE) * 0.8 });

@@ -3,13 +3,13 @@ import { CHARACTERS, PLAYER_COLORS } from '../config';
 import { Rng } from '../rng';
 import type { MgFormat, MgPlayer, MinigameDef } from './types';
 
-export function makeMgPlayers(format: MgFormat, teams?: number[], level: BotLevel = 'medium'): MgPlayer[] {
-  const n = format === 'duel' ? 2 : 4;
+export function makeMgPlayers(format: MgFormat, teams?: number[], level: BotLevel = 'medium', count?: number): MgPlayer[] {
+  const n = count ?? (format === 'duel' ? 2 : 4);
   const defTeams = format === 'ffa' ? [0, 1, 2, 3] : format === '2v2' ? [0, 0, 1, 1] : format === '1v3' ? [0, 1, 1, 1] : [0, 1];
   return Array.from({ length: n }, (_, i) => ({
     idx: i,
     gameIdx: i,
-    team: (teams ?? defTeams)[i],
+    team: (teams ?? defTeams)[i] ?? i,
     character: CHARACTERS[i] as CharacterId,
     color: PLAYER_COLORS[i] as PlayerColor,
     isBot: true,

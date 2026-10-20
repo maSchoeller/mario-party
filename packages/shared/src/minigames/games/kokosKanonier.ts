@@ -136,7 +136,7 @@ export const kokosKanonier: MinigameDef<KokosKanonierState> = {
     };
   },
   layout(s, i) {
-    if (i === s.solo) return { kind: 'tilt', labelKey: 'ctrl.aimTilt' };
+    if (i === s.solo) return { kind: 'tilt', labelKey: 'ctrl.aimCannon' };
     if (s.ps[i].out) return { kind: 'wait', labelKey: 'ctrl.eliminated' };
     return { kind: 'joystick' };
   },
@@ -320,7 +320,8 @@ export const kokosKanonier: MinigameDef<KokosKanonierState> = {
         entities.push({ id: `p${i}`, kind: 'player', player: i, x: p.x, y: 0.6, z: p.z, ry: p.ry, anim: s.booms.some((b) => b.hit && b.t > 0.3) ? 'cheer' : 'idle' });
         return;
       }
-      const blink = p.inv > 0 && !p.out && Math.floor(p.inv * 8) % 2 === 0;
+      // short protection after a hit: shown as a white ring (alpha toggles would rebuild the figure)
+      if (p.inv > 0 && !p.out) entities.push({ id: `shield${i}`, kind: 'torus', x: p.x, y: 0.9, z: p.z, sx: 1.6, sy: 1, sz: 1.6, color: '#ffffff', glow: true });
       entities.push({
         id: `p${i}`,
         kind: 'player',
@@ -329,7 +330,7 @@ export const kokosKanonier: MinigameDef<KokosKanonierState> = {
         y: 0,
         z: p.z,
         ry: p.ry,
-        alpha: p.out ? 0.35 : blink ? 0.5 : 1,
+        alpha: p.out ? 0.35 : undefined,
         anim: p.out ? 'sad' : p.inv > INVULN - 0.5 ? 'hit' : Math.hypot(p.vx, p.vz) > 0.6 ? 'walk' : 'idle',
         label: p.out ? '✖' : '♥'.repeat(p.lives),
       });
@@ -351,7 +352,7 @@ export const kokosKanonier: MinigameDef<KokosKanonierState> = {
       entities.push({ id: `sd${sh.id}`, kind: 'cylinder', x: sh.x, y: 0.03, z: sh.z, sx: r, sy: 0.02, sz: r, color: '#222222', alpha: 0.25 + f * 0.3 });
     }
     for (const b of s.booms) {
-      entities.push({ id: `bm${b.id}`, kind: 'star', x: b.x, y: 0.8 + (0.6 - b.t) * 3, z: b.z, alpha: Math.min(1, b.t * 2), sx: b.hit ? 1.4 : 0.8, sy: b.hit ? 1.4 : 0.8, sz: b.hit ? 1.4 : 0.8, color: b.hit ? '#ff5a3d' : '#d9c48a' });
+      entities.push({ id: `bm${b.id}`, kind: 'star', x: b.x, y: 0.8 + (0.6 - b.t) * 3, z: b.z, alpha: Math.min(0.95, b.t * 2), sx: b.hit ? 1.4 : 0.8, sy: b.hit ? 1.4 : 0.8, sz: b.hit ? 1.4 : 0.8, color: b.hit ? '#ff5a3d' : '#d9c48a' });
     }
     const live = alive(s).length;
     return {

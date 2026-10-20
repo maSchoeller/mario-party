@@ -91,7 +91,7 @@ function erupt(e: GameEngine): void {
     e.emit({ type: 'coinBag', field: f.id, amount: 5, placed: true });
   }
   // boulders hit two random players
-  const hits = e.rng.shuffle([0, 1, 2, 3]).slice(0, 2);
+  const hits = e.rng.shuffle(e.all()).slice(0, 2);
   e.emit({ type: 'eruption', lavaGroup: group, bags, hits });
   for (const h of hits) {
     e.changeCoins(h, -BALANCE.boulderPenalty, 'boulder');

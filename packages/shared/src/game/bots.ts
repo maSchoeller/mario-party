@@ -128,7 +128,7 @@ function chooseItem(e: GameEngine, i: number, level: BotLevel, rng: Rng): ItemId
   const toStar = distance(e, me.field, e.state.starField);
   const canAfford = me.coins >= e.starPrice(i);
   const has = (it: ItemId) => usable.includes(it);
-  const others = [0, 1, 2, 3].filter((o) => o !== i);
+  const others = e.all().filter((o) => o !== i);
   const ahead = (pred: (o: number) => boolean) =>
     others.some((o) => pred(o) && distance(e, me.field, e.player(o).field) <= 9);
   if (has('starTicket') && ahead((o) => e.player(o).stars > 0)) return 'starTicket';
