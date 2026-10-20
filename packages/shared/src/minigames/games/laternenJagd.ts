@@ -13,7 +13,8 @@ import { clamp, dist, dist2, faceAngle, moveWithStick, skill, steerTo, teamRanks
 const R = 10; // garden radius
 const DURATION = 45;
 const SOLO_SPEED = 5.6;
-const SEEK_SPEED = 4.6;
+const SEEK_SPEED = 3.8;
+const SEEK_LATE = 6.4;
 /** lantern turn speed (rad/s) – a quick side step can escape the beam */
 const TURN = 4;
 /** lantern beam: rectangle in front of the seeker (matches the drawn light) */
@@ -22,14 +23,18 @@ const BEAM_W = 2.6;
 /** glow circle around the lantern */
 const NEAR_R = 1.4;
 const BUSH_R = 1.3;
+const BUSHES = 8;
+const BUSH_GAP = 3.6;
 /** inside a bush the solo is only seen by a lantern closer than this */
 const BUSH_SEE = 2.4;
 /** seconds of light (one lantern) until caught */
 const CATCH_TIME = 1.4;
-const CATCH_DECAY = 0.5;
-const SPARK_EVERY = 4;
+const CATCH_DECAY = 2.5;
+/** sparkle interval: from SPARK_EVERY at the start down to SPARK_LATE at the end (the hunt gets hotter) */
+const SPARK_EVERY = 4.5;
+const SPARK_LATE = 2;
 /** first sparkle a bit later: the solo needs a moment to sneak away from the start */
-const FIRST_SPARK = 5;
+const FIRST_SPARK = 10;
 const SPARK_TIME = 0.5;
 const STEP_DIST = 0.85;
 const STEP_LIFE = 1.8;
@@ -39,6 +44,10 @@ const STEP_DELAY = 0.8;
 const SNEAK_SPEED = 3.4;
 /** bot stick strength per level */
 const RUN = { easy: 0.85, medium: 0.92, hard: 1 };
+const SIDE_W = 1.5;
+const FLEE_KEEP = 1.5;
+/** head start for the solo: the trio waits at the gate (not in practice) */
+const HIDE_TIME = 5;
 
 interface P {
   x: number;
@@ -84,6 +93,11 @@ export interface LaternenJagdState {
   won: boolean;
 }
 
+/** the hunt gets hotter: seekers get faster towards the end */
+function seekSpeed(s: LaternenJagdState): number {
+  return s.practice ? SEEK_SPEED : SEEK_SPEED + (SEEK_LATE - SEEK_SPEED) * clamp(s.t / s.duration, 0, 1);
+}
+
 function inBush(s: LaternenJagdState, x: number, z: number): boolean {
   return s.bushes.some((b) => dist2(b.x, b.z, x, z) < BUSH_R * BUSH_R);
 }
@@ -113,14 +127,17 @@ function litCount(s: LaternenJagdState): number {
 
 function placeSolo(s: LaternenJagdState, rng: Rng): void {
   const sp = s.ps[s.solo];
-  // the spot furthest away from all seekers and their beams out of a few candidates (far out
-  // in the garden, between the beams) – nobody should be caught in the first seconds
-  let best = { x: 0, z: R - 2 };
-  let bestD = -1;
-  for (let k = 0; k < 16; k++) {
+  // a hiding spot far away from all seekers and their beams, preferably in a bush, but not
+  // right at the fence (no way out there) – nobody should be caught in the first seconds
+  const cands = s.bushes.map((b) => ({ x: b.x, z: b.z }));
+  for (let k = 0; k < 10; k++) {
     const a = rng.next() * Math.PI * 2;
-    const r = (0.72 + rng.next() * 0.18) * R;
-    const c = { x: Math.cos(a) * r, z: Math.sin(a) * r };
+    const r = (0.3 + rng.next() * 0.45) * R;
+    cands.push({ x: Math.cos(a) * r, z: Math.sin(a) * r });
+  }
+  let best = { x: 0, z: R - 2 };
+  let bestV = -Infinity;
+  for (const c of cands) {
     const d = Math.min(
       ...s.trio.map((i) => {
         const q = s.ps[i];
@@ -129,8 +146,9 @@ function placeSolo(s: LaternenJagdState, rng: Rng): void {
         return Math.min(dist(q.x, q.z, c.x, c.z), dist(bx, bz, c.x, c.z));
       }),
     );
-    if (d > bestD) {
-      bestD = d;
+    const v = Math.min(d, 11) + (inBush(s, c.x, c.z) ? 1.5 : 0) - Math.max(0, Math.hypot(c.x, c.z) - 0.75 * R) * 2 + rng.next();
+    if (v > bestV) {
+      bestV = v;
       best = c;
     }
   }
@@ -157,20 +175,21 @@ export const laternenJagd: MinigameDef<LaternenJagdState> = {
   setup(players, rng, opts) {
     const solo = Math.max(0, players.findIndex((p) => p.team === 0));
     const trio = players.map((_, i) => i).filter((i) => i !== solo);
-    // bushes spread over the garden (not in the middle where the trio starts)
+    // bushes spread over the garden (not right in the middle)
     const bushes: { x: number; z: number }[] = [];
-    for (let tries = 0; bushes.length < 8 && tries < 200; tries++) {
+    for (let tries = 0; bushes.length < BUSHES && tries < 300; tries++) {
       const a = rng.next() * Math.PI * 2;
       const r = (0.35 + rng.next() * 0.55) * R;
       const b = { x: Math.cos(a) * r, z: Math.sin(a) * r };
-      if (bushes.every((o) => dist(o.x, o.z, b.x, b.z) > 3.6)) bushes.push(b);
+      if (bushes.every((o) => dist(o.x, o.z, b.x, b.z) > BUSH_GAP)) bushes.push(b);
     }
     const ps: P[] = players.map(() => ({ x: 0, z: 0, vx: 0, vz: 0, ry: 0, stick: { x: 0, y: 0 }, think: 0, target: null, clue: null, sneak: false }));
+    // the trio starts together at the front gate (near the camera), the solo hides somewhere
+    // far away – a real head start, nobody is caught within the first seconds (MINI-03)
     trio.forEach((i, k) => {
-      const a = -Math.PI / 2 + (k / 3) * Math.PI * 2;
-      ps[i].x = Math.cos(a) * 1.2;
-      ps[i].z = Math.sin(a) * 1.2;
-      ps[i].ry = faceAngle(ps[i].x, ps[i].z);
+      ps[i].x = (k - 1) * 2.4;
+      ps[i].z = -(R - 2.2) + Math.abs(k - 1) * 0.6;
+      ps[i].ry = faceAngle((k - 1) * 0.35, 1);
     });
     const s: LaternenJagdState = {
       t: 0,
@@ -202,7 +221,9 @@ export const laternenJagd: MinigameDef<LaternenJagdState> = {
     s.t += dt;
     s.ps.forEach((p, i) => {
       const before = { x: p.x, z: p.z };
-      moveWithStick(p, p.stick, i === s.solo ? SOLO_SPEED : SEEK_SPEED, dt);
+      // head start: the trio waits at the gate while the solo hides
+      const frozen = i !== s.solo && !s.practice && s.t < HIDE_TIME;
+      moveWithStick(p, frozen ? { x: 0, y: 0 } : p.stick, i === s.solo ? SOLO_SPEED : seekSpeed(s), dt);
       keepInside(p);
       // the lantern keeps pointing where you last walked and turns with limited speed
       if (Math.hypot(p.vx, p.vz) > 0.6) {
@@ -229,7 +250,7 @@ export const laternenJagd: MinigameDef<LaternenJagdState> = {
     s.spark = Math.max(0, s.spark - dt);
     s.sparkIn -= dt;
     if (s.sparkIn <= 0) {
-      s.sparkIn = SPARK_EVERY;
+      s.sparkIn = s.practice ? SPARK_EVERY : SPARK_EVERY + (SPARK_LATE - SPARK_EVERY) * clamp(s.t / s.duration, 0, 1);
       s.spark = SPARK_TIME;
     }
     // light
@@ -271,6 +292,8 @@ export const laternenJagd: MinigameDef<LaternenJagdState> = {
           return v + Math.min(0, through - 3.5) * 2;
         };
         const here = score(p.x, p.z);
+        // the sparkle just gave the hiding place away: sneak somewhere else
+        const revealed = s.spark > 0 && !danger && (!p.target || dist2(p.x, p.z, p.target.x, p.target.z) < 1);
         p.sneak = !danger;
         // once spooked, keep re-checking quickly
         if (danger) p.think = 0.12 + sk.reaction * 0.5 * (0.7 + rng.next() * 0.6);
@@ -291,8 +314,8 @@ export const laternenJagd: MinigameDef<LaternenJagdState> = {
                 const bx = -Math.sin(q.ry);
                 const bz = -Math.cos(q.ry);
                 const side = -dx * bz + dz * bx > 0 ? 1 : -1;
-                fx += -bz * side * 1.5;
-                fz += bx * side * 1.5;
+                fx += -bz * side * SIDE_W;
+                fz += bx * side * SIDE_W;
               }
             }
             const r = Math.hypot(p.x, p.z);
@@ -301,9 +324,26 @@ export const laternenJagd: MinigameDef<LaternenJagdState> = {
               fz -= (p.z / r) * (r - (R - 3.5)) * 0.6;
             }
             const ang = Math.atan2(fz, fx) + rng.noise() * (1 - sk.accuracy) * 0.8;
-            p.target = { x: p.x + Math.cos(ang) * 4, z: p.z + Math.sin(ang) * 4 };
+            // don't flee into the fence: turn along it (towards the side with more room);
+            // keep running the way you already run (no dithering inside the beam)
+            const prev = p.target ? Math.atan2(p.target.z - p.z, p.target.x - p.x) : null;
+            let best = ang;
+            let bestV = -Infinity;
+            for (const da of [0, 0.5, -0.5, 1, -1, 1.5, -1.5, 2, -2]) {
+              const tx = p.x + Math.cos(ang + da) * 4;
+              const tz = p.z + Math.sin(ang + da) * 4;
+              const out = Math.max(0, Math.hypot(tx, tz) - (R - 1.5));
+              const room = Math.min(...seekers.map((q) => dist(q.x, q.z, tx, tz)));
+              const keep = prev === null ? 0 : Math.cos(ang + da - prev) * FLEE_KEEP;
+              const v = room - out * 3 - Math.abs(da) * 0.8 + keep;
+              if (v > bestV) {
+                bestV = v;
+                best = ang + da;
+              }
+            }
+            p.target = { x: p.x + Math.cos(best) * 4, z: p.z + Math.sin(best) * 4 };
           }
-        } else if (!p.target || dist2(p.x, p.z, p.target.x, p.target.z) < 0.3 || here < 5) {
+        } else if (revealed || !p.target || dist2(p.x, p.z, p.target.x, p.target.z) < 0.3 || here < 5) {
           if (rng.chance(sk.accuracy + 0.1)) {
             // calm: sneak to a good hiding place (bushes preferred) or stay put
             const cands = s.bushes.map((bb) => ({ x: bb.x, z: bb.z }));
@@ -313,9 +353,10 @@ export const laternenJagd: MinigameDef<LaternenJagdState> = {
               cands.push({ x: p.x + Math.cos(a) * r, z: p.z + Math.sin(a) * r });
             }
             let best = { x: p.x, z: p.z };
-            let bestV = here + 1.5;
+            let bestV = revealed ? -Infinity : here + 1.5;
             for (const c of cands) {
               if (Math.hypot(c.x, c.z) > R - 0.8) continue;
+              if (revealed && dist2(p.x, p.z, c.x, c.z) < 2.5 * 2.5) continue;
               const v = score(c.x, c.z) - dist(p.x, p.z, c.x, c.z) * 0.15 + rng.noise() * (1 - sk.accuracy) * 3;
               if (v > bestV) {
                 bestV = v;
