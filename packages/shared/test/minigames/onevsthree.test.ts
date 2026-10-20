@@ -9,7 +9,7 @@ import { wandLabyrinth } from '../../src/minigames/games/wandLabyrinth';
 import { makeMgPlayers, runMinigameHeadless } from '../../src/minigames/headless';
 import type { MgPlayer, MinigameDef } from '../../src/minigames/types';
 import { Rng } from '../../src/rng';
-import { checkMinigameContract } from './contract';
+import { checkMinigameContract, playStats } from './contract';
 
 const TEAMS = [
   [0, 1, 1, 1],
@@ -250,5 +250,33 @@ describe('1v3 practice mode', () => {
   it.each([kokosKanonier, wandLabyrinth, laternenJagd, ballonBombardement] as MinigameDef[])('$id never ends in practice', (def) => {
     const res = runMinigameHeadless(def, makeMgPlayers('1v3', TEAMS[0], 'hard'), 11, { practice: true, maxSeconds: 90 });
     expect(def.isOver(res.state as never)).toBe(false);
+  });
+});
+
+describe('1v3 play time and balance (medium bots)', () => {
+  it.each([laternenJagd, wandLabyrinth, kokosKanonier, ballonBombardement] as MinigameDef[])('$id: median ≥ 25 s, rarely over before 15 s', (def) => {
+    const { median, secs } = playStats(def, 30);
+    expect(median).toBeGreaterThanOrEqual(25);
+    expect(secs.filter((x) => x < 15).length / secs.length).toBeLessThanOrEqual(0.1);
+  });
+  it('laternenJagd: solo wins 35–65 % against an equally strong trio', () => {
+    const { runs } = playStats(laternenJagd, 40);
+    const solo = runs.filter((r) => r.ranks[r.teams.indexOf(0)] === 0).length / runs.length;
+    expect(solo).toBeGreaterThanOrEqual(0.35);
+    expect(solo).toBeLessThanOrEqual(0.65);
+  });
+  it('laternenJagd: the trio waits at the gate while the solo hides', () => {
+    const rng = Rng.fromSeed(9);
+    const s = laternenJagd.setup(humans(), rng, { practice: false });
+    const start = s.trio.map((i) => ({ x: s.ps[i].x, z: s.ps[i].z }));
+    const sp = s.ps[s.solo];
+    // far away from every seeker at the start
+    for (const p of start) expect(Math.hypot(p.x - sp.x, p.z - sp.z)).toBeGreaterThan(8);
+    for (let k = 0; k < 30 * 3; k++) {
+      for (const i of s.trio) laternenJagd.input(s, i, { type: 'stick', x: 0, y: 1 });
+      laternenJagd.tick(s, 1 / 30, rng);
+    }
+    s.trio.forEach((i, k) => expect(Math.hypot(s.ps[i].x - start[k].x, s.ps[i].z - start[k].z)).toBeLessThan(0.01));
+    expect(laternenJagd.view(s).hud.message?.key).toBe('mg.laternenJagd.hide');
   });
 });

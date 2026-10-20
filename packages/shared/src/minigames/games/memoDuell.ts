@@ -22,7 +22,7 @@ const START_LEN = 3;
 const LEAD_IN = 0.8;
 const OFF = 0.18;
 const JUDGE = 1.8;
-const SOFT_LIMIT = 46;
+const SOFT_LIMIT = 40;
 const HARD_LIMIT = 58;
 /** hearts per player – one mistake must not end the duel after a few seconds (MINI-03) */
 export const LIVES = 2;

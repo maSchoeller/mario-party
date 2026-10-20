@@ -6,7 +6,7 @@ import { makeMgPlayers, runMinigameHeadless } from '../../src/minigames/headless
 import { MINIGAMES, pickMinigame } from '../../src/minigames/registry';
 import type { MgPlayer } from '../../src/minigames/types';
 import { Rng } from '../../src/rng';
-import { botStrengthOrder, checkMinigameContract } from './contract';
+import { botStrengthOrder, checkMinigameContract, playStats } from './contract';
 
 const humans = (format: 'duel' | 'ffa'): MgPlayer[] => makeMgPlayers(format).map((p) => ({ ...p, isBot: false }));
 const DT = 1 / 30;
@@ -213,5 +213,13 @@ describe('gipfelsturm rules', () => {
     s.ps[1].finishedAt = 35;
     toStage2(s);
     expect(gipfelsturm.result(s)).toEqual([2, 1, 0, 3]);
+  });
+});
+
+describe('play time (MINI-03, medium bots)', () => {
+  it.each([memoDuell, gipfelsturm])('$id: median ≥ 25 s', (def) => {
+    const { median, secs } = playStats(def, 10);
+    expect(median).toBeGreaterThanOrEqual(25);
+    expect(secs[1]).toBeGreaterThanOrEqual(12);
   });
 });

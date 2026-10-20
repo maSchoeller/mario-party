@@ -106,3 +106,34 @@ export function botStrengthOrder(def: MinigameDef, seeds = 12): { hardWins: numb
   }
   return { hardWins, easyWins };
 }
+
+/** Team layouts that rotate through the seats (so no seat is favoured). */
+const ROTATE: Record<MgFormat, (number[] | undefined)[]> = {
+  ffa: [undefined],
+  duel: [undefined],
+  '2v2': [[0, 0, 1, 1], [0, 1, 0, 1], [1, 0, 0, 1], [1, 1, 0, 0]],
+  '1v3': [[0, 1, 1, 1], [1, 0, 1, 1], [1, 1, 0, 1], [1, 1, 1, 0]],
+};
+
+/**
+ * Play time with medium bots (MINI-03: typical game ≥ 25–30 s, hardly ever over before ~15 s).
+ * Returns the sorted durations, their median and the results (for balance/tie checks).
+ */
+export function playStats(def: MinigameDef, seeds = 10): { secs: number[]; median: number; runs: { ranks: number[]; teams: number[] }[] } {
+  const runs: { ranks: number[]; teams: number[] }[] = [];
+  const secs: number[] = [];
+  const layouts = ROTATE[def.format];
+  for (let seed = 1; seed <= seeds; seed++) {
+    const players = makeMgPlayers(def.format, layouts[seed % layouts.length], 'medium');
+    const res = runMinigameHeadless(def, players, seed * 7717 + 3);
+    secs.push(res.seconds);
+    runs.push({ ranks: res.ranks, teams: players.map((p) => p.team) });
+  }
+  secs.sort((a, b) => a - b);
+  return { secs, median: secs[secs.length >> 1], runs };
+}
+
+/** Share of games in which everybody shares first place (a draw). */
+export function drawRate(runs: { ranks: number[] }[]): number {
+  return runs.filter((r) => r.ranks.every((x) => x === 0)).length / runs.length;
+}

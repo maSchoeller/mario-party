@@ -13,7 +13,7 @@ const GRACE = 0.35; // wait for late-arriving earlier presses
 const WINS = 3;
 const MAX_ROUNDS = 7;
 const TIME_LIMIT = 55;
-const PAUSE = 2.2; // after a decided round
+const PAUSE = 2.5; // after a decided round
 
 export interface SchnellzieherState {
   t: number;
@@ -99,7 +99,7 @@ export const schnellzieher: MinigameDef<SchnellzieherState> = {
       s.roundWinner = null;
       s.resolveAt = 0;
       s.botPlan = [null, null];
-      s.signalAt = s.t + rng.range(2, 5);
+      s.signalAt = s.t + rng.range(2.5, 5.5);
       s.phase = 'wait';
     }
   },

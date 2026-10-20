@@ -7,7 +7,7 @@ import { zaehlZoo } from '../../src/minigames/games/zaehlZoo';
 import { zehnSekunden } from '../../src/minigames/games/zehnSekunden';
 import { makeMgPlayers } from '../../src/minigames/headless';
 import { Rng } from '../../src/rng';
-import { botStrengthOrder, checkMinigameContract } from './contract';
+import { botStrengthOrder, checkMinigameContract, playStats } from './contract';
 
 const GAMES = [schubsScholle, wackelBruecke, zehnSekunden, strichKuenstler, zaehlZoo, lavaSeil];
 const humans = () => makeMgPlayers('ffa').map((p) => ({ ...p, isBot: false }));
@@ -228,5 +228,13 @@ describe('lavaSeil', () => {
     lavaSeil.input(s2, 2, { type: 'press', t: tc2 - 0.02 }); // feet still on the ground at tc
     for (let k = 0; k < 30; k++) lavaSeil.tick(s2, 1 / 60, r2);
     expect(s2.ps[2].out).not.toBeNull();
+  });
+});
+
+describe('lavaSeil play time', () => {
+  it('lasts long enough with medium bots (bots jump with display lag, MINI-03)', () => {
+    const { median, secs } = playStats(lavaSeil, 10);
+    expect(median).toBeGreaterThanOrEqual(25);
+    expect(secs[1]).toBeGreaterThanOrEqual(15);
   });
 });

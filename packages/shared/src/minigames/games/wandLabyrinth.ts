@@ -15,12 +15,14 @@ const CH = 7; // cells in z
 const TW = CW * 2 + 1; // tiles
 const TH = CH * 2 + 1;
 const TS = 1.1; // tile size (world units)
-const STEP_TIME = 0.4; // seconds per cell at full stick
+// seconds per cell at full stick (not too fast: the solo needs time to react, MINI-03)
+const STEP_TIME = 0.44;
 const COOLDOWN = 0.8;
 const SLIDE_TIME = 0.25;
 const DURATION = 40;
 const N_SLIDERS = 10; // per axis
 const BRAID = 0.03;
+/** maze generator: weight of the trio's shortest route (no short cuts) and number of tries */
 const ROUTE_WEIGHT = 3;
 const ATTEMPTS = 20;
 const WALL_H = 1.3;

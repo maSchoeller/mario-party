@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { flossRumble } from '../../src/minigames/games/flossRumble';
+import { flossRumble, SAFE_TIME } from '../../src/minigames/games/flossRumble';
 import { TEAM_GAMES } from '../../src/minigames/games/group-2v2';
 import { paketKette } from '../../src/minigames/games/paketKette';
 import { schatzTauziehen } from '../../src/minigames/games/schatzTauziehen';
@@ -8,7 +8,7 @@ import { weichenChaos } from '../../src/minigames/games/weichenChaos';
 import { makeMgPlayers, runMinigameHeadless } from '../../src/minigames/headless';
 import type { MgPlayer, MinigameDef } from '../../src/minigames/types';
 import { Rng } from '../../src/rng';
-import { checkMinigameContract } from './contract';
+import { checkMinigameContract, drawRate, playStats } from './contract';
 
 const VARIANTS = [[0, 0, 1, 1], [0, 1, 0, 1], [1, 0, 0, 1]];
 
@@ -201,5 +201,78 @@ describe('schatzTauziehen rules', () => {
       schatzTauziehen.tick(s, 1 / 30, rng);
     }
     expect(s.rope).toBeGreaterThan(0);
+  });
+});
+
+describe('2v2 play time and draws (medium bots)', () => {
+  it('flossRumble: median ≥ 25 s, rarely over before 15 s', () => {
+    const { median, secs } = playStats(flossRumble, 30);
+    expect(median).toBeGreaterThanOrEqual(25);
+    expect(secs.filter((x) => x < 15).length / secs.length).toBeLessThanOrEqual(0.1);
+  });
+  it.each([paketKette, weichenChaos, flossRumble, tandemTretboot] as MinigameDef[])('$id: draws are rare (< 3 %)', (def) => {
+    expect(drawRate(playStats(def, 40).runs)).toBeLessThan(0.03);
+  });
+});
+
+describe('2v2 tie-breaks and warm-up', () => {
+  it('flossRumble: the railing keeps everybody on board during the warm-up, then pushes count', () => {
+    const rng = Rng.fromSeed(21);
+    const s = flossRumble.setup(humans([0, 0, 1, 1]), rng, { practice: false });
+    // player 2 runs towards the edge for the whole warm-up
+    while (s.t < SAFE_TIME - 0.1) {
+      flossRumble.input(s, 2, { type: 'stick', x: 1, y: 0 });
+      flossRumble.tick(s, 1 / 30, rng);
+    }
+    expect(s.ps[2].state).toBe('raft');
+    for (let k = 0; k < 30 * 2; k++) {
+      flossRumble.input(s, 2, { type: 'stick', x: 1, y: 0 });
+      flossRumble.tick(s, 1 / 30, rng);
+    }
+    expect(s.ps[2].state).not.toBe('raft');
+  });
+  it('flossRumble: same number on board at the end → more successful pushes win', () => {
+    const rng = Rng.fromSeed(22);
+    const s = flossRumble.setup(humans([0, 1, 0, 1]), rng, { practice: false });
+    s.hits = [1, 3];
+    while (!flossRumble.isOver(s)) {
+      // everybody stays safely in the middle of the raft
+      s.ps.forEach((p, i) => Object.assign(p, { x: i < 2 ? -1 : 1, z: i % 2 ? 1 : -1 }));
+      flossRumble.tick(s, 1 / 30, rng);
+    }
+    expect(s.ps.every((p) => p.state === 'raft')).toBe(true);
+    expect(flossRumble.result(s)).toEqual([1, 0, 1, 0]);
+  });
+  it('paketKette: equal score → the team that reached it first wins', () => {
+    const rng = Rng.fromSeed(23);
+    const s = paketKette.setup(humans([0, 1, 0, 1]), rng, { practice: false });
+    while (!paketKette.isOver(s)) paketKette.tick(s, 0.5, rng);
+    for (const [k, at] of [[0, 30], [1, 20]] as const) Object.assign(s.teams[k], { score: 5, scoreAt: at });
+    expect(paketKette.result(s)).toEqual([1, 0, 1, 0]);
+  });
+  it('weichenChaos: equal score → the team that set its switches earlier wins', () => {
+    const rng = Rng.fromSeed(24);
+    const s = weichenChaos.setup(humans([0, 0, 1, 1]), rng, { practice: false });
+    s.nextSpawn = [999, 999];
+    // the same own train on one line of each team; team 1 flips its switch back and forth late
+    s.trains.push({ id: 700, line: 0, color: 0, s: 0, branch: null, decidedAt: 0 });
+    s.trains.push({ id: 701, line: 2, color: 1, s: 0, branch: null, decidedAt: 0 });
+    for (let k = 0; k < 30 * 6; k++) {
+      if (k === 50) weichenChaos.input(s, 2, { type: 'press', t: s.t });
+      if (k === 60) weichenChaos.input(s, 2, { type: 'press', t: s.t });
+      weichenChaos.tick(s, 1 / 30, rng);
+    }
+    expect(s.scores).toEqual([1, 1]);
+    expect(weichenChaos.result(s)).toEqual([0, 0, 1, 1]);
+  });
+  it('tandemTretboot: two boats crossing the line in the same tick – the earlier crossing wins', () => {
+    const rng = Rng.fromSeed(25);
+    const s = tandemTretboot.setup(humans([0, 0, 1, 1]), rng, { practice: false });
+    // boat 0 (first in the update order) is a little behind but just as fast
+    Object.assign(s.boats[0], { pos: 139.9, v: 6 });
+    Object.assign(s.boats[1], { pos: 139.95, v: 6 });
+    tandemTretboot.tick(s, 1 / 30, rng);
+    expect(s.boats.every((b) => b.finishedAt !== null)).toBe(true);
+    expect(tandemTretboot.result(s)).toEqual([1, 1, 0, 0]);
   });
 });
