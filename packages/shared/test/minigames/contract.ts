@@ -6,7 +6,7 @@ import type { MgFormat, MinigameDef } from '../../src/minigames/types';
 import { Rng } from '../../src/rng';
 
 const ENTITY_KINDS = new Set([
-  'player', 'box', 'sphere', 'cylinder', 'cone', 'coin', 'star', 'torus', 'plane', 'rock', 'palm', 'balloon', 'coconut', 'boat', 'train', 'lantern',
+  'player', 'box', 'sphere', 'cylinder', 'cone', 'coin', 'star', 'torus', 'plane', 'rock', 'palm', 'balloon', 'coconut', 'boat', 'train', 'lantern', 'prop', 'water',
 ]);
 
 function teamVariants(format: MgFormat): number[][] {

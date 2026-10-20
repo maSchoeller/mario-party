@@ -512,7 +512,7 @@ function smin(a: number, b: number, k: number): number {
 // ------------------------------------------------------------------ procedural textures
 
 const texCache = new WeakMap<Scene, Map<string, Texture>>();
-function cached(scene: Scene, key: string, make: () => Texture): Texture {
+export function cached(scene: Scene, key: string, make: () => Texture): Texture {
   let m = texCache.get(scene);
   if (!m) texCache.set(scene, (m = new Map()));
   let t = m.get(key);
@@ -545,7 +545,7 @@ export function detailTexture(scene: Scene, theme: string): Texture {
   });
 }
 
-function waterNormals(scene: Scene): Texture {
+export function waterNormals(scene: Scene): Texture {
   return cached(scene, 'waterN', () => {
     const S = 128;
     const tex = new DynamicTexture('waterN', { width: S, height: S }, scene, true);
@@ -573,7 +573,7 @@ function waterNormals(scene: Scene): Texture {
   });
 }
 
-function lavaTexture(scene: Scene): Texture {
+export function lavaTexture(scene: Scene): Texture {
   return cached(scene, 'lava', () => {
     const S = 256;
     const tex = new DynamicTexture('lava', { width: S, height: S }, scene, true);

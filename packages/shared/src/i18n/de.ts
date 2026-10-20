@@ -26,6 +26,8 @@ export const de: Record<string, string> = {
 
   // ------------------------------------------------------------------ host
   'host.createLobby': 'Lobby erstellen',
+  'host.mgGo': 'LOS!',
+  'host.mgFinish': 'SCHLUSS!',
   'host.resumeGame': 'Partie fortsetzen',
   'host.resumeCodePrompt': 'Spielstand-Code eingeben',
   'host.resumeNotFound': 'Kein Spielstand zu diesem Code gefunden.',

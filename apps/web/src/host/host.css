@@ -520,11 +520,135 @@ button.primary {
   color: var(--ink-soft);
 }
 .countdown {
+  position: relative;
   font-size: 22vh;
   font-weight: 900;
   color: #fff;
   text-shadow: 0 1vh 0 rgba(60, 60, 100, 0.3);
-  animation: zoomin 0.3s ease-out;
+}
+.countdown > span {
+  display: inline-block;
+  animation: count-pop 0.55s cubic-bezier(0.2, 1.6, 0.4, 1) both;
+}
+/* ring that bursts outwards with every number */
+.countdown::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 26vh;
+  height: 26vh;
+  margin: -13vh 0 0 -13vh;
+  border-radius: 50%;
+  border: 1.4vh solid rgba(255, 255, 255, 0.85);
+  animation: count-ring 0.7s ease-out both;
+}
+.countdown.n3 { color: #ffd8dc; }
+.countdown.n2 { color: #fff1c2; }
+.countdown.n1 { color: #d9f5e3; }
+.countdown.go,
+.countdown.finish {
+  font-size: 19vh;
+  color: #ffd25e;
+  text-shadow: 0 1vh 0 rgba(140, 70, 20, 0.35), 0 0 6vh rgba(255, 200, 80, 0.6);
+}
+.countdown.finish {
+  color: #fff;
+  text-shadow: 0 1vh 0 rgba(60, 50, 110, 0.4), 0 0 6vh rgba(160, 140, 255, 0.6);
+}
+.countdown.go > span,
+.countdown.finish > span {
+  animation: go-slam 0.6s cubic-bezier(0.2, 1.8, 0.4, 1) both;
+}
+@keyframes count-pop {
+  from {
+    transform: scale(2.2);
+    opacity: 0;
+  }
+  60% {
+    opacity: 1;
+  }
+}
+@keyframes count-ring {
+  from {
+    transform: scale(0.3);
+    opacity: 1;
+  }
+  to {
+    transform: scale(2.4);
+    opacity: 0;
+  }
+}
+@keyframes go-slam {
+  from {
+    transform: scale(0.2) rotate(-12deg);
+    opacity: 0;
+  }
+  50% {
+    transform: scale(1.15) rotate(3deg);
+    opacity: 1;
+  }
+}
+/* iris wipe between board and minigame */
+.layer-transition {
+  overflow: hidden;
+}
+.iris {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 0;
+  height: 0;
+  border-radius: 50%;
+  box-shadow: 0 0 0 200vmax #2b2550;
+  transform: translate(-50%, -50%);
+}
+.iris.closing {
+  animation: iris-close var(--iris-ms) cubic-bezier(0.55, 0, 0.75, 0.3) both;
+}
+.iris.closed {
+  width: 0;
+  height: 0;
+}
+.iris.opening {
+  animation: iris-open var(--iris-ms) cubic-bezier(0.2, 0.7, 0.3, 1) both;
+}
+.iris-star {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%) scale(0);
+  font-size: 14vh;
+  color: #ffd25e;
+  text-shadow: 0 0 4vh rgba(255, 210, 94, 0.7);
+  transition: transform 0.25s cubic-bezier(0.2, 1.6, 0.4, 1);
+}
+.iris.closed .iris-star {
+  transform: translate(-50%, -50%) scale(1) rotate(360deg);
+  transition: transform 0.45s cubic-bezier(0.2, 1.6, 0.4, 1);
+}
+.iris.opening .iris-star {
+  transform: translate(-50%, -50%) scale(0);
+}
+@keyframes iris-close {
+  from {
+    width: 240vmax;
+    height: 240vmax;
+  }
+  to {
+    width: 0;
+    height: 0;
+  }
+}
+@keyframes iris-open {
+  from {
+    width: 0;
+    height: 0;
+  }
+  to {
+    width: 240vmax;
+    height: 240vmax;
+  }
 }
 .layer-mg .timer {
   position: absolute;

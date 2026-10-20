@@ -32,7 +32,7 @@ export class HostUI {
 
   constructor(root: HTMLElement) {
     this.root = root;
-    for (const name of ['hud', 'gimmick', 'center', 'mg', 'subtitle', 'overlay', 'toast', 'system']) {
+    for (const name of ['hud', 'gimmick', 'center', 'mg', 'subtitle', 'overlay', 'toast', 'transition', 'system']) {
       const el = h('div', { class: `layer layer-${name}` });
       this.layers[name] = el;
       root.append(el);
@@ -272,9 +272,33 @@ export class HostUI {
     this.setOverlay(el);
   }
 
-  countdown(n: number | string | null): void {
+  countdown(n: number | string | null, cls = ''): void {
     clear(this.layers.center);
-    if (n !== null) this.layers.center.append(h('div', { class: 'countdown' }, String(n)));
+    if (n !== null) this.layers.center.append(h('div', { class: `countdown ${typeof n === 'number' ? `n${n}` : 'go'} ${cls}` }, h('span', {}, String(n))));
+  }
+
+  /**
+   * Iris transition (v0.4): `close` shrinks a hole to black-violet with a little star in the
+   * middle, `open` widens it again. Resolves when the animation is done.
+   */
+  iris(mode: 'close' | 'open', ms = 520): Promise<void> {
+    const layer = this.layers.transition;
+    let el = layer.querySelector<HTMLElement>('.iris');
+    if (!el) {
+      el = h('div', { class: 'iris' }, h('div', { class: 'iris-star' }, '★'));
+      layer.append(el);
+    }
+    el.style.setProperty('--iris-ms', `${ms}ms`);
+    el.classList.remove('closing', 'opening', 'closed');
+    void el.offsetWidth;
+    el.classList.add(mode === 'close' ? 'closing' : 'opening');
+    return new Promise((res) =>
+      setTimeout(() => {
+        if (mode === 'close') el!.classList.add('closed');
+        else el!.remove();
+        res();
+      }, ms),
+    );
   }
 
   mgHud(hud: MgHud | null, players: MgPlayer[], title: string): void {

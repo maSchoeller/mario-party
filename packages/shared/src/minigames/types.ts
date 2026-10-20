@@ -69,7 +69,95 @@ export type EntityKind =
   | 'coconut'
   | 'boat'
   | 'train'
-  | 'lantern';
+  | 'lantern'
+  /** a model from the prop library (`prop` = id, e.g. 'barrel', 'chest', 'torch'), base at y */
+  | 'prop'
+  /** animated water (or lava with mat 'lava') surface `sx × sz` at height y */
+  | 'water';
+
+/**
+ * Surface of box/cylinder/plane/cone/sphere entities: a tiling detail texture plus a soft
+ * vertical shading (like the baked AO of the props) multiplied over `color`.
+ */
+export type MgSurface = 'wood' | 'planks' | 'stone' | 'tiles' | 'metal' | 'ice' | 'snow' | 'sand' | 'grass' | 'cloth' | 'rope' | 'lava' | 'paper' | 'gold' | 'basalt';
+
+/**
+ * Backdrop around the play area (v0.4): landscape, water, vegetation, sky, light and
+ * ambient particles/sound. Purely decorative – the game still draws its play area itself.
+ */
+export type MgSet =
+  | 'lagoon'
+  | 'beach'
+  | 'volcano'
+  | 'summit'
+  | 'meadow'
+  | 'garden'
+  | 'city'
+  | 'ice'
+  | 'clouds'
+  | 'studio'
+  | 'desert'
+  | 'nightwood';
+
+export interface MgScenery {
+  set: MgSet;
+  /** play area that stays free of scenery: circle (r) or rectangle (w × d), centered at x/z */
+  clear: { x?: number; z?: number; r?: number; w?: number; d?: number };
+  /** ground height of the backdrop next to the play area (default 0) */
+  ground?: number;
+  /** water / lava level (default: just below the ground) */
+  water?: number;
+  /** variation seed for the scatter (default 1) */
+  seed?: number;
+}
+
+/** Sound effects a minigame can trigger (host plays them, see MgFx). */
+export type MgSfx =
+  | 'coin'
+  | 'splash'
+  | 'whoosh'
+  | 'boom'
+  | 'buzz'
+  | 'ding'
+  | 'thud'
+  | 'pop'
+  | 'jump'
+  | 'land'
+  | 'cheer'
+  | 'aww'
+  | 'crack'
+  | 'sizzle'
+  | 'cannon'
+  | 'catch'
+  | 'correct'
+  | 'click'
+  | 'magic'
+  | 'scribble'
+  | 'creak'
+  | 'paddle'
+  | 'stomp'
+  | 'train'
+  | 'swing'
+  | 'slide';
+
+/** One-shot visual effect. */
+export type MgFxKind = 'splash' | 'dust' | 'sparkle' | 'coins' | 'hit' | 'pop' | 'boom' | 'confetti' | 'smoke' | 'ice' | 'embers' | 'ring';
+
+/**
+ * One-shot effect + sound (v0.4). The host fires every id once (keep the event in the
+ * view for a few frames, e.g. 0.3–0.6 s, with a unique, never reused id).
+ */
+export interface MgFx {
+  id: string;
+  kind?: MgFxKind;
+  sfx?: MgSfx;
+  x: number;
+  y: number;
+  z: number;
+  color?: string;
+  /** size / strength multiplier (default 1) */
+  s?: number;
+}
 
 export interface MgEntity {
   id: string;
@@ -92,6 +180,12 @@ export interface MgEntity {
   /** text label floating above the entity (already localized params are not allowed – use key) */
   labelKey?: string;
   label?: string;
+  /** surface detail for primitives (v0.4) */
+  mat?: MgSurface;
+  /** prop library id for kind 'prop' */
+  prop?: string;
+  /** cylinder with mat: top diameter relative to the bottom (e.g. 0.8 = sloped beach) */
+  taper?: number;
 }
 
 export interface MgCamera {
@@ -120,6 +214,10 @@ export interface MgView {
   camera: MgCamera;
   entities: MgEntity[];
   hud: MgHud;
+  /** backdrop around the play area (v0.4) */
+  scenery?: MgScenery;
+  /** one-shot effects and sounds (v0.4) */
+  fx?: MgFx[];
 }
 
 export interface MgSetupOptions {

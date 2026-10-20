@@ -772,6 +772,8 @@ export class HostSession {
   private disposeBoard() {
     this.runner?.dispose();
     this.runner = null;
+    this.audio.ambience(null);
+    this.ui.layer('transition').replaceChildren();
     this.board?.dispose();
     this.board = null;
   }
@@ -896,6 +898,11 @@ export class HostSession {
 
   private async runMinigame(p: Extract<Pending, { kind: 'minigame' }>): Promise<number[]> {
     const e = this.engine!;
+    // iris closes over the board (v0.4), the minigame scene is built behind it
+    this.audio.stinger('transition');
+    this.audio.musicShape(0.35, true, 0.45);
+    await this.ui.iris('close', 480 / this.speed());
+    this.audio.musicShape(1, false, 0.1);
     this.board?.setEnabled(false);
     this.ui.setHud(null, [], 'none');
     this.ui.setGimmick(null);
@@ -912,21 +919,29 @@ export class HostSession {
     this.runner = runner;
     this.pushViews();
     const ranks = await runner.run();
-    runner.dispose();
-    this.runner = null;
-    // results screen
+    // results over the celebrating minigame scene
     const rewardsPreview = this.rewardText(p, ranks);
+    this.audio.stinger('reveal');
     await this.ui.results(
       t(`mg.${p.game}.name`),
       p.players.map((gi, k) => ({ name: e.state.players[gi].name, color: e.state.players[gi].color, character: e.state.players[gi].character, rank: ranks[k], reward: rewardsPreview[k] })),
       3200 / this.speed(),
     );
+    // iris back to the board
+    this.audio.stinger('transition');
+    this.audio.ambience(null);
+    this.audio.musicShape(0.3, true, 0.45);
+    await this.ui.iris('close', 480 / this.speed());
+    runner.dispose();
+    this.runner = null;
     this.board?.setEnabled(true);
-    this.board?.overview();
+    this.board?.overview(true);
     if (e.state.config.mode === 'board') this.audio.playMusic(e.map.musicKey as 'island', e.isFinale());
     else this.audio.playMusic('lobby');
+    this.audio.musicShape(1, false, 0.9);
     this.refreshHud();
     this.renderGimmickWidget();
+    await this.ui.iris('open', 650 / this.speed());
     return ranks;
   }
 
