@@ -15,7 +15,7 @@ if (what === 'all' || what === 'models') {
   // raw exports go to assets-src/models; compress.mjs packs them (meshopt) into public/media/models
   run('characters.py', '--out', 'assets-src/models');
   // prop libraries: shared/field buildings + one file per map theme
-  for (const lib of ['props', 'props_island', 'props_volcano', 'props_city']) run(`${lib}.py`, '--out', 'assets-src/models');
+  for (const lib of ['props', 'props_island', 'props_volcano', 'props_city', 'props_minigame']) run(`${lib}.py`, '--out', 'assets-src/models');
 }
 if (what === 'all' || what === 'models' || what === 'compress') execFileSync(process.execPath, ['scripts/assets/compress.mjs'], { stdio: 'inherit' });
 if (what === 'all' || what === 'audio') run('audio.py', '--root', process.cwd());

@@ -1,7 +1,7 @@
 import type { BotLevel } from '../../config';
 import type { Rng } from '../../rng';
 import type { ControllerLayout, MgEntity, MgInput, MgPlayer, MinigameDef } from '../types';
-import { TEAM_COLORS, clamp, faceAngle, moveWithStick, skill, steerTo, teamRanks } from '../util';
+import { TEAM_COLORS, ageFx, clamp, emitFx, faceAngle, moveWithStick, skill, steerTo, teamRanks, viewFx, type FxState } from '../util';
 
 /**
  * #9 Floß-Rumble (2v2, Joystick + Button „Schubsen“): push the other team off a rocking,
@@ -23,6 +23,8 @@ const FALL_TIME = 0.6;
 const RESPAWN = 3; // practice only
 /** railing at the start: nobody can fall during the first seconds */
 export const SAFE_TIME = 6;
+/** lagoon water level (visual) */
+const WATER = -0.22;
 
 interface P {
   team: number;
@@ -48,7 +50,7 @@ interface P {
   target: number;
 }
 
-export interface FlossRumbleState {
+export interface FlossRumbleState extends FxState {
   t: number;
   duration: number;
   practice: boolean;
@@ -84,6 +86,7 @@ function doPush(s: FlossRumbleState, i: number): void {
   // small lunge forward
   p.kx += dx * 1.5;
   p.kz += dz * 1.5;
+  let landed = false;
   s.ps.forEach((o, j) => {
     if (j === i || o.state !== 'raft' || o.team === p.team) return;
     const ox = o.x - p.x;
@@ -103,7 +106,11 @@ function doPush(s: FlossRumbleState, i: number): void {
     o.kz += kz * PUSH_FORCE * brace;
     o.stun = 0.45;
     s.hits[p.team] = (s.hits[p.team] ?? 0) + 1;
+    emitFx(s, { kind: 'hit', sfx: 'thud', x: o.x, y: 1.2, z: o.z, s: brace < 1 ? 0.7 : 1 });
+    landed = true;
   });
+  // a push into thin air just swooshes
+  if (!landed) emitFx(s, { sfx: 'swing', x: p.x + dx, y: 1, z: p.z + dz });
 }
 
 function respawnSpot(s: FlossRumbleState, i: number): { x: number; z: number } {
@@ -155,6 +162,8 @@ export const flossRumble: MinigameDef<FlossRumbleState> = {
       overAt: null,
       hits: [0, 0],
       splashes: [],
+      fx: [],
+      fxN: 0,
     };
   },
   layout(s, i): ControllerLayout {
@@ -167,7 +176,9 @@ export const flossRumble: MinigameDef<FlossRumbleState> = {
     else if (input.type === 'button' && input.id === 'push' && input.down && s.winner < 0) doPush(s, i);
   },
   tick(s, dt) {
+    const prevT = s.t;
     s.t += dt;
+    ageFx(s, dt);
     if (s.winner >= 0) {
       for (const p of s.ps) if (p.state === 'fall' && (p.fallT += dt) > FALL_TIME) p.state = 'swim';
       return;
@@ -177,6 +188,24 @@ export const flossRumble: MinigameDef<FlossRumbleState> = {
     const rock = 0.35 + 0.5 * clamp(s.t / s.duration, 0, 1);
     s.sway = { x: Math.sin(s.t * 0.9) * rock, z: Math.sin(s.t * 0.63 + 1.3) * rock * 0.8 };
     const H = s.half;
+    if (!s.practice && prevT < SAFE_TIME && s.t >= SAFE_TIME) {
+      // the railing comes off: puffs at all four sides
+      emitFx(s, { kind: 'dust', sfx: 'creak', x: 0, y: 0.6, z: -H, s: 1.2 }, 0.5);
+      emitFx(s, { kind: 'dust', x: 0, y: 0.6, z: H, s: 1.2 }, 0.5);
+      emitFx(s, { kind: 'dust', x: -H, y: 0.6, z: 0, s: 1.2 }, 0.5);
+      emitFx(s, { kind: 'dust', x: H, y: 0.6, z: 0, s: 1.2 }, 0.5);
+    }
+    // now and then a wave slaps against the rocking raft and the planks creak
+    if (s.t > SAFE_TIME && Math.floor(s.t / 7.5) !== Math.floor(prevT / 7.5)) {
+      const k = Math.floor(s.t / 7.5) % 4;
+      const [ex, ez] = [
+        [-1, 0.4],
+        [0.3, 1],
+        [1, -0.5],
+        [-0.4, -1],
+      ][k];
+      emitFx(s, { kind: 'splash', sfx: 'creak', x: ex * (H + 0.3), y: WATER, z: ez * (H + 0.3), s: 0.7 }, 0.5);
+    }
     s.ps.forEach((p, i) => {
       p.pushCd = Math.max(0, p.pushCd - dt);
       p.pushVis = Math.max(0, p.pushVis - dt);
@@ -211,6 +240,7 @@ export const flossRumble: MinigameDef<FlossRumbleState> = {
           p.state = 'fall';
           p.fallT = 0;
           s.splashes.push({ x: p.x, z: p.z, t: 0.8 });
+          emitFx(s, { kind: 'splash', sfx: 'splash', x: p.x, y: WATER, z: p.z, s: 1.4 }, 0.5);
         }
       } else if (p.state === 'fall') {
         p.fallT += dt;
@@ -236,6 +266,7 @@ export const flossRumble: MinigameDef<FlossRumbleState> = {
         }
         if (s.practice && p.fallT > RESPAWN) {
           const r = respawnSpot(s, i);
+          emitFx(s, { kind: 'sparkle', sfx: 'pop', x: r.x, y: 1, z: r.z });
           Object.assign(p, { state: 'raft', x: r.x, z: r.z, y: 0, vx: 0, vz: 0, kx: 0, kz: 0, stun: 0, fallT: 0 });
         }
       }
@@ -340,76 +371,105 @@ export const flossRumble: MinigameDef<FlossRumbleState> = {
     const bob = Math.sin(s.t * 1.4) * 0.06;
     const tiltX = s.sway.z * 0.05;
     const tiltZ = -s.sway.x * 0.05;
+    // height of the rocking raft deck at (x, z): everything on board follows the tilt
+    const ry0 = (x: number, z: number) => bob + x * Math.sin(tiltZ) - z * Math.sin(tiltX);
     const entities: MgEntity[] = [
-      { id: 'isle1', kind: 'cylinder', x: -15, y: -0.3, z: 11, sx: 7, sy: 0.8, sz: 5, color: '#efe2c0' },
-      { id: 'palm1', kind: 'palm', x: -15, y: 0, z: 11.5 },
-      { id: 'isle2', kind: 'cylinder', x: 15, y: -0.3, z: 12, sx: 6, sy: 0.8, sz: 4, color: '#efe2c0' },
-      { id: 'palm2', kind: 'palm', x: 15.5, y: 0, z: 12.5 },
+      // sandbars with palms in the lagoon behind the raft
+      { id: 'isle1', kind: 'cylinder', x: -15, y: WATER - 0.3, z: 10.5, sx: 8, sy: 0.7, sz: 5.5, color: '#efe0b8', mat: 'sand', taper: 0.72 },
+      { id: 'palm1', kind: 'palm', x: -15.4, y: WATER + 0.05, z: 11 },
+      { id: 'isle1b', kind: 'prop', prop: 'bush', x: -13.6, y: WATER + 0.05, z: 9.8, sx: 0.9 },
+      { id: 'isle1c', kind: 'prop', prop: 'rocksmall', x: -17, y: WATER + 0.02, z: 9.6, sx: 1.6 },
+      { id: 'isle2', kind: 'cylinder', x: 15.5, y: WATER - 0.3, z: 11.5, sx: 6.5, sy: 0.7, sz: 4.5, color: '#efe0b8', mat: 'sand', taper: 0.7 },
+      { id: 'palm2', kind: 'prop', prop: 'palm2', x: 15.8, y: WATER + 0.05, z: 12, ry: 3.5 },
+      { id: 'isle2b', kind: 'prop', prop: 'driftwood', x: 14.2, y: WATER + 0.05, z: 10.6, ry: 0.4 },
+      { id: 'isle2c', kind: 'prop', prop: 'shell', x: 16.6, y: WATER + 0.05, z: 10.4 },
+      // channel buoys and a moored dinghy
+      { id: 'buoy1', kind: 'prop', prop: 'buoy', x: -10.2, y: WATER - 0.08 + Math.sin(s.t * 1.7) * 0.05, z: -5.5, rz: Math.sin(s.t * 1.3) * 0.08, sx: 0.8, color: '#e8676b' },
+      { id: 'buoy2', kind: 'prop', prop: 'buoy', x: 10.4, y: WATER - 0.08 + Math.sin(s.t * 1.5 + 1) * 0.05, z: -4.5, rz: Math.sin(s.t * 1.1 + 2) * 0.08, sx: 0.8, color: '#5f8fe0' },
+      { id: 'buoy3', kind: 'prop', prop: 'buoy', x: 9.8, y: WATER - 0.08 + Math.sin(s.t * 1.6 + 2) * 0.05, z: 8.5, rz: Math.sin(s.t * 1.2 + 1) * 0.08, sx: 0.7, color: '#f2c94c' },
+      { id: 'dinghy', kind: 'boat', x: -11.5, y: WATER - 0.12 + Math.sin(s.t * 1.2) * 0.04, z: 6.5, ry: 0.5, rz: Math.sin(s.t * 0.9) * 0.04, color: '#e8676b' },
     ];
     const planks = 7;
     const w = (2 * H) / planks;
     for (let k = 0; k < planks; k++) {
+      const x = -H + w * (k + 0.5);
       entities.push({
         id: `plank${k}`,
         kind: 'box',
-        x: -H + w * (k + 0.5),
-        y: -0.2 + bob,
+        x,
+        y: -0.2 + ry0(x, 0),
         z: 0,
-        sx: w * 0.93,
+        sx: w * 0.94,
         sy: 0.4,
         sz: 2 * H,
         rx: tiltX,
         rz: tiltZ,
-        color: k % 2 ? '#b98350' : '#cf9a62',
+        color: k % 2 ? '#c08a55' : '#d4a26b',
+        mat: 'wood',
       });
     }
+    // rope lashings across the planks and the cross beams below
+    for (const side of [-1, 1]) {
+      const z = side * (H - 0.75);
+      entities.push({ id: `lash${side}`, kind: 'box', x: 0, y: 0.02 + ry0(0, z), z, sx: 2 * H + 0.08, sy: 0.1, sz: 0.2, rx: tiltX, rz: tiltZ, color: '#d9bd86', mat: 'rope' });
+      entities.push({ id: `beam${side}`, kind: 'box', x: 0, y: -0.38 + ry0(0, side * (H - 0.5)), z: side * (H - 0.5), sx: 2 * H + 0.6, sy: 0.3, sz: 0.5, rx: tiltX, rz: tiltZ, color: '#8a5a32', mat: 'wood' });
+    }
     if (!s.practice && s.t < SAFE_TIME) {
-      // railing (disappears when the warm-up is over)
+      // rope railing on posts (disappears when the warm-up is over)
       const a = clamp(SAFE_TIME - s.t, 0, 1);
       for (const [k, x, z, sx, sz] of [
-        [0, -H, 0, 0.2, 2 * H],
-        [1, H, 0, 0.2, 2 * H],
-        [2, 0, -H, 2 * H, 0.2],
-        [3, 0, H, 2 * H, 0.2],
+        [0, -H, 0, 0.12, 2 * H],
+        [1, H, 0, 0.12, 2 * H],
+        [2, 0, -H, 2 * H, 0.12],
+        [3, 0, H, 2 * H, 0.12],
       ] as const) {
-        entities.push({ id: `rail${k}`, kind: 'box', x, y: 0.3 + bob, z, sx, sy: 0.6, sz, color: '#f4efe6', alpha: a });
+        entities.push({ id: `rail${k}`, kind: 'box', x, y: 0.75 + ry0(x, z), z, sx, sy: 0.12, sz, rx: tiltX, rz: tiltZ, color: '#e8d4a8', mat: 'rope', alpha: a });
+      }
+      let n = 0;
+      for (const px of [-1, 0, 1]) {
+        for (const pz of [-1, 0, 1]) {
+          if (px === 0 && pz === 0) continue;
+          const x = px * H;
+          const z = pz * H;
+          entities.push({ id: `post${n++}`, kind: 'cylinder', x, y: 0.4 + ry0(x, z), z, sx: 0.16, sy: 0.8, sz: 0.16, color: '#8a5a32', mat: 'wood', alpha: a });
+        }
       }
     }
-    for (const side of [-1, 1]) {
-      entities.push({ id: `beam${side}`, kind: 'box', x: 0, y: -0.38 + bob, z: side * (H - 0.5), sx: 2 * H + 0.6, sy: 0.3, sz: 0.5, rx: tiltX, rz: tiltZ, color: '#8a5a32' });
-    }
-    // team corner flags show which side belongs to whom at the start
+    // team flags in the back corners show which side belongs to whom
     for (const team of [0, 1]) {
       const side = team === 0 ? -1 : 1;
-      entities.push({ id: `pole${team}`, kind: 'cylinder', x: side * (H - 0.3), y: 1.2 + bob, z: H - 0.3, sx: 0.12, sy: 2.4, sz: 0.12, color: '#7a5c45' });
-      entities.push({ id: `flag${team}`, kind: 'box', x: side * (H - 0.3) - side * 0.5, y: 2.1 + bob, z: H - 0.3, sx: 0.9, sy: 0.6, sz: 0.06, color: TEAM_COLORS[team] });
+      const x = side * (H - 0.3);
+      const z = H - 0.3;
+      entities.push({ id: `flag${team}`, kind: 'prop', prop: 'flag', x, y: ry0(x, z), z, ry: team === 0 ? 0 : Math.PI, rx: tiltX, rz: tiltZ, sx: 0.72, color: TEAM_COLORS[team] });
     }
     s.ps.forEach((p, i) => {
       const onRaft = p.state === 'raft';
       const won = s.winner >= 0 && s.winner !== 2 && p.team === s.winner;
+      const py = onRaft ? ry0(p.x, p.z) : p.y;
       entities.push({
         id: `p${i}`,
         kind: 'player',
         player: i,
         x: p.x,
-        y: onRaft ? bob : p.y,
+        y: py,
         z: p.z,
         ry: faceAngle(p.fx, p.fz),
         anim: won && onRaft ? 'cheer' : !onRaft ? 'sad' : p.stun > 0 ? 'hit' : p.pushVis > 0 ? 'jump' : Math.hypot(p.vx, p.vz) > 0.6 ? 'walk' : 'idle',
       });
-      if (onRaft) entities.push({ id: `ring${i}`, kind: 'torus', x: p.x, y: 0.05 + bob, z: p.z, sx: 1.4, sy: 1, sz: 1.4, color: TEAM_COLORS[p.team] ?? '#ffffff' });
-      else entities.push({ id: `tube${i}`, kind: 'torus', x: p.x, y: -0.15, z: p.z, sx: 1.5, sy: 1.6, sz: 1.5, color: TEAM_COLORS[p.team] ?? '#ffffff' });
-      if (onRaft && p.pushVis > 0) entities.push({ id: `push${i}`, kind: 'sphere', x: p.x + p.fx * 1.1, y: 0.9, z: p.z + p.fz * 1.1, sx: 0.8, sy: 0.8, sz: 0.8, color: '#ffffff', alpha: p.pushVis * 2.5 });
+      if (onRaft) entities.push({ id: `ring${i}`, kind: 'torus', x: p.x, y: py + 0.06, z: p.z, sx: 1.4, sy: 1, sz: 1.4, color: TEAM_COLORS[p.team] ?? '#ffffff' });
+      else entities.push({ id: `tube${i}`, kind: 'torus', x: p.x, y: WATER + 0.06 + Math.sin(s.t * 3 + i) * 0.05, z: p.z, sx: 1.5, sy: 1.6, sz: 1.5, color: TEAM_COLORS[p.team] ?? '#ffffff' });
+      if (onRaft && p.pushVis > 0) entities.push({ id: `push${i}`, kind: 'sphere', x: p.x + p.fx * 1.1, y: 0.9 + py, z: p.z + p.fz * 1.1, sx: 0.8, sy: 0.8, sz: 0.8, color: '#ffffff', alpha: p.pushVis * 2.5 });
     });
-    s.splashes.forEach((sp, k) => entities.push({ id: `splash${k}`, kind: 'sphere', x: sp.x, y: -0.2, z: sp.z, sx: 2.6 - sp.t, sy: 0.6, sz: 2.6 - sp.t, color: '#ffffff', alpha: sp.t }));
     const dots = (team: number) => {
       const members = s.ps.filter((p) => p.team === team);
       return members.map((p) => (p.state === 'raft' ? '●' : '○')).join(' ');
     };
     return {
       env: 'water',
+      scenery: { set: 'lagoon', clear: { r: 10 }, water: WATER },
       camera: { alpha: -Math.PI / 2, beta: 0.82, radius: 21, target: [0, 0, 0.6] },
       entities,
+      fx: viewFx(s),
       hud: {
         timer: s.practice ? undefined : Math.max(0, s.duration - s.t),
         teams: [

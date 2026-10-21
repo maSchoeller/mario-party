@@ -26,8 +26,9 @@ export const MODEL_FILES = [
   'props_island',
   'props_volcano',
   'props_city',
+  'props_minigame',
 ] as const;
-const PROP_FILES = ['props', 'props_island', 'props_volcano', 'props_city'];
+const PROP_FILES = ['props', 'props_island', 'props_volcano', 'props_city', 'props_minigame'];
 const BASE = `${import.meta.env.BASE_URL}media/models/`;
 
 interface Part {

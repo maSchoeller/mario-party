@@ -48,8 +48,9 @@ Keine Rechtsberatung, sondern eine Zusammenfassung der Anbieterbedingungen. Für
 | Moderator „Käpt’n Plapperschnabel“ (57 ganze Sätze: Höhepunkte, Würfelzahlen −2…26, 8 Figurennamen) | ElevenLabs TTS `eleven_v3`, deutsche Bibliotheksstimme „DiMario – Energetic and Fun“ (`DQ4rTqXxHr077oQgsA9D`, per Casting ausgewählt) | bezahlt | `…/audio/voice/*.mp3` + `manifest.json` | 2026-10-20 |
 | SFX (14) + Gebrabbel je Figur (5) | ElevenLabs Sound Generation | Free | `…/audio/sfx/*.mp3` | 2026-10-20 |
 | Würfel-Klacken + Gebrabbel Bruno/Hoppla/Schildi/Zippy | ElevenLabs Sound Generation | bezahlt | `…/audio/sfx/clack.mp3`, `babble_*.mp3` | 2026-10-20 |
+| v0.4 Minispiele: 22 Effekte (Spritzer, Bonk, Ballon-Plopp, Eis-Knacken, Lava-Zischen, Kanone, Jubel, „Oooh“ …), 5 Ablauf-Stinger (Countdown-Tick, Startsignal, Abpfiff, Übergang, Ergebnis-Tusch), 9 Ambient-Loops (Lagune, Vulkan, Wiese, Stadt, Eismeer, Höhenwind, Studio-Publikum, Wüste, Nachtwald) | ElevenLabs Sound Generation (Loops mit `loop: true`, `eleven_text_to_sound_v2`) | bezahlt | `…/audio/sfx/mg_*.mp3`, `amb_*.mp3` | 2026-10-20 |
 
-Nachbearbeitung (Stille kürzen, Lautheit angleichen, MP3-Bitrate) mit Blender 5.2 (audaspace), siehe
+Nachbearbeitung (Stille kürzen, Lautheit angleichen, MP3-Bitrate; Ambient-Loops: nahtlose Überblendung am Loop-Punkt) mit Blender 5.2 (audaspace), siehe
 `scripts/assets/blender/audio.py`.
 
 ## Eigene Assets (Eigenleistung, keine Fremdrechte)
@@ -58,6 +59,7 @@ Nachbearbeitung (Stille kürzen, Lautheit angleichen, MP3-Bitrate) mit Blender 5
 |---|---|---|
 | Helden Rocco/Quaki/Pingo/Foxy/Bruno/Hoppla/Schildi/Zippy, Moderator (Low-Poly, 3,3–4,0 k Dreiecke, gebackene AO in Vertexfarben, starres Teile-Rig) | Blender 5.2, Python-Skript (`scripts/assets/blender/characters.py`) | `apps/web/public/media/models/<figur>.glb` |
 | Props + Wahrzeichen (69 Stück, v0.3 mit gebackener AO in Vertexfarben): gemeinsam (u. a. Item-Häuschen, Start-Tor, Schatzkiste, Duell- und Glücksschild, Laterne, Bank), Insel (Palmen, Büsche, Farn, Blumen, Gras, Muscheln, Klippe, Brücke, Steg, Boot, Leuchtturm, Ruine, Stelzenhütte), Vulkan (Lavafels, Kristall, Riesenpilz, Dampfschlot, Steinbrücke, Seilbahnstation, Gondel, Tempel, Knochen, Lore, Kaktus, Aschepflanze, Zelt), Stadt (Stadthäuser, Bahnhof, Waggon, Bäume, Hecke, Laterne, Blumenkasten, Kiosk, Marktstand, Laden, Steinbrücke, Fahrrad, Briefkasten) | Blender 5.2, Python-Skripte (`scripts/assets/blender/props*.py`, `propkit.py`) | `apps/web/public/media/models/props*.glb` |
+| Minispiel-Props (v0.4, 8 Stück): Schneetanne, Boje, Fahne, Wimpelkette, Staffelei, Bühnenscheinwerfer, Heuballen, Siegerpodest | Blender 5.2, Python-Skript (`scripts/assets/blender/props_minigame.py`) | `apps/web/public/media/models/props_minigame.glb` |
 | Prozedurale Fallbacks: Figuren, Props, Musik, SFX (die Browser-Sprachsynthese ist seit v0.3 entfernt; ohne Datei gibt es nur den Untertitel) | Code (greifen nur, wenn eine Datei fehlt) | `apps/web/src/host/render/*.ts`, `apps/web/src/host/audio.ts` |
 | Emoji-Icons am Handy | System-Emoji-Schrift des Geräts | `apps/web/src/common/characters.ts` |
 | Landschaft, Wasser, Lava, Detail-Texturen, 3D-Würfel | Prozedural zur Laufzeit (Höhenfeld + Canvas-Texturen), keine Bilddateien | `apps/web/src/host/render/terrain.ts`, `dice3d.ts` |

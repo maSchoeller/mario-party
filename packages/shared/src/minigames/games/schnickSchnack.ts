@@ -1,6 +1,7 @@
 import type { BotLevel } from '../../config';
 import type { Rng } from '../../rng';
 import type { ControllerLayout, MgEntity, MgHud, MinigameDef } from '../types';
+import { ageFx, emitFx, viewFx, type FxState } from '../util';
 
 /**
  * #19 Schnick-Schnack-Schnuck Deluxe (Duell, Auswahl): both players secretly pick
@@ -26,8 +27,13 @@ const SHAKE = 1.2; // "Schnick … Schnack … Schnuck!"
 const SHOW = 1.8; // hands visible, point awarded
 const OVERTIME = 45;
 const HARD_CAP = 55;
+/** decor: deck height, hand height, hand x per side */
+const DECK = 0.3;
+const HAND_Y = 2.8;
+const HAND_X = [-1.5, 1.5];
+const PLAYER_X = [-3.2, 3.2];
 
-export interface SchnickSchnackState {
+export interface SchnickSchnackState extends FxState {
   t: number;
   practice: boolean;
   phase: 'choose' | 'reveal' | 'done';
@@ -96,8 +102,26 @@ function startChoose(s: SchnickSchnackState): void {
 }
 
 function finish(s: SchnickSchnackState, rng: Rng): void {
-  if (s.wins[0] === s.wins[1]) s.lotWinner = rng.int(0, 1);
+  if (s.wins[0] === s.wins[1]) {
+    s.lotWinner = rng.int(0, 1);
+    emitFx(s, { kind: 'sparkle', sfx: 'magic', x: PLAYER_X[s.lotWinner], y: 2.6, z: 0, s: 1.4 }, 0.5);
+  }
   s.phase = 'done';
+}
+
+/** Hands are shown: the winning hand sparkles, the losing one gets wrapped / cut / smashed. */
+function revealFx(s: SchnickSchnackState): void {
+  const w = s.roundWinner;
+  if (w === null) {
+    emitFx(s, { kind: 'ring', sfx: 'ding', x: 0, y: HAND_Y, z: 0, s: 1.2 });
+    return;
+  }
+  const l = 1 - w;
+  const lost = s.picks[l];
+  emitFx(s, { kind: 'sparkle', sfx: 'correct', x: HAND_X[w], y: HAND_Y, z: 0, s: 1.3 }, 0.45);
+  if (lost === 'paper') emitFx(s, { kind: 'pop', sfx: 'crack', x: HAND_X[l], y: HAND_Y, z: 0 }, 0.45);
+  else if (lost === 'scissors') emitFx(s, { kind: 'hit', sfx: 'thud', x: HAND_X[l], y: HAND_Y, z: 0, color: '#9fc0f0' }, 0.45);
+  else emitFx(s, { kind: 'smoke', sfx: 'whoosh', x: HAND_X[l], y: HAND_Y, z: 0, s: 0.6, color: '#f4f1e8' }, 0.45);
 }
 
 export const schnickSchnack: MinigameDef<SchnickSchnackState> = {
@@ -118,6 +142,8 @@ export const schnickSchnack: MinigameDef<SchnickSchnackState> = {
       picks: [null, null],
       auto: [false, false],
       hist: [[], []],
+      fx: [],
+      fxN: 0,
       roundWinner: null,
       suddenDeath: false,
       lotWinner: null,
@@ -140,10 +166,13 @@ export const schnickSchnack: MinigameDef<SchnickSchnackState> = {
     if (!(HANDS as string[]).includes(input.id)) return;
     if (s.t > s.deadline + GRACE) return;
     s.picks[i] = input.id as Hand;
+    // the marker above the head lights up (the pick itself stays secret)
+    emitFx(s, { kind: 'pop', sfx: 'click', x: PLAYER_X[i], y: 2.5 + DECK, z: 0, color: '#5cc08a', s: 0.6 });
     if (s.picks[0] !== null && s.picks[1] !== null) s.revealAt = s.t + PRE_REVEAL;
   },
   tick(s, dt, rng) {
     s.t += dt;
+    ageFx(s, dt);
     if (s.phase === 'done') return;
     if (!s.practice && s.t >= HARD_CAP) {
       finish(s, rng);
@@ -169,11 +198,17 @@ export const schnickSchnack: MinigameDef<SchnickSchnackState> = {
         s.hist[1].push(b);
         s.phase = 'reveal';
         s.phaseStart = s.t;
+        emitFx(s, { kind: 'dust', sfx: 'swing', x: 0, y: HAND_Y, z: 0, s: 0.5 });
       }
       return;
     }
-    // reveal
-    if (s.t - s.phaseStart < SHAKE + SHOW) return;
+    // reveal: "Schnick … Schnack …" – the fists hit bottom, then "Schnuck!" shows the hands
+    const rt = s.t - s.phaseStart;
+    for (const beat of [SHAKE / 3, (SHAKE * 2) / 3]) {
+      if (rt - dt < beat && rt >= beat) emitFx(s, { kind: 'dust', sfx: 'stomp', x: 0, y: HAND_Y - 0.3, z: 0, s: 0.4 });
+    }
+    if (rt - dt < SHAKE && rt >= SHAKE) revealFx(s);
+    if (rt < SHAKE + SHOW) return;
     if (s.practice) {
       if (s.wins[0] >= TARGET || s.wins[1] >= TARGET) s.wins = [0, 0];
     } else {
@@ -203,8 +238,30 @@ export const schnickSchnack: MinigameDef<SchnickSchnackState> = {
   },
   view(s) {
     const entities: MgEntity[] = [
-      { id: 'stage', kind: 'cylinder', x: 0, y: -0.2, z: 0, sx: 12, sy: 0.4, sz: 7, color: '#c98f5a' },
-      { id: 'table', kind: 'box', x: 0, y: 0.9, z: 0, sx: 2.2, sy: 1.8, sz: 1.6, color: '#7a5c45' },
+      // beach bar deck with a tiki table in the middle
+      { id: 'stage', kind: 'cylinder', x: 0, y: DECK - 0.4, z: 0, sx: 13, sy: 0.8, sz: 8, color: '#c9935e', mat: 'planks', taper: 0.97 },
+      { id: 'rim', kind: 'cylinder', x: 0, y: -0.15, z: 0, sx: 13.6, sy: 0.7, sz: 8.5, color: '#8a5a3c', mat: 'wood' },
+      { id: 'tableTop', kind: 'cylinder', x: 0, y: DECK + 1.05, z: 0, sx: 2.5, sy: 0.16, sz: 2.5, color: '#b98a5a', mat: 'planks' },
+      { id: 'tableLeg', kind: 'cylinder', x: 0, y: DECK + 0.5, z: 0, sx: 0.55, sy: 1, sz: 0.55, color: '#7a5c45', mat: 'wood', taper: 0.8 },
+      { id: 'tableFoot', kind: 'cylinder', x: 0, y: DECK + 0.06, z: 0, sx: 1.3, sy: 0.12, sz: 1.3, color: '#7a5c45', mat: 'wood' },
+      { id: 'mat0', kind: 'cylinder', x: PLAYER_X[0], y: DECK + 0.02, z: 0, sx: 1.9, sy: 0.04, sz: 1.9, color: '#d9c39a', mat: 'rope' },
+      { id: 'mat1', kind: 'cylinder', x: PLAYER_X[1], y: DECK + 0.02, z: 0, sx: 1.9, sy: 0.04, sz: 1.9, color: '#d9c39a', mat: 'rope' },
+      // tiki torches on the deck, palms, a parasol and the beach bar around it
+      { id: 'torch1', kind: 'prop', prop: 'torch', x: -5.2, y: DECK, z: 1.6 },
+      { id: 'torch2', kind: 'prop', prop: 'torch', x: 5.2, y: DECK, z: 1.6 },
+      { id: 'torch3', kind: 'prop', prop: 'torch', x: -2, y: DECK, z: 3.2 },
+      { id: 'torch4', kind: 'prop', prop: 'torch', x: 2, y: DECK, z: 3.2 },
+      { id: 'palm1', kind: 'prop', prop: 'palm', x: -7.6, y: -0.12, z: 4.2, ry: 0.4 },
+      { id: 'palm2', kind: 'prop', prop: 'palm2', x: 8.2, y: -0.15, z: 5.4, ry: 2.6 },
+      { id: 'bar', kind: 'prop', prop: 'stall', x: 7.7, y: -0.06, z: 3, ry: -0.9, color: '#5fb8d6' },
+      { id: 'pole', kind: 'cylinder', x: -7.3, y: 1.25, z: 0.6, sx: 0.12, sy: 2.4, sz: 0.12, color: '#e8e0d0', mat: 'wood' },
+      { id: 'shade', kind: 'cone', x: -7.3, y: 2.15, z: 0.6, sx: 2.8, sy: 0.75, sz: 2.8, color: '#e8676b', mat: 'cloth' },
+      { id: 'lounger', kind: 'prop', prop: 'bench', x: -7.4, y: 0.1, z: -0.9, ry: 0.3 },
+      { id: 'barrel', kind: 'prop', prop: 'barrel', x: -4.6, y: DECK, z: 2.4, ry: 0.6 },
+      { id: 'crab', kind: 'prop', prop: 'crab', x: 7.2, y: 0.2, z: -3, ry: 3.4, sx: 0.6 },
+      { id: 'shell1', kind: 'prop', prop: 'shell', x: -5.2, y: 0.2, z: -4.2 },
+      { id: 'shell2', kind: 'prop', prop: 'shell', x: 4.6, y: 0.2, z: -4.3, ry: 2 },
+      { id: 'drift', kind: 'prop', prop: 'driftwood', x: -8.6, y: 0.21, z: -3.2, ry: 0.5 },
     ];
     const rt = s.t - s.phaseStart;
     const revealing = s.phase === 'reveal' || s.phase === 'done';
@@ -213,7 +270,7 @@ export const schnickSchnack: MinigameDef<SchnickSchnackState> = {
     const champ = s.phase === 'done' ? leader(s) : null;
     [0, 1].forEach((i) => {
       const side = i === 0 ? -1 : 1;
-      const px = side * 3.2;
+      const px = PLAYER_X[i];
       const won = shown && s.roundWinner === i;
       const lost = shown && s.roundWinner === 1 - i;
       entities.push({
@@ -221,7 +278,7 @@ export const schnickSchnack: MinigameDef<SchnickSchnackState> = {
         kind: 'player',
         player: i,
         x: px,
-        y: 0,
+        y: DECK,
         z: 0,
         ry: side < 0 ? -Math.PI / 2 : Math.PI / 2,
         anim: champ === i || won ? 'cheer' : lost || champ === 1 - i ? 'sad' : s.phase === 'choose' && s.picks[i] !== null ? 'jump' : 'idle',
@@ -229,35 +286,36 @@ export const schnickSchnack: MinigameDef<SchnickSchnackState> = {
       // "ready" marker above the head: glows once a (secret) pick was made
       if (s.phase === 'choose') {
         const ready = s.picks[i] !== null;
-        entities.push({ id: `ready${i}`, kind: 'sphere', x: px, y: 2.5, z: 0, sx: 0.5, sy: 0.5, sz: 0.5, color: ready ? '#5cc08a' : '#d8d2cc', glow: ready });
+        entities.push({ id: `ready${i}`, kind: 'sphere', x: px, y: 2.5 + DECK, z: 0, sx: 0.5, sy: 0.5, sz: 0.5, color: ready ? '#5cc08a' : '#d8d2cc', glow: ready });
       }
-      const hx = side * 1.5;
+      const hx = HAND_X[i];
       if (shaking) {
         // fists bob three times: "Schnick … Schnack … Schnuck!"
         const bob = Math.abs(Math.sin((rt / SHAKE) * Math.PI * 3)) * 0.9;
-        entities.push({ id: `fist${i}`, kind: 'rock', x: hx, y: 2.6 + bob, z: 0, sx: 0.9, sy: 0.9, sz: 0.9, color: '#f1c7a0' });
+        entities.push({ id: `fist${i}`, kind: 'rock', x: hx, y: HAND_Y + bob, z: 0, sx: 0.9, sy: 0.9, sz: 0.9, color: '#f1c7a0' });
       }
       const pick = shown ? s.picks[i] : null;
       if (!pick) return;
       const big = won ? 1.35 : lost ? 0.8 : 1;
       const glow = won;
       if (pick === 'rock') {
-        entities.push({ id: `rock${i}`, kind: 'rock', x: hx, y: 2.6, z: 0, sx: 1.2 * big, sy: 1.2 * big, sz: 1.2 * big, color: HAND_COLOR.rock, glow, label: ICON.rock });
+        entities.push({ id: `rock${i}`, kind: 'rock', x: hx, y: HAND_Y, z: 0, sx: 1.2 * big, sy: 1.2 * big, sz: 1.2 * big, color: HAND_COLOR.rock, glow, label: ICON.rock });
       } else if (pick === 'paper') {
-        entities.push({ id: `paper${i}`, kind: 'box', x: hx, y: 2.6, z: 0, sx: 0.12, sy: 1.5 * big, sz: 1.2 * big, color: HAND_COLOR.paper, glow, label: ICON.paper });
+        entities.push({ id: `paper${i}`, kind: 'box', x: hx, y: HAND_Y, z: 0, sx: 0.12, sy: 1.5 * big, sz: 1.2 * big, color: HAND_COLOR.paper, mat: 'paper', glow, label: ICON.paper });
       } else {
         for (const k of [0, 1]) {
           entities.push({
             id: `scissors${i}_${k}`,
             kind: 'box',
             x: hx,
-            y: 2.6,
+            y: HAND_Y,
             z: 0,
             rx: k === 0 ? 0.45 : -0.45,
             sx: 0.15,
             sy: 1.6 * big,
             sz: 0.25,
             color: HAND_COLOR.scissors,
+            mat: 'metal',
             glow,
             label: k === 0 ? ICON.scissors : undefined,
           });
@@ -275,8 +333,11 @@ export const schnickSchnack: MinigameDef<SchnickSchnackState> = {
     else if (shown) hud.message = { key: s.roundWinner === null ? 'mg.schnickSchnack.tie' : 'mg.schnickSchnack.point' };
     return {
       env: 'sand',
-      camera: { alpha: -Math.PI / 2, beta: 1.3, radius: 11, target: [0, 1.8, 0] },
+      // the beach slopes gently to the sea (+z); ground −0.45 puts the sand under the deck at ~0
+      scenery: { set: 'beach', clear: { r: 8 } },
+      camera: { alpha: -Math.PI / 2, beta: 1.3, radius: 11.5, target: [0, 2.1, 0.2] },
       entities,
+      fx: viewFx(s),
       hud,
     };
   },

@@ -1,7 +1,7 @@
 import { PLAYER_COLOR_HEX } from '../../config';
 import type { Rng } from '../../rng';
 import type { MgEntity, MgInput, MgPlayer, MinigameDef } from '../types';
-import { clamp, ranksFromScores, rowSpawn, skill } from '../util';
+import { ageFx, clamp, emitFx, ranksFromScores, rowSpawn, skill, viewFx, type FxState } from '../util';
 
 /**
  * #4 Wackel-Brücke (FFA, Gyro): every player balances a marble on their own swaying
@@ -38,7 +38,7 @@ interface P {
   think: number;
 }
 
-export interface WackelBrueckeState {
+export interface WackelBrueckeState extends FxState {
   t: number;
   duration: number;
   practice: boolean;
@@ -74,6 +74,8 @@ export const wackelBruecke: MinigameDef<WackelBrueckeState> = {
       wind: 0,
       windTarget: rng.range(-0.15, 0.15),
       windIn: 2,
+      fx: [],
+      fxN: 0,
     };
   },
   layout(s, i) {
@@ -94,9 +96,17 @@ export const wackelBruecke: MinigameDef<WackelBrueckeState> = {
       const strength = 0.15 + Math.min(1, s.t / 40) * 0.25;
       s.windTarget = rng.range(-strength, strength);
       s.windIn = rng.range(1.5, 3);
+      // a strong gust makes the bridges creak
+      if (Math.abs(s.windTarget) > 0.27) {
+        const mid = s.ps.reduce((a, p) => a + p.z, 0) / s.ps.length;
+        emitFx(s, { sfx: 'creak', x: s.windTarget * 20, y: 2, z: mid + 4 });
+      }
     }
     s.wind += (s.windTarget - s.wind) * clamp(dt * 3, 0, 1);
-    for (const p of s.ps) {
+    ageFx(s, dt);
+    for (let i = 0; i < s.ps.length; i++) {
+      const p = s.ps[i];
+      const lx = rowSpawn(s.n, LANE, i);
       if (p.finishedAt !== null) continue;
       if (p.fallT !== null) {
         p.fallT += dt;
@@ -105,9 +115,11 @@ export const wackelBruecke: MinigameDef<WackelBrueckeState> = {
           p.x = 0;
           p.z = p.cp;
           p.vx = p.vz = 0;
+          emitFx(s, { kind: 'pop', sfx: 'land', x: lx, y: 0.6, z: p.cp, color: s.colors[i] });
         }
         continue;
       }
+      const cp0 = p.cp;
       const ax = CTRL * p.tiltX + DIST * disturbance(s, p) - 0.8 * p.vx;
       const az = FWD * p.tiltY - 1.2 * p.vz;
       p.vx += ax * dt;
@@ -117,10 +129,13 @@ export const wackelBruecke: MinigameDef<WackelBrueckeState> = {
       if (p.z <= 0 && p.vz < 0) p.vz = 0;
       p.best = Math.max(p.best, Math.min(L, p.z));
       p.cp = Math.max(p.cp, Math.min(L - CHECK, Math.floor(p.z / CHECK) * CHECK));
+      if (p.cp > cp0) emitFx(s, { kind: 'sparkle', sfx: 'ding', x: lx, y: 1.8, z: p.cp, color: '#5cc08a' });
       if (Math.abs(p.x) > HALF_W) {
         p.fallT = 0;
         p.falls++;
+        emitFx(s, { kind: 'dust', sfx: 'whoosh', x: lx + p.x, y: 0.2, z: p.z, s: 0.6 });
       } else if (p.z >= L) {
+        emitFx(s, { kind: 'confetti', sfx: 'cheer', x: lx, y: 2.5, z: L, color: s.colors[i] }, 0.6);
         if (s.practice) {
           p.z = 0;
           p.cp = 0;
@@ -160,12 +175,15 @@ export const wackelBruecke: MinigameDef<WackelBrueckeState> = {
       const tilt = p.finishedAt !== null ? 0 : (p.tiltX * CTRL + disturbance(s, p) * DIST) / (CTRL + DIST);
       const rz = -tilt * 0.35;
       for (let k = 0; k < L / PLANK; k++) {
-        entities.push({ id: `pl${i}_${k}`, kind: 'box', x: lx, y: -0.15, z: k * PLANK + PLANK / 2, sx: HALF_W * 2, sy: 0.3, sz: PLANK - 0.3, rz, color: k % 2 ? '#b07a4a' : '#9c6a3f' });
+        entities.push({ id: `pl${i}_${k}`, kind: 'box', x: lx, y: -0.15, z: k * PLANK + PLANK / 2, sx: HALF_W * 2, sy: 0.3, sz: PLANK - 0.3, rz, color: k % 2 ? '#c29262' : '#b48555', mat: 'planks' });
       }
       for (let c = 0; c <= L; c += CHECK) {
         const reached = p.best >= c;
         for (const side of [-1, 1]) {
-          entities.push({ id: `po${i}_${c}_${side}`, kind: 'cylinder', x: lx + side * (HALF_W + 0.2), y: 0.6, z: c, sx: 0.25, sy: 1.6, sz: 0.25, color: reached ? '#5cc08a' : '#6b4a33', glow: reached && c > 0 });
+          const px = lx + side * (HALF_W + 0.2);
+          entities.push({ id: `po${i}_${c}_${side}`, kind: 'cylinder', x: px, y: 0.6, z: c, sx: 0.26, sy: 1.6, sz: 0.26, color: reached ? '#5cc08a' : '#7a5236', glow: reached && c > 0, mat: 'wood' });
+          // hand ropes between the posts
+          if (c < L) entities.push({ id: `rp${i}_${c}_${side}`, kind: 'cylinder', x: px, y: 1.15, z: c + CHECK / 2, rx: Math.PI / 2, sx: 0.08, sy: CHECK, sz: 0.08, color: '#d9bf8a', mat: 'rope' });
         }
       }
       const fy = p.fallT !== null ? -p.fallT * p.fallT * 8 : 0;
@@ -180,21 +198,38 @@ export const wackelBruecke: MinigameDef<WackelBrueckeState> = {
         ry: p.finishedAt !== null ? 0 : Math.PI,
         anim: p.finishedAt !== null ? 'cheer' : p.fallT !== null ? 'sad' : Math.abs(p.vz) > 0.3 ? 'walk' : 'idle',
       });
+      // a finish gate per lane, the finisher's flag next to it
+      entities.push({ id: `gate${i}`, kind: 'prop', prop: 'startgate', x: lx, y: 0, z: L + 0.6, sx: 0.9 });
+      if (p.finishedAt !== null) entities.push({ id: `flag${i}`, kind: 'prop', prop: 'flag', x: lx + 1.4, y: 0, z: L + 3, sx: 0.7, color: s.colors[i] });
       minZ = Math.min(minZ, p.z);
       maxZ = Math.max(maxZ, p.z);
     });
     const w = (s.n * LANE) / 2 + 1;
-    entities.push({ id: 'start', kind: 'box', x: 0, y: -0.3, z: -2.5, sx: w * 2, sy: 0.6, sz: 4, color: '#8d7f86' });
-    entities.push({ id: 'goal', kind: 'box', x: 0, y: -0.3, z: L + 2.5, sx: w * 2, sy: 0.6, sz: 5, color: '#8d7f86' });
-    entities.push({ id: 'arch', kind: 'box', x: 0, y: 3.6, z: L + 0.5, sx: w * 2, sy: 0.6, sz: 0.6, color: '#f0c04a', glow: true });
-    entities.push({ id: 'archL', kind: 'cylinder', x: -w, y: 1.8, z: L + 0.5, sx: 0.5, sy: 3.6, sz: 0.5, color: '#f0c04a' });
-    entities.push({ id: 'archR', kind: 'cylinder', x: w, y: 1.8, z: L + 0.5, sx: 0.5, sy: 3.6, sz: 0.5, color: '#f0c04a' });
-    entities.push({ id: 'goalStar', kind: 'star', x: 0, y: 5, z: L + 0.5, sx: 1.6, sy: 1.6, sz: 1.6 });
+    // floating start and goal islands: grass on top, a rock cone below
+    const isle = (id: string, z: number, d: number) => {
+      entities.push({ id, kind: 'box', x: 0, y: -0.35, z, sx: w * 2, sy: 0.7, sz: d, color: '#8fc96c', mat: 'grass' });
+      entities.push({ id: `${id}Rock`, kind: 'cylinder', x: 0, y: -0.72 - 2.6, z, sx: w * 0.7, sy: 5.2, sz: d * 0.36, color: '#b5a8a0', mat: 'stone', taper: 2.9 });
+    };
+    isle('start', -2.5, 4);
+    isle('goal', L + 2.5, 5);
+    entities.push(
+      { id: 'sign', kind: 'prop', prop: 'signpost', x: -w + 0.6, y: 0, z: -3.6, ry: 0.3 },
+      { id: 'bushS', kind: 'prop', prop: 'bushround', x: w - 0.7, y: 0, z: -3.8, sx: 0.8 },
+      { id: 'flowS', kind: 'prop', prop: 'flowers', x: -w + 1.6, y: 0, z: -1.2 },
+      { id: 'flowS2', kind: 'prop', prop: 'flowers', x: w - 1.4, y: 0, z: -1.6, ry: 2 },
+      { id: 'flagG1', kind: 'prop', prop: 'flag', x: -w + 0.4, y: 0, z: L + 3.8, color: '#f0c04a' },
+      { id: 'flagG2', kind: 'prop', prop: 'flag', x: w - 0.4, y: 0, z: L + 3.8, ry: Math.PI, color: '#f0c04a' },
+      { id: 'bushG', kind: 'prop', prop: 'bushround', x: -w + 1.8, y: 0, z: L + 4.2, sx: 0.9 },
+      { id: 'flowG', kind: 'prop', prop: 'flowers', x: w - 2, y: 0, z: L + 4.3 },
+      { id: 'goalStar', kind: 'star', x: 0, y: 6, z: L + 0.6, sx: 1.6, sy: 1.6, sz: 1.6 },
+    );
     // wind indicator: a balloon drifting with the wind
     entities.push({ id: 'wind', kind: 'balloon', x: s.wind * 25, y: 6, z: (minZ + maxZ) / 2 + 6, color: '#ffffff', alpha: 0.85 });
     const spread = maxZ - minZ;
     return {
       env: 'sky',
+      scenery: { set: 'clouds', clear: { x: 0, z: L / 2, w: w * 2 + 4, d: L + 12 } },
+      fx: viewFx(s),
       camera: { alpha: -Math.PI / 2, beta: 0.95, radius: clamp(20 + spread * 0.7, 20, 48), target: [0, 0, (minZ + maxZ) / 2 + 3] },
       entities,
       hud: {

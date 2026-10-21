@@ -1,6 +1,7 @@
 import type { Rng } from '../../rng';
 import type { ControllerLayout, MgEntity, MgHud, MinigameDef } from '../types';
-import { clamp, ranksFromScores, rowSpawn, skill } from '../util';
+import { PLAYER_COLOR_HEX } from '../../config';
+import { ageFx, clamp, emitFx, ranksFromScores, rowSpawn, skill, viewFx, type FxState } from '../util';
 import { BOT_DISPLAY_LAG } from './botLag';
 
 /**
@@ -89,13 +90,21 @@ interface P {
   botAt: number | null;
 }
 
-export interface GipfelsturmState {
+export interface GipfelsturmState extends FxState {
   t: number;
   duration: number;
   practice: boolean;
   n: number;
   ps: P[];
+  /** player colors (view only) */
+  colors: string[];
 }
+
+const LANE = 4;
+const laneX = (s: GipfelsturmState, i: number) => rowSpawn(s.n, LANE, i);
+/** lava in the gaps of stage 2 (the backdrop's lava sea lies deeper) */
+const GAP_LAVA_Y = 2.2; // high enough to be seen in the narrow gaps from the camera
+const LAVA = '#ff7a3d';
 
 function newP(rng: Rng): P {
   return {
@@ -136,14 +145,16 @@ function newFork(p: P, rng: Rng): void {
   p.order = rng.shuffle([...COLORS]);
 }
 
-function fall(s: GipfelsturmState, p: P): void {
+function fall(s: GipfelsturmState, p: P, i: number): void {
+  emitFx(s, { kind: 'splash', sfx: 'sizzle', x: laneX(s, i), y: GAP_LAVA_Y + 0.1, z: Z1 + Math.min(p.jx, TRACK), color: LAVA }, 0.5);
   p.jump = null;
   p.fallUntil = s.t + FALL_TIME;
   p.falls++;
   p.botX = null;
 }
 
-function finishPlayer(s: GipfelsturmState, p: P, rng: Rng): void {
+function finishPlayer(s: GipfelsturmState, p: P, i: number, rng: Rng): void {
+  emitFx(s, { kind: 'confetti', sfx: 'cheer', x: laneX(s, i), y: SUMMIT_Y + 2, z: SUMMIT_Z - 0.4, color: s.colors[i] }, 0.6);
   if (s.practice) {
     // practice: start over from the bottom
     Object.assign(p, newP(rng));
@@ -161,7 +172,16 @@ export const gipfelsturm: MinigameDef<GipfelsturmState> = {
   duration: DURATION,
   final: true,
   setup(players, rng, opts) {
-    return { t: 0, duration: DURATION, practice: opts.practice, n: players.length, ps: players.map(() => newP(rng)) };
+    return {
+      t: 0,
+      duration: DURATION,
+      practice: opts.practice,
+      n: players.length,
+      ps: players.map(() => newP(rng)),
+      colors: players.map((p) => PLAYER_COLOR_HEX[p.color]),
+      fx: [],
+      fxN: 0,
+    };
   },
   layout(s, i): ControllerLayout {
     const p = s.ps[i];
@@ -185,6 +205,11 @@ export const gipfelsturm: MinigameDef<GipfelsturmState> = {
         p.stage = 2;
         p.jx = 0;
         p.runSince = s.t;
+        emitFx(s, { kind: 'ring', sfx: 'ding', x: laneX(s, i), y: SLOPE_H + 0.2, z: Z1, color: s.colors[i] });
+      } else if (p.taps % 15 === 0) {
+        const f = p.taps / TAPS;
+        const y = ((Math.min(SLOPE_STEPS - 1, Math.floor(f * SLOPE_STEPS)) + 1) * SLOPE_H) / SLOPE_STEPS;
+        emitFx(s, { kind: 'dust', x: laneX(s, i), y: y + 0.05, z: Z0 + 0.3 + f * (SLOPE_LEN - 0.3), s: 0.45 });
       }
       return;
     }
@@ -196,21 +221,26 @@ export const gipfelsturm: MinigameDef<GipfelsturmState> = {
       const g = GAPS[p.gap];
       if (g !== undefined && x0 > g) {
         // took off over the lava – too late
-        fall(s, p);
+        fall(s, p, i);
         return;
       }
       p.jump = { start: tp, until: tp + AIR, x0 };
+      emitFx(s, { kind: 'dust', sfx: 'jump', x: laneX(s, i), y: SLOPE_H + 0.05, z: Z1 + Math.min(p.jx, TRACK), s: 0.5 });
       p.botX = null;
       return;
     }
     if (p.stage === 3) {
       if (input.type !== 'choice' || s.t < p.walkUntil || s.t < p.penaltyUntil) return;
       if (!(COLORS as readonly string[]).includes(input.id)) return;
+      const fy = SLOPE_H + p.fork * FORK_RISE;
+      const fz = Z2 - 0.3 + p.fork * FORK_STEP;
       if (input.id === p.target) {
+        emitFx(s, { kind: 'sparkle', sfx: 'correct', x: laneX(s, i), y: fy + 1.8, z: fz, color: COLOR_HEX[p.target] });
         p.lastPick = p.target;
         p.fork++;
         p.walkUntil = s.t + WALK;
       } else {
+        emitFx(s, { kind: 'hit', sfx: 'buzz', x: laneX(s, i), y: fy + 1.6, z: fz });
         p.penaltyUntil = s.t + PENALTY;
         p.reshuffle = true;
       }
@@ -219,7 +249,9 @@ export const gipfelsturm: MinigameDef<GipfelsturmState> = {
   },
   tick(s, dt, rng) {
     s.t += dt;
-    for (const p of s.ps) {
+    ageFx(s, dt);
+    for (let i = 0; i < s.ps.length; i++) {
+      const p = s.ps[i];
       p.speedVis = Math.max(0, p.speedVis - dt * 1.5);
       if (p.stage === 2) {
         if (p.fallUntil !== null) {
@@ -239,17 +271,19 @@ export const gipfelsturm: MinigameDef<GipfelsturmState> = {
             p.runSince = s.t;
             if (g !== undefined && land >= g) {
               if (land < g + GAP_W) {
-                fall(s, p); // jumped too short, landed in the lava
+                fall(s, p, i); // jumped too short, landed in the lava
                 continue;
               }
               p.gap++; // cleared
+              emitFx(s, { kind: 'dust', x: laneX(s, i), y: SLOPE_H + 0.05, z: Z1 + Math.min(p.jx, TRACK), s: 0.6 });
             }
           }
         } else if (g !== undefined && p.jx >= g + RUN_SPEED * GRACE) {
-          fall(s, p);
+          fall(s, p, i);
           continue;
         }
         if (!p.jump && p.gap >= GAPS.length && p.jx >= TRACK) {
+          emitFx(s, { kind: 'ring', sfx: 'ding', x: laneX(s, i), y: SLOPE_H + 0.2, z: Z2, color: s.colors[i] });
           p.stage = 3;
           p.fork = 0;
           p.walkUntil = s.t + WALK * 0.5;
@@ -262,7 +296,7 @@ export const gipfelsturm: MinigameDef<GipfelsturmState> = {
         }
         if (p.walkUntil > 0 && s.t >= p.walkUntil) {
           p.walkUntil = 0;
-          if (p.fork >= FORKS) finishPlayer(s, p, rng);
+          if (p.fork >= FORKS) finishPlayer(s, p, i, rng);
           else if (p.lastPick !== null) newFork(p, rng);
           p.lastPick = null;
         }
@@ -313,32 +347,71 @@ export const gipfelsturm: MinigameDef<GipfelsturmState> = {
     return [];
   },
   view(s) {
+    const W = s.n * LANE - 0.6; // width of the climbing massif
+    const MTN_Z = SUMMIT_Z + 8;
     const entities: MgEntity[] = [
-      { id: 'mountain', kind: 'cone', x: 0, y: 0, z: SUMMIT_Z + 7, sx: 40, sy: 16, sz: 12, color: '#8d7f86' },
-      { id: 'summit', kind: 'box', x: 0, y: SUMMIT_Y / 2, z: SUMMIT_Z, sx: s.n * 4 + 1, sy: SUMMIT_Y, sz: 2.4, color: '#a8998f' },
+      // the peak behind the summit, a stone start ledge in front
+      { id: 'mountain', kind: 'cylinder', x: 0, y: 6.5, z: MTN_Z, sx: 46, sy: 13, sz: 22, color: '#7d6f78', mat: 'basalt', taper: 0.16 },
+      { id: 'start', kind: 'box', x: 0, y: -0.5, z: Z0 - 1.4, sx: W + 1.2, sy: 1, sz: 2.8, color: '#9a8a80', mat: 'stone' },
+      { id: 'summit', kind: 'box', x: 0, y: (SUMMIT_Y - 1) / 2, z: SUMMIT_Z, sx: s.n * LANE + 1, sy: SUMMIT_Y + 1, sz: 2.4, color: '#b3a396', mat: 'stone' },
       { id: 'goal', kind: 'star', x: 0, y: SUMMIT_Y + 3, z: SUMMIT_Z + 0.8, sx: 1.8, sy: 1.8, sz: 1.8, color: '#ffd84a', glow: true },
+      { id: 'flagL', kind: 'prop', prop: 'flag', x: -(s.n * LANE) / 2 - 0.1, y: SUMMIT_Y, z: SUMMIT_Z + 0.6, color: '#ffd84a' },
+      { id: 'flagR', kind: 'prop', prop: 'flag', x: (s.n * LANE) / 2 + 0.1, y: SUMMIT_Y, z: SUMMIT_Z + 0.6, ry: Math.PI, color: '#ffd84a' },
+      // start dressing
+      { id: 'sign', kind: 'prop', prop: 'signpost', x: -W / 2 - 0.2, y: 0, z: Z0 - 2.2, ry: 0.5 },
+      { id: 'torchS1', kind: 'prop', prop: 'torch', x: -W / 2 + 0.2, y: 0, z: Z0 - 0.6 },
+      { id: 'torchS2', kind: 'prop', prop: 'torch', x: W / 2 - 0.2, y: 0, z: Z0 - 0.6 },
+      // rocks and crystals rising out of the lava along the climb
+      { id: 'lr1', kind: 'prop', prop: 'lavarock', x: -W / 2 - 2.2, y: -0.6, z: -9, sx: 1.8, ry: 0.4 },
+      { id: 'lr2', kind: 'prop', prop: 'lavarock', x: W / 2 + 2.4, y: -0.6, z: -2, sx: 2, ry: 2.1 },
+      { id: 'lr3', kind: 'prop', prop: 'lavarock', x: -W / 2 - 2.6, y: -0.6, z: 6, sx: 1.6, ry: 1.2 },
+      { id: 'ob1', kind: 'prop', prop: 'obsidian', x: W / 2 + 3.5, y: -0.6, z: 8, sx: 1.4, ry: -0.6 },
+      { id: 'ob2', kind: 'prop', prop: 'obsidian', x: -W / 2 - 4, y: -0.6, z: -3, sx: 1.2, ry: 0.9 },
+      { id: 'cr1', kind: 'prop', prop: 'crystal', x: W / 2 + 2.2, y: -0.4, z: 14, sx: 1.3, ry: 2.4 },
+      { id: 'cr2', kind: 'prop', prop: 'crystal', x: -W / 2 - 2, y: -0.4, z: 15, sx: 1.1 },
+      { id: 'vent', kind: 'prop', prop: 'vent', x: W / 2 + 2.8, y: -0.5, z: -10, sx: 1.3 },
     ];
+    // between the summit torches
+    for (let k = 1; k < s.n; k++) entities.push({ id: `torchT${k}`, kind: 'prop', prop: 'torch', x: (k - s.n / 2) * LANE, y: SUMMIT_Y, z: SUMMIT_Z + 0.9 });
+    // the massif under the lanes (a little lower, so every lane reads as its own ridge)
+    for (let k = 0; k < SLOPE_STEPS; k++) {
+      const top = ((k + 1) * SLOPE_H) / SLOPE_STEPS - 0.25;
+      const d = SLOPE_LEN / SLOPE_STEPS;
+      entities.push({ id: `ms${k}`, kind: 'box', x: 0, y: (top - 1) / 2, z: Z0 + (k + 0.5) * d, sx: W, sy: top + 1, sz: d - 0.06, color: '#5e535c', mat: 'basalt' });
+    }
+    const bounds = [0, ...GAPS.flatMap((g) => [g, g + GAP_W]), TRACK];
+    for (let k = 0; k < bounds.length; k += 2) {
+      const [a, b] = [bounds[k], bounds[k + 1]];
+      entities.push({ id: `mr${k / 2}`, kind: 'box', x: 0, y: (SLOPE_H - 0.3 - 1) / 2, z: Z1 + (a + b) / 2, sx: W, sy: SLOPE_H - 0.3 + 1, sz: b - a - 0.06, color: '#4e4452', mat: 'basalt' });
+    }
+    // glowing lava in every gap
+    // (molten and bright: the textured lava surface is mostly dark crust, too dim for a 0.8 m gap)
+    GAPS.forEach((g, k) => entities.push({ id: `lava${k}`, kind: 'box', x: 0, y: GAP_LAVA_Y - 0.1, z: Z1 + g + GAP_W / 2, sx: W, sy: 0.2, sz: GAP_W - 0.02, color: '#ff5a1f', glow: true }));
+    for (let k = 0; k < FORKS; k++) {
+      const top = SLOPE_H + (k + 1) * FORK_RISE - 0.25;
+      entities.push({ id: `mf${k}`, kind: 'box', x: 0, y: (top - 1) / 2, z: Z2 + (k + 0.5) * FORK_STEP, sx: W, sy: top + 1, sz: FORK_STEP - 0.06, color: '#5e535c', mat: 'basalt' });
+    }
     const place = ranksFromScores(s.ps.map((p) => (p.finishedAt !== null ? 1000 - p.finishedAt : -1)));
     s.ps.forEach((p, i) => {
-      const lx = rowSpawn(s.n, 4, i);
+      const lx = laneX(s, i);
       // stage 1: steps up the slope
       for (let k = 0; k < SLOPE_STEPS; k++) {
         const top = ((k + 1) * SLOPE_H) / SLOPE_STEPS;
         const d = SLOPE_LEN / SLOPE_STEPS;
-        entities.push({ id: `s${i}_${k}`, kind: 'box', x: lx, y: top / 2, z: Z0 + (k + 0.5) * d, sx: 3, sy: top, sz: d, color: '#9a8478' });
+        entities.push({ id: `s${i}_${k}`, kind: 'box', x: lx, y: (top - 1) / 2, z: Z0 + (k + 0.5) * d, sx: 3, sy: top + 1, sz: d, color: k === 0 ? s.colors[i] : '#b09d90', mat: 'stone' });
       }
       // stage 2: rock platforms with lava gaps between them
-      const bounds = [0, ...GAPS.flatMap((g) => [g, g + GAP_W]), TRACK];
       for (let k = 0; k < bounds.length; k += 2) {
         const a = bounds[k];
         const b = bounds[k + 1];
-        entities.push({ id: `r${i}_${k / 2}`, kind: 'box', x: lx, y: SLOPE_H / 2, z: Z1 + (a + b) / 2, sx: 3, sy: SLOPE_H, sz: b - a, color: '#6d5f63' });
+        entities.push({ id: `r${i}_${k / 2}`, kind: 'box', x: lx, y: (SLOPE_H - 1) / 2, z: Z1 + (a + b) / 2, sx: 3, sy: SLOPE_H + 1, sz: b - a, color: '#887880', mat: 'basalt' });
       }
       // stage 3: steps of the path forks
       for (let k = 0; k < FORKS; k++) {
         const top = SLOPE_H + (k + 1) * FORK_RISE;
-        entities.push({ id: `f${i}_${k}`, kind: 'box', x: lx, y: top / 2, z: Z2 + (k + 0.5) * FORK_STEP, sx: 3, sy: top, sz: FORK_STEP, color: '#9a8478' });
+        entities.push({ id: `f${i}_${k}`, kind: 'box', x: lx, y: (top - 1) / 2, z: Z2 + (k + 0.5) * FORK_STEP, sx: 3, sy: top + 1, sz: FORK_STEP, color: '#b09d90', mat: 'stone' });
       }
+      if (p.stage === 4) entities.push({ id: `pflag${i}`, kind: 'prop', prop: 'flag', x: lx + 1, y: SUMMIT_Y, z: SUMMIT_Z + 0.5, sx: 0.6, color: s.colors[i] });
       // player position & animation
       let z = Z0;
       let y = 0;
@@ -375,7 +448,7 @@ export const gipfelsturm: MinigameDef<GipfelsturmState> = {
         if (s.t >= p.walkUntil && p.fork < FORKS) {
           const sz = Z2 + (p.fork + 0.5) * FORK_STEP;
           const top = SLOPE_H + (p.fork + 1) * FORK_RISE;
-          entities.push({ id: `pole${i}`, kind: 'cylinder', x: lx + 1.2, y: top + 1, z: sz, sx: 0.15, sy: 2, sz: 0.15, color: '#7a5c45' });
+          entities.push({ id: `pole${i}`, kind: 'cylinder', x: lx + 1.2, y: top + 1, z: sz, sx: 0.16, sy: 2, sz: 0.16, color: '#7a5c45', mat: 'wood' });
           entities.push({
             id: `sign${i}`,
             kind: 'box',
@@ -406,9 +479,11 @@ export const gipfelsturm: MinigameDef<GipfelsturmState> = {
     if (s.t < 2.5) hud.message = { key: 'mg.gipfelsturm.start' };
     return {
       env: 'lava',
+      scenery: { set: 'summit', clear: { x: 0, z: (Z0 - 3 + MTN_Z) / 2, w: W + 6, d: MTN_Z - Z0 + 6 }, ground: 0, water: -0.3 },
       camera: { alpha: -Math.PI / 2, beta: 1.0, radius: 34, target: [0, 3, 2] },
       entities,
       hud,
+      fx: viewFx(s),
     };
   },
 };

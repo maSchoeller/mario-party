@@ -1,6 +1,8 @@
 import type { BotLevel } from '../../config';
 import type { Rng } from '../../rng';
+import { PLAYER_COLOR_HEX } from '../../config';
 import type { ControllerLayout, MgEntity, MgHud, MinigameDef } from '../types';
+import { ageFx, emitFx, viewFx, type FxState } from '../util';
 import { BOT_DISPLAY_LAG } from './botLag';
 
 /**
@@ -15,8 +17,12 @@ import { BOT_DISPLAY_LAG } from './botLag';
  * then faster).
  */
 export const PAD_COLORS = ['#e8464b', '#3f7fe0', '#4cbf5a', '#f2c230'];
-const PAD_DARK = ['#6e2a2c', '#22406e', '#275f2e', '#7a6320'];
+const PAD_DARK = ['#80353a', '#2f5590', '#327840', '#8f7830'];
 const PAD_X = [-4.2, -1.4, 1.4, 4.2];
+const PLAYER_X = [-3.5, 3.5];
+const PLAYER_Z = -2.2;
+/** pedestal height the contestants stand on */
+const PED = 0.35;
 
 const START_LEN = 3;
 const LEAD_IN = 0.8;
@@ -49,8 +55,10 @@ interface P {
   botNext: number | null;
 }
 
-export interface MemoDuellState {
+export interface MemoDuellState extends FxState {
   t: number;
+  /** player colors (decor only) */
+  colors: string[];
   practice: boolean;
   phase: 'show' | 'input' | 'judge' | 'done';
   phaseStart: number;
@@ -130,6 +138,11 @@ function judge(s: MemoDuellState): void {
     outcome = 'retry';
   }
   for (const p of s.ps) if (p.done) p.totalTime += p.roundTime;
+  // effects: a heart breaks for everybody who missed, both correct → applause
+  s.ps.forEach((p, i) => {
+    if (!p.done) emitFx(s, { kind: 'pop', sfx: 'crack', x: PLAYER_X[i], y: 1.4, z: PLAYER_Z, color: '#e8464b', s: 0.9 }, 0.5);
+  });
+  if (a.done && b.done) emitFx(s, { kind: 'sparkle', sfx: 'cheer', x: 0, y: 5.6, z: 3, s: 1.6 }, 0.5);
   s.outcome = outcome;
   s.winner = winner;
   s.phase = 'judge';
@@ -149,9 +162,12 @@ export const memoDuell: MinigameDef<MemoDuellState> = {
   control: 'tap',
   theme: 'any',
   duration: 55,
-  setup(_players, rng, opts) {
+  setup(players, rng, opts) {
     const s: MemoDuellState = {
       t: 0,
+      colors: players.map((p) => PLAYER_COLOR_HEX[p.color] ?? '#d9d6ea'),
+      fx: [],
+      fxN: 0,
       practice: opts.practice,
       phase: 'show',
       phaseStart: 0,
@@ -181,14 +197,19 @@ export const memoDuell: MinigameDef<MemoDuellState> = {
     p.lastPress = s.t;
     if (input.idx !== s.seq[p.pos]) {
       p.failed = true;
+      emitFx(s, { kind: 'hit', sfx: 'buzz', x: PLAYER_X[i], y: 2.4 + PED, z: PLAYER_Z, color: '#e8464b' });
       return;
     }
     p.pos++;
     p.roundTime = s.t - s.phaseStart;
-    if (p.pos >= s.seq.length) p.done = true;
+    if (p.pos >= s.seq.length) {
+      p.done = true;
+      emitFx(s, { kind: 'sparkle', sfx: 'correct', x: PLAYER_X[i], y: 2.4 + PED, z: PLAYER_Z });
+    }
   },
   tick(s, dt, rng) {
     s.t += dt;
+    ageFx(s, dt);
     if (s.phase === 'done') return;
     if (!s.practice && s.t >= HARD_LIMIT) {
       if (s.winner === null) {
@@ -245,6 +266,8 @@ export const memoDuell: MinigameDef<MemoDuellState> = {
     else s.seq = randomSeq(s.seq.length, rng);
     s.round++;
     startShow(s);
+    // new sequence: the board "wakes up" (before the first tone, LEAD_IN)
+    emitFx(s, { kind: 'ring', sfx: 'whoosh', x: 0, y: 3, z: 2.9, color: '#ffe6a0', s: 1.4 });
   },
   isOver: (s) => s.phase === 'done',
   result: (s) => (s.winner === null ? [0, 0] : s.winner === 0 ? [0, 1] : [1, 0]),
@@ -268,11 +291,28 @@ export const memoDuell: MinigameDef<MemoDuellState> = {
   view(s) {
     const len = s.seq.length;
     const entities: MgEntity[] = [
-      { id: 'floor', kind: 'box', x: 0, y: -0.25, z: 0, sx: 16, sy: 0.5, sz: 10, color: '#3b3552' },
-      { id: 'wall', kind: 'box', x: 0, y: 3, z: 3.6, sx: 13, sy: 4.4, sz: 0.4, color: '#2a2540' },
+      // game show stage: wooden stage floor, the big memory board in a gold frame
+      { id: 'floor', kind: 'box', x: 0, y: -0.15, z: -0.6, sx: 17, sy: 0.3, sz: 7.6, color: '#5b4a86', mat: 'planks' },
+      { id: 'carpet', kind: 'box', x: 0, y: 0.01, z: -1.2, sx: 2.6, sy: 0.04, sz: 4.6, color: '#8a2a48', mat: 'cloth' },
+      { id: 'wall', kind: 'box', x: 0, y: 3.5, z: 3.6, sx: 13, sy: 5.4, sz: 0.4, color: '#2a2540', mat: 'metal' },
+      { id: 'frameT', kind: 'box', x: 0, y: 6.36, z: 3.45, sx: 13.6, sy: 0.32, sz: 0.5, color: '#f2c94c', mat: 'gold' },
+      { id: 'frameB', kind: 'box', x: 0, y: 0.68, z: 3.45, sx: 13.6, sy: 0.32, sz: 0.5, color: '#f2c94c', mat: 'gold' },
+      { id: 'frameL', kind: 'box', x: -6.64, y: 3.52, z: 3.45, sx: 0.32, sy: 6, sz: 0.5, color: '#f2c94c', mat: 'gold' },
+      { id: 'frameR', kind: 'box', x: 6.64, y: 3.52, z: 3.45, sx: 0.32, sy: 6, sz: 0.5, color: '#f2c94c', mat: 'gold' },
+      { id: 'base', kind: 'box', x: 0, y: 0.26, z: 3.6, sx: 12.4, sy: 0.52, sz: 0.9, color: '#3b3560', mat: 'metal' },
+      // stage lights and speakers at the sides
+      { id: 'spotL', kind: 'prop', prop: 'stagelight', x: -7.6, y: 0, z: -3.2, ry: 2.5, sx: 1.2 },
+      { id: 'spotR', kind: 'prop', prop: 'stagelight', x: 7.6, y: 0, z: -3.2, ry: -2.5, sx: 1.2 },
+      { id: 'boxL', kind: 'box', x: -7.6, y: 0.9, z: 2.2, sx: 1.2, sy: 1.8, sz: 1, color: '#25213a', mat: 'cloth' },
+      { id: 'boxR', kind: 'box', x: 7.6, y: 0.9, z: 2.2, sx: 1.2, sy: 1.8, sz: 1, color: '#25213a', mat: 'cloth' },
+      { id: 'coneL', kind: 'cylinder', x: -7.6, y: 1.2, z: 1.68, rx: -Math.PI / 2, sx: 0.8, sy: 0.06, sz: 0.8, color: '#4a4466', mat: 'metal' },
+      { id: 'coneR', kind: 'cylinder', x: 7.6, y: 1.2, z: 1.68, rx: -Math.PI / 2, sx: 0.8, sy: 0.06, sz: 0.8, color: '#4a4466', mat: 'metal' },
     ];
+    // marquee bulbs on the top of the frame (static – only the pads light up)
+    for (let k = 0; k < 13; k++) entities.push({ id: `bulb${k}`, kind: 'sphere', x: -6 + k, y: 6.66, z: 3.3, sx: 0.22, sy: 0.22, sz: 0.22, color: '#ffe6a0', glow: true });
     for (let k = 0; k < 4; k++) {
       const lit = s.lit === k;
+      entities.push({ id: `bezel${k}`, kind: 'box', x: PAD_X[k], y: 3, z: 3.38, sx: 2.66, sy: 2.66, sz: 0.06, color: '#14111f', mat: 'metal' });
       entities.push({
         id: `pad${k}`,
         kind: 'box',
@@ -290,7 +330,7 @@ export const memoDuell: MinigameDef<MemoDuellState> = {
     const champ = s.phase === 'done' ? s.winner : null;
     [0, 1].forEach((i) => {
       const p = s.ps[i];
-      const px = i === 0 ? -3.5 : 3.5;
+      const px = PLAYER_X[i];
       const decided = s.phase === 'judge' && s.outcome === 'decided';
       let anim: MgEntity['anim'] = 'idle';
       if (champ === i || (decided && s.winner === i)) anim = 'cheer';
@@ -299,7 +339,9 @@ export const memoDuell: MinigameDef<MemoDuellState> = {
       else if (s.phase === 'judge' && s.outcome === 'life' && !p.done) anim = 'hit';
       else if (s.phase === 'input' && p.done) anim = 'cheer';
       else if (s.t - p.lastPress < 0.25) anim = 'jump';
-      entities.push({ id: `p${i}`, kind: 'player', player: i, x: px, y: 0, z: -2.2, ry: 0, anim });
+      entities.push({ id: `ped${i}`, kind: 'cylinder', x: px, y: PED / 2, z: PLAYER_Z, sx: 2, sy: PED, sz: 2, color: '#3b3560', mat: 'metal', taper: 0.92 });
+      entities.push({ id: `ring${i}`, kind: 'torus', x: px, y: PED + 0.01, z: PLAYER_Z, sx: 1.8, sy: 0.5, sz: 1.8, color: s.colors[i], glow: true });
+      entities.push({ id: `p${i}`, kind: 'player', player: i, x: px, y: PED, z: PLAYER_Z, ry: 0, anim });
       // progress dots above the head (no colors – the opponent must not copy)
       const showDots = s.phase === 'input' || s.phase === 'judge';
       for (let k = 0; k < len; k++) {
@@ -315,8 +357,8 @@ export const memoDuell: MinigameDef<MemoDuellState> = {
           id: `dot${i}_${k}`,
           kind: 'sphere',
           x: px + (k - (len - 1) / 2) * 0.45,
-          y: 2.4,
-          z: -2.2,
+          y: 2.4 + PED,
+          z: PLAYER_Z,
           sx: 0.36,
           sy: 0.36,
           sz: 0.36,
@@ -340,8 +382,10 @@ export const memoDuell: MinigameDef<MemoDuellState> = {
     }
     return {
       env: 'night',
-      camera: { alpha: -Math.PI / 2, beta: 1.25, radius: 15, target: [0, 2.2, 0.5] },
+      scenery: { set: 'studio', clear: { w: 16, d: 8, z: 0.5 } },
+      camera: { alpha: -Math.PI / 2, beta: 1.25, radius: 15.5, target: [0, 2.4, 0.5] },
       entities,
+      fx: viewFx(s),
       hud,
     };
   },

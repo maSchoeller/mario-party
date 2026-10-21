@@ -85,8 +85,10 @@ export class Terrain {
     const L = this.land(x, z);
     const wl = d.water.low ?? d.water.high;
     let y: number;
-    if (L < 0) y = wl - 0.2 + Math.max(-6, L * 0.45);
-    else y = d.water.high - 0.25 + (d.base - d.water.high + 0.25) * smoothstep(0, 4.5, L);
+    if (L < 0) {
+      y = wl - 0.2 + Math.max(-6, L * 0.45);
+      for (const s of d.shallows ?? []) y = Math.max(y, y + (s.y - y) * smoothstep(0, 3, ellipse(x, z, s)));
+    } else y = d.water.high - 0.25 + (d.base - d.water.high + 0.25) * smoothstep(0, 4.5, L);
     const inland = smoothstep(1, 6, L);
     y += (fbm(x * 0.05, z * 0.05, 4, 3) - 0.5) * 0.9 * inland;
     for (const hl of d.hills ?? []) {
@@ -216,7 +218,7 @@ export class Terrain {
   private classify(x: number, z: number, y: number, L: number): Ground {
     const d = this.def;
     if (y < d.water.high - 0.02) return 'water';
-    if (L < 3.2 + (noise2(x * 0.2, z * 0.2, 4) - 0.5) * 2 && y < d.base + 0.5) return 'sand';
+    if (L < (d.beach ?? 3.2) + (noise2(x * 0.2, z * 0.2, 4) - 0.5) * 2 && y < d.base + 0.5) return 'sand';
     return 'grass';
   }
 
@@ -512,12 +514,27 @@ function smin(a: number, b: number, k: number): number {
 // ------------------------------------------------------------------ procedural textures
 
 const texCache = new WeakMap<Scene, Map<string, Texture>>();
-function cached(scene: Scene, key: string, make: () => Texture): Texture {
+export function cached(scene: Scene, key: string, make: () => Texture): Texture {
   let m = texCache.get(scene);
   if (!m) texCache.set(scene, (m = new Map()));
   let t = m.get(key);
   if (!t || t.getScene() !== scene) m.set(key, (t = make()));
   return t;
+}
+
+/**
+ * Independent copy of a cached procedural texture (own offsets for animation). A plain
+ * clone() of a DynamicTexture comes out empty, so the canvas is copied over.
+ */
+export function copyTexture(scene: Scene, src: Texture, name: string): Texture {
+  const s = src as DynamicTexture;
+  const size = s.getSize();
+  const tex = new DynamicTexture(name, { width: size.width, height: size.height }, scene, true);
+  (tex.getContext() as unknown as CanvasRenderingContext2D).drawImage(s.getContext().canvas as CanvasImageSource, 0, 0);
+  tex.update();
+  tex.wrapU = tex.wrapV = Texture.WRAP_ADDRESSMODE;
+  tex.hasAlpha = src.hasAlpha;
+  return tex;
 }
 
 /** Light grain multiplied over the vertex colors (grass blades / sand grains / pebbles). */
@@ -545,7 +562,7 @@ export function detailTexture(scene: Scene, theme: string): Texture {
   });
 }
 
-function waterNormals(scene: Scene): Texture {
+export function waterNormals(scene: Scene): Texture {
   return cached(scene, 'waterN', () => {
     const S = 128;
     const tex = new DynamicTexture('waterN', { width: S, height: S }, scene, true);
@@ -573,10 +590,11 @@ function waterNormals(scene: Scene): Texture {
   });
 }
 
-function lavaTexture(scene: Scene): Texture {
-  return cached(scene, 'lava', () => {
+/** Lava: cooled crust plates with glowing seams; `molten` (minigames) has far more open, glowing lava. */
+export function lavaTexture(scene: Scene, molten = false): Texture {
+  return cached(scene, molten ? 'lavaMolten' : 'lava', () => {
     const S = 256;
-    const tex = new DynamicTexture('lava', { width: S, height: S }, scene, true);
+    const tex = new DynamicTexture(molten ? 'lavaMolten' : 'lava', { width: S, height: S }, scene, true);
     const ctx = tex.getContext() as unknown as CanvasRenderingContext2D;
     const img = ctx.createImageData(S, S);
     for (let y = 0; y < S; y++) {
@@ -584,8 +602,8 @@ function lavaTexture(scene: Scene): Texture {
         const n = tileFbm(x / S, y / S, 4, 4, 13);
         const fine = tileFbm(x / S, y / S, 16, 2, 29);
         // mostly cooled crust plates; glowing seams between them and a few molten pools
-        const pool = 1 - smoothstep(0.3, 0.38, n);
-        const seam = 1 - smoothstep(0.0, 0.03, Math.abs(n - 0.52 - (fine - 0.5) * 0.12));
+        const pool = molten ? 1 - smoothstep(0.44, 0.52, n) : 1 - smoothstep(0.3, 0.38, n);
+        const seam = 1 - smoothstep(0.0, molten ? 0.06 : 0.03, Math.abs(n - (molten ? 0.6 : 0.52) - (fine - 0.5) * 0.12));
         const glow = Math.min(1, pool + seam * 0.9);
         const crust = 0.75 + fine * 0.5;
         const o = (y * S + x) * 4;

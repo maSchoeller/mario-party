@@ -1,6 +1,8 @@
 import type { CharacterId } from '@wb/shared/config';
 import { t, type Params } from '@wb/shared/i18n/index';
 import { clipFile, numberClip, voiceClips } from '@wb/shared/i18n/voice';
+import type { MgSfx } from '@wb/shared/minigames/types';
+import type { AmbienceKey } from './render/mgScenery';
 
 /**
  * Host audio (AUDIO-05: audio only on the host). Generated assets in public/media/audio
@@ -85,6 +87,41 @@ const SFX_FILES: Partial<Record<Sfx, string[]>> = {
   splash: ['splash'],
   clack: ['clack'],
 };
+/**
+ * Minigame effects (v0.4, ElevenLabs): several takes where an effect repeats a lot; one is
+ * picked at random and slightly detuned.
+ */
+const MG_SFX: Record<MgSfx, string[]> = {
+  coin: ['coin'],
+  splash: ['splash', 'mg_splash2'],
+  whoosh: ['whoosh', 'mg_swish'],
+  boom: ['boom'],
+  buzz: ['buzz'],
+  ding: ['ding'],
+  thud: ['mg_thud', 'mg_thud2'],
+  pop: ['mg_pop'],
+  jump: ['mg_jump'],
+  land: ['mg_land'],
+  cheer: ['mg_cheer'],
+  aww: ['mg_aww'],
+  crack: ['mg_crack'],
+  sizzle: ['mg_sizzle'],
+  cannon: ['mg_cannon'],
+  catch: ['mg_catch'],
+  correct: ['mg_correct'],
+  click: ['mg_click'],
+  magic: ['mg_magic'],
+  scribble: ['mg_scribble'],
+  creak: ['mg_creak'],
+  paddle: ['mg_paddle'],
+  stomp: ['mg_stomp'],
+  train: ['train'],
+  swing: ['mg_swing'],
+  slide: ['mg_slide'],
+};
+/** Countdown and match flow stingers (v0.4). */
+const FLOW_SFX = ['mg_tick', 'mg_go', 'mg_whistle', 'mg_transition', 'mg_reveal'];
+const AMBIENCE: AmbienceKey[] = ['sea', 'lava', 'meadow', 'city', 'ice', 'wind', 'studio', 'desert', 'night'];
 const BABBLERS = ['rocco', 'quaki', 'pingo', 'foxy', 'bruno', 'hoppla', 'schildi', 'zippy', 'moderator'];
 /** Effects that get a little pitch variation so repeats never sound identical. */
 const VARIED: Sfx[] = ['step', 'coin', 'clack', 'ui', 'whoosh'];
@@ -123,6 +160,12 @@ export class HostAudio {
   private failedMusic = new Set<string>();
   private procedural = false;
   private looping = false;
+  // v0.4: minigame dynamics (level + low-pass before the speech ducking) and ambience beds
+  private level: GainNode | null = null;
+  private filter: BiquadFilterNode | null = null;
+  private ambGain: GainNode | null = null;
+  private amb: { key: AmbienceKey; src: AudioBufferSourceNode; gain: GainNode } | null = null;
+  private ambWanted: AmbienceKey | null = null;
 
   constructor() {
     try {
@@ -158,7 +201,14 @@ export class HostAudio {
       this.masterGain = ctx.createGain();
       this.masterGain.gain.value = 0;
       this.master.connect(this.masterGain).connect(ctx.destination);
-      this.musicGain.connect(this.duck).connect(this.master);
+      this.level = ctx.createGain();
+      this.filter = ctx.createBiquadFilter();
+      this.filter.type = 'lowpass';
+      this.filter.frequency.value = 20000;
+      this.filter.Q.value = 0.7;
+      this.musicGain.connect(this.level).connect(this.filter).connect(this.duck).connect(this.master);
+      this.ambGain = ctx.createGain();
+      this.ambGain.connect(this.master);
       this.sfxGain.connect(this.master);
       this.voiceGain.connect(this.master);
       // fade the whole mix in instead of starting hard
@@ -175,6 +225,7 @@ export class HostAudio {
       this.applyVolumes();
       this.preload();
       this.startMusic();
+      if (this.ambWanted) this.ambience(this.ambWanted);
     }
     void this.ctx.resume();
     if (!this.timer) this.timer = setInterval(() => this.schedule(), 50);
@@ -196,6 +247,8 @@ export class HostAudio {
     this.musicGain?.gain.setTargetAtTime(this.vol.music * (this.procedural ? 0.22 : 0.8), now, 0.08);
     this.sfxGain?.gain.setTargetAtTime(this.vol.sfx * 0.5, now, 0.05);
     this.voiceGain?.gain.setTargetAtTime(this.vol.voice * 1.1, now, 0.05);
+    // ambience sits well under the effects
+    this.ambGain?.gain.setTargetAtTime(this.vol.sfx * 0.32, now, 0.1);
   }
 
   // --- files -------------------------------------------------------------------
@@ -204,6 +257,7 @@ export class HostAudio {
   private preload() {
     const sfx = new Set(Object.values(SFX_FILES).flat());
     for (const c of BABBLERS) sfx.add(`babble_${c}`);
+    for (const f of [...Object.values(MG_SFX).flat(), ...FLOW_SFX]) sfx.add(f);
     for (const f of sfx) void this.buffer(`sfx/${f}.mp3`);
     void fetch(`${MEDIA}voice/manifest.json`)
       .then((r) => (r.ok ? (r.json() as Promise<Record<string, string>>) : null))
@@ -461,6 +515,130 @@ export class HostAudio {
         this.note([64, 67, 71, 74][Number(kind.slice(3))], at, 0.35, 'sine', 0.5, out);
         break;
     }
+  }
+
+  // --- minigames (v0.4) ---------------------------------------------------------
+
+  /** Minigame effect at a stereo position (-1..1) with a distance gain. */
+  mgSfx(kind: MgSfx, pan = 0, gain = 1): void {
+    const ctx = this.ctx;
+    if (!ctx || !this.sfxGain || ctx.state !== 'running') return;
+    const takes = MG_SFX[kind].map((f) => this.buffers.get(`sfx/${f}.mp3`)).filter((b): b is AudioBuffer => !!b);
+    const panner = ctx.createStereoPanner();
+    panner.pan.value = Math.max(-1, Math.min(1, pan));
+    panner.connect(this.sfxGain);
+    setTimeout(() => panner.disconnect(), 4000);
+    if (takes.length) {
+      const b = takes[Math.floor(Math.random() * takes.length)];
+      this.play(b, panner, 0, { rate: 0.94 + Math.random() * 0.12, gain });
+      return;
+    }
+    // procedural fallback (files missing)
+    const at = ctx.currentTime;
+    switch (kind) {
+      case 'thud':
+      case 'land':
+      case 'stomp':
+        this.note(45, at, 0.12, 'sine', 0.6 * gain, panner);
+        this.noise(at, 0.05, 0.4 * gain, 300, panner);
+        break;
+      case 'pop':
+      case 'catch':
+        this.note(84, at, 0.05, 'sine', 0.4 * gain, panner);
+        this.noise(at, 0.03, 0.4 * gain, 2000, panner);
+        break;
+      case 'jump':
+        [72, 79].forEach((n, i) => this.note(n, at + i * 0.05, 0.08, 'square', 0.15 * gain, panner));
+        break;
+      case 'correct':
+      case 'magic':
+        [79, 84, 88].forEach((n, i) => this.note(n, at + i * 0.06, 0.2, 'triangle', 0.3 * gain, panner));
+        break;
+      case 'cheer':
+      case 'aww':
+        this.noise(at, 0.8, 0.3 * gain, 800, panner);
+        break;
+      default:
+        this.noise(at, 0.12, 0.4 * gain, 1200, panner);
+    }
+  }
+
+  /** Countdown tick (3, 2, 1 rising) or the start stinger (n = 0). */
+  countdownTick(n: number): void {
+    const ctx = this.ctx;
+    if (!ctx || !this.sfxGain || ctx.state !== 'running') return;
+    const file = this.buffers.get(n > 0 ? 'sfx/mg_tick.mp3' : 'sfx/mg_go.mp3');
+    if (file) {
+      this.play(file, this.sfxGain, 0, { rate: n > 0 ? [1.26, 1.12, 1][Math.min(2, n - 1)] : 1, gain: n > 0 ? 0.9 : 1 });
+      return;
+    }
+    if (n > 0) this.note([76, 74, 72][Math.min(2, n - 1)] + 12, ctx.currentTime, 0.18, 'sine', 0.5, this.sfxGain);
+    else [72, 76, 79, 84].forEach((m) => this.note(m, ctx.currentTime, 0.5, 'triangle', 0.3, this.sfxGain!));
+  }
+
+  /** Match flow stingers: final whistle, iris transition, results reveal. */
+  stinger(kind: 'whistle' | 'transition' | 'reveal'): void {
+    const ctx = this.ctx;
+    if (!ctx || !this.sfxGain || ctx.state !== 'running') return;
+    const b = this.buffers.get(`sfx/mg_${kind}.mp3`);
+    if (b) {
+      this.play(b, this.sfxGain, 0, { gain: kind === 'transition' ? 0.8 : 1 });
+      return;
+    }
+    if (kind === 'whistle') this.note(96, ctx.currentTime, 0.5, 'sine', 0.35, this.sfxGain);
+    else if (kind === 'transition') this.noise(ctx.currentTime, 0.45, 0.5, 900, this.sfxGain);
+    else this.sfx('fanfare');
+  }
+
+  /**
+   * Music dynamics for a minigame: level (0..1, e.g. softer under the explanation) and an
+   * optional low-pass ("muffled", e.g. right after the final whistle). Smooth ramps.
+   */
+  musicShape(level: number, muffled = false, secs = 0.6): void {
+    const ctx = this.ctx;
+    if (!ctx || !this.level || !this.filter) return;
+    const now = ctx.currentTime;
+    this.level.gain.cancelScheduledValues(now);
+    this.level.gain.setValueAtTime(this.level.gain.value, now);
+    this.level.gain.setTargetAtTime(level, now, secs / 3);
+    const f = this.filter.frequency;
+    f.cancelScheduledValues(now);
+    f.setValueAtTime(f.value, now);
+    f.exponentialRampToValueAtTime(muffled ? 650 : 20000, now + secs);
+  }
+
+  /** Looping ambience bed of a minigame backdrop (null = fade out). */
+  ambience(key: AmbienceKey | null): void {
+    this.ambWanted = key;
+    const ctx = this.ctx;
+    if (!ctx || !this.ambGain) return;
+    if (this.amb?.key === key) return;
+    const now = ctx.currentTime;
+    if (this.amb) {
+      const old = this.amb;
+      old.gain.gain.cancelScheduledValues(now);
+      old.gain.gain.setValueAtTime(old.gain.gain.value, now);
+      old.gain.gain.setTargetAtTime(0, now, 0.4);
+      setTimeout(() => old.src.stop(), 2000);
+      this.amb = null;
+    }
+    if (!key || !AMBIENCE.includes(key)) return;
+    void this.buffer(`sfx/amb_${key}.mp3`).then((buf) => {
+      if (!buf || this.ambWanted !== key || this.amb || !this.ctx) return;
+      const src = this.ctx.createBufferSource();
+      src.buffer = buf;
+      src.loop = true;
+      // skip the encoder padding at both ends so the loop point is seamless
+      src.loopStart = Math.min(0.06, buf.duration / 10);
+      src.loopEnd = buf.duration - Math.min(0.06, buf.duration / 10);
+      const gain = this.ctx.createGain();
+      gain.gain.value = 0;
+      src.connect(gain).connect(this.ambGain!);
+      const t0 = this.ctx.currentTime;
+      src.start(t0, src.loopStart);
+      gain.gain.setTargetAtTime(1, t0, 0.6);
+      this.amb = { key, src, gain };
+    });
   }
 
   /** Character babble in a fantasy language (AUDIO-04). */

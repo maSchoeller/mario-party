@@ -1,6 +1,6 @@
 import type { BotLevel } from '../config';
 import type { Rng } from '../rng';
-import { BOT_SKILL, type MgCamera, type MgPlayer } from './types';
+import { BOT_SKILL, type MgCamera, type MgFx, type MgPlayer } from './types';
 
 export const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
 export const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
@@ -91,3 +91,25 @@ export function steerTo(fromX: number, fromZ: number, toX: number, toZ: number, 
 }
 
 export const TEAM_COLORS = ['#e8676b', '#5f8fe0'];
+
+/**
+ * One-shot effects (v0.4): games keep pending effects in their state (`fx`, `fxN`),
+ * emit them on events and age them in tick(); view() hands them to the host, which fires
+ * each id once when it appears.
+ */
+export interface FxState {
+  fx: (MgFx & { ttl: number })[];
+  fxN: number;
+}
+
+export function emitFx(s: FxState, fx: Omit<MgFx, 'id'>, ttl = 0.35): void {
+  s.fx.push({ ...fx, id: `fx${s.fxN++}`, ttl });
+}
+
+export function ageFx(s: FxState, dt: number): void {
+  if (s.fx.length) s.fx = s.fx.filter((f) => (f.ttl -= dt) > 0);
+}
+
+export function viewFx(s: FxState): MgFx[] {
+  return s.fx.map(({ ttl: _ttl, ...f }) => f);
+}

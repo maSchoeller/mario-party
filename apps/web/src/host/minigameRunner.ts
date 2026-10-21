@@ -4,6 +4,9 @@ import { t } from '@wb/shared/i18n/index';
 import { getMinigame } from '@wb/shared/minigames/registry';
 import type { ControllerLayout, MgInput, MgPlayer, MinigameDef } from '@wb/shared/minigames/types';
 import { Rng } from '@wb/shared/rng';
+import { Vector3 } from '@babylonjs/core';
+import { burst } from './render/mgFx';
+import { scenerySound } from './render/mgScenery';
 import type { HostAudio, MusicKey } from './audio';
 import { MinigameView } from './render/minigameView';
 import type { Stage } from './render/stage';
@@ -61,6 +64,7 @@ export class MinigameRunner {
     this.botRng = Rng.fromSeed(seed ^ 0x5bd1e995);
     this.ready = this.players.map((p) => p.isBot);
     this.view = new MinigameView(stage, this.players);
+    this.view.onSound = (sfx, pan, gain) => this.audio.mgSfx(sfx, pan, gain);
     this.state = this.def.setup(this.players, this.rng, { practice: true });
   }
 
@@ -69,9 +73,24 @@ export class MinigameRunner {
     return this.players.findIndex((p) => p.gameIdx === gameIdx);
   }
 
+  /**
+   * Starts the minigame (the caller has closed the iris over the board): builds the
+   * backdrop, flies the camera in from a wide angle while the iris opens, music sits softer
+   * under the explanation and the ambience of the backdrop fades in (v0.4).
+   */
   run(): Promise<number[]> {
     const moods: MusicKey[] = ['minigame', 'minigame2', 'minigame3'];
     this.audio.playMusic(moods[Math.abs(hash(this.def.id)) % moods.length]);
+    this.audio.musicShape(0.55, false, 1.2);
+    const first = this.def.view(this.state as never);
+    this.view.render(first, 0.0001);
+    this.audio.ambience(first.scenery ? scenerySound(first.scenery.set) : null);
+    // camera fly-in: start high and wide, glide down onto the game camera
+    const c = first.camera;
+    this.stage.setCamera({ alpha: c.alpha + 0.75, beta: Math.max(0.35, c.beta - 0.45), radius: c.radius * 2.1, target: new Vector3(c.target[0], c.target[1] + 2, c.target[2] + 4) }, 1, true);
+    this.view.cameraSpeed = 0.9;
+    setTimeout(() => (this.view.cameraSpeed = 3), 2600 / this.hooks.speed());
+    void this.ui.iris('open', 700 / this.hooks.speed());
     void this.audio.say('mod.minigameTitle', { game: `mg.${this.def.id}.name` }, 900);
     this.stopUpdate = this.stage.onUpdate(() => this.frame());
     this.lastTickWall = performance.now();
@@ -212,13 +231,18 @@ export class MinigameRunner {
     this.state = this.def.setup(this.players, this.rng, { practice: false });
     this.simTime = 0;
     this.hooks.pushViews();
+    // the camera settles on the game camera during the count
+    this.view.cameraSpeed = 2;
+    this.audio.musicShape(0.42, false, 0.4);
     for (const n of [3, 2, 1]) {
       this.ui.countdown(n);
-      this.audio.sfx('ui');
+      this.audio.countdownTick(n);
       await this.wait(700);
     }
-    this.ui.countdown('LOS!');
-    this.audio.sfx('ding');
+    this.ui.countdown(t('host.mgGo'));
+    this.audio.countdownTick(0);
+    this.audio.musicShape(1, false, 0.25);
+    this.view.cameraSpeed = 3;
     this.phase = 'play';
     this.acc = 0;
     this.lastTickWall = performance.now();
@@ -238,11 +262,29 @@ export class MinigameRunner {
     this.phase = 'done';
     const ranks = this.def.result(this.state as never);
     this.hooks.pushViews();
-    this.audio.sfx('fanfare');
+    // final whistle: the music drops muffled, "SCHLUSS!" slams in
+    this.audio.stinger('whistle');
+    this.audio.musicShape(0.45, true, 0.35);
     this.ui.mgHud(null, this.players, '');
+    this.ui.countdown(t('host.mgFinish'), 'finish');
     this.hooks.telemetry('minigame_result', { game: this.def.id, format: this.def.format, seconds: Math.round(this.simTime), bots: this.players.filter((p) => p.isBot).length });
-    await this.wait(1200);
-    this.stopUpdate?.();
+    await this.wait(950);
+    this.ui.countdown(null);
+    // winners cheer under confetti, the camera leans in on them, then the fanfare
+    this.view.setCelebration(ranks);
+    const winners = ranks.map((r, i) => (r === 0 ? this.view.playerPos(i) : null)).filter((p): p is Vector3 => !!p);
+    if (winners.length && winners.length < this.players.length) {
+      const mid = winners.reduce((a, b) => a.add(b), Vector3.Zero()).scale(1 / winners.length);
+      for (const w of winners) burst(this.stage, 'confetti', w.add(new Vector3(0, 2.6, 0)));
+      const cam = this.stage.camera;
+      this.view.cameraSpeed = 1.6;
+      this.stage.setCamera({ target: mid.add(new Vector3(0, 1.2, 0)), radius: Math.max(9, cam.radius * 0.55), beta: Math.min(1.25, cam.beta + 0.12) }, 1.6);
+      this.view.followCamera = false;
+    }
+    this.audio.mgSfx('cheer', 0, 0.9);
+    this.audio.musicShape(0.7, false, 0.8);
+    this.audio.sfx('fanfare');
+    await this.wait(1500);
     this.resolveDone?.(ranks);
   }
 

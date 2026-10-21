@@ -1,6 +1,6 @@
 import type { Rng } from '../../rng';
 import type { MgEntity, MgInput, MgPlayer, MinigameDef } from '../types';
-import { clamp, faceAngle, lerp, skill, teamRanks } from '../util';
+import { ageFx, clamp, emitFx, faceAngle, lerp, skill, teamRanks, viewFx, type FxState } from '../util';
 
 /**
  * #15 Wand-Labyrinth (1 vs 3, Wischen vs. Joystick): the trio walks through a grid maze
@@ -55,7 +55,7 @@ interface P {
   path: Cell[];
 }
 
-export interface WandLabyrinthState {
+export interface WandLabyrinthState extends FxState {
   t: number;
   duration: number;
   practice: boolean;
@@ -246,6 +246,14 @@ function applySwipe(s: WandLabyrinthState, dir: 'up' | 'down' | 'left' | 'right'
   const h = dir === 'left' ? 0 : dir === 'right' ? 1 : s.hPos;
   const v = dir === 'down' ? 0 : dir === 'up' ? 1 : s.vPos;
   if (h === s.hPos && v === s.vPos) return false;
+  // the moving hedge gates rumble and kick up a little dust
+  const axis = h !== s.hPos ? 'h' : 'v';
+  emitFx(s, { sfx: 'slide', x: 0, y: 1, z: 0 });
+  for (const sl of s.sliders) {
+    if (sl.axis !== axis) continue;
+    const pos = axis === 'h' ? h : v;
+    emitFx(s, { kind: 'dust', x: worldX(sl.x + (axis === 'h' ? pos * 2 : 0)), y: 0.2, z: worldZ(sl.y + (axis === 'v' ? pos * 2 : 0)), s: 0.5 });
+  }
   s.hPos = h;
   s.vPos = v;
   s.cooldown = COOLDOWN;
@@ -258,6 +266,7 @@ function applySwipe(s: WandLabyrinthState, dir: 'up' | 'down' | 'left' | 'right'
       [p.cx, p.tx] = [p.tx, p.cx];
       [p.cy, p.ty] = [p.ty, p.cy];
       p.prog = 1 - p.prog;
+      emitFx(s, { kind: 'hit', sfx: 'thud', x: lerp(worldX(p.cx * 2 + 1), worldX(p.tx * 2 + 1), p.prog), y: 1.2, z: lerp(worldZ(p.cy * 2 + 1), worldZ(p.ty * 2 + 1), p.prog), s: 0.7 });
     }
   }
   return true;
@@ -298,6 +307,8 @@ export const wandLabyrinth: MinigameDef<WandLabyrinthState> = {
       swipes: 0,
       won: null,
       botThink: 0,
+      fx: [],
+      fxN: 0,
     };
   },
   layout(s, i) {
@@ -318,6 +329,7 @@ export const wandLabyrinth: MinigameDef<WandLabyrinthState> = {
     const slide = dt / SLIDE_TIME;
     s.hAnim = s.hAnim < s.hPos ? Math.min(s.hPos, s.hAnim + slide) : Math.max(s.hPos, s.hAnim - slide);
     s.vAnim = s.vAnim < s.vPos ? Math.min(s.vPos, s.vAnim + slide) : Math.max(s.vPos, s.vAnim - slide);
+    ageFx(s, dt);
     if (s.won !== null) return;
     for (const i of s.trio) {
       const p = s.ps[i];
@@ -328,6 +340,13 @@ export const wandLabyrinth: MinigameDef<WandLabyrinthState> = {
           p.cy = p.ty;
           p.prog = 0;
           if (p.cx === s.exit[0] && p.cy === s.exit[1]) {
+            const ex = worldX(s.exit[0] * 2 + 1);
+            const ez = worldZ(s.exit[1] * 2 + 1);
+            if (s.practice) emitFx(s, { kind: 'sparkle', sfx: 'ding', x: ex, y: 1.4, z: ez });
+            else {
+              emitFx(s, { kind: 'ring', x: ex, y: 0.2, z: ez, color: '#ffd23f', s: 1.4 }, 0.8);
+              emitFx(s, { kind: 'confetti', sfx: 'cheer', x: ex, y: 2.2, z: ez }, 0.8);
+            }
             if (s.practice) {
               const [x, y] = s.starts[s.trio.indexOf(i)];
               Object.assign(p, { cx: x, cy: y, tx: x, ty: y, path: [] });
@@ -426,19 +445,45 @@ export const wandLabyrinth: MinigameDef<WandLabyrinthState> = {
     return [{ type: 'stick', x: dx * f, y: dy * f }];
   },
   view(s) {
+    const ex = worldX(s.exit[0] * 2 + 1);
+    const ez = worldZ(s.exit[1] * 2 + 1);
+    const soloZ = worldZ(TH - 1) + 2.2;
+    const mx = (TW * TS) / 2;
+    const mz = (TH * TS) / 2;
     const entities: MgEntity[] = [
-      { id: 'floor', kind: 'box', x: 0, y: -0.25, z: 0, sx: TW * TS + 1, sy: 0.5, sz: TH * TS + 1, color: '#d9cfb8' },
+      // gravel paths between clipped hedges
+      { id: 'floor', kind: 'box', x: 0, y: -0.23, z: 0, sx: TW * TS + 0.6, sy: 0.5, sz: TH * TS + 0.6, color: '#ece2c8', mat: 'sand' },
+      // the gardener (solo) stands on a little wooden deck above the maze
+      { id: 'deck', kind: 'box', x: 0, y: 0.15, z: soloZ, sx: 3.4, sy: 0.3, sz: 1.9, color: '#a8794f', mat: 'planks' },
+      { id: 'deckBoxL', kind: 'prop', prop: 'flowerbox', x: -2.6, y: 0, z: soloZ + 0.2 },
+      { id: 'deckBoxR', kind: 'prop', prop: 'flowerbox', x: 2.6, y: 0, z: soloZ + 0.2 },
+      // the way out: an arch in the outer hedge next to the exit cell
+      { id: 'exitGate', kind: 'prop', prop: 'startgate', x: worldX(TW - 1) + 0.2, y: 0, z: ez, ry: -Math.PI / 2, sx: 0.72 },
+      // garden dressing around the maze
+      { id: 'bushA', kind: 'prop', prop: 'bushround', x: -mx - 1.4, y: 0, z: mz + 0.6 },
+      { id: 'bushB', kind: 'prop', prop: 'bushround', x: mx + 1.3, y: 0, z: mz + 0.8, ry: 2 },
+      { id: 'bushC', kind: 'prop', prop: 'bushround', x: -mx - 1.3, y: 0, z: -mz - 0.6, ry: 4 },
+      { id: 'bushD', kind: 'prop', prop: 'bushround', x: mx + 1.4, y: 0, z: -mz - 0.7, ry: 1 },
+      { id: 'flowA', kind: 'prop', prop: 'flowers', x: -mx - 1.2, y: 0, z: 2.6 },
+      { id: 'flowB', kind: 'prop', prop: 'flowers', x: -mx - 1.3, y: 0, z: -3.2, ry: 2 },
+      { id: 'flowC', kind: 'prop', prop: 'flowers', x: mx + 1.2, y: 0, z: -4.4, ry: 1 },
+      { id: 'flowD', kind: 'prop', prop: 'flowers', x: 5.5, y: 0, z: mz + 1.1, ry: 3 },
+      { id: 'flowE', kind: 'prop', prop: 'flowers', x: -6.4, y: 0, z: mz + 1.2 },
+      { id: 'lampL', kind: 'prop', prop: 'streetlamp', x: -mx - 1.1, y: 0, z: -0.4 },
+      { id: 'lampR', kind: 'prop', prop: 'streetlamp', x: mx + 1.1, y: 0, z: 4.6 },
     ];
-    // fixed walls, merged into horizontal runs (fewer, bigger objects)
+    // fixed walls = hedges, merged into horizontal runs (fewer, bigger objects)
+    const gapX = TW - 1;
+    const gapY = s.exit[1] * 2 + 1;
     for (let y = 0; y < TH; y++) {
       let x = 0;
       while (x < TW) {
-        if (!s.walls[tileIdx(x, y)]) {
+        if (!s.walls[tileIdx(x, y)] || (x === gapX && y === gapY)) {
           x++;
           continue;
         }
         let e = x;
-        while (e + 1 < TW && s.walls[tileIdx(e + 1, y)]) e++;
+        while (e + 1 < TW && s.walls[tileIdx(e + 1, y)] && !(e + 1 === gapX && y === gapY)) e++;
         entities.push({
           id: `w${y}-${x}`,
           kind: 'box',
@@ -448,13 +493,15 @@ export const wandLabyrinth: MinigameDef<WandLabyrinthState> = {
           sx: (e - x + 1) * TS,
           sy: WALL_H,
           sz: TS,
-          color: '#6d7a8c',
+          color: '#5a9f49',
+          mat: 'grass',
         });
         x = e + 1;
       }
     }
     s.sliders.forEach((sl, k) => {
       const a = sl.axis === 'h' ? s.hAnim : s.vAnim;
+      // movable walls: wooden gates painted in their swipe color (orange / purple)
       entities.push({
         id: `sl${k}`,
         kind: 'box',
@@ -464,15 +511,15 @@ export const wandLabyrinth: MinigameDef<WandLabyrinthState> = {
         sx: TS * 0.98,
         sy: WALL_H + 0.1,
         sz: TS * 0.98,
-        color: sl.axis === 'h' ? COLOR_H : COLOR_V,
-        glow: true,
+        color: sl.axis === 'h' ? '#f7801e' : '#9d5cf2',
+        mat: 'planks',
       });
       // rail showing where the wall can slide
       entities.push({
         id: `rail${k}`,
         kind: 'box',
         x: worldX(sl.x + (sl.axis === 'h' ? 1 : 0)),
-        y: 0.03,
+        y: 0.04,
         z: worldZ(sl.y + (sl.axis === 'v' ? 1 : 0)),
         sx: sl.axis === 'h' ? TS * 3 : TS * 0.3,
         sy: 0.04,
@@ -481,9 +528,7 @@ export const wandLabyrinth: MinigameDef<WandLabyrinthState> = {
         alpha: 0.6,
       });
     });
-    const ex = worldX(s.exit[0] * 2 + 1);
-    const ez = worldZ(s.exit[1] * 2 + 1);
-    entities.push({ id: 'exitPad', kind: 'cylinder', x: ex, y: 0.03, z: ez, sx: TS * 0.95, sy: 0.05, sz: TS * 0.95, color: '#5cc08a', glow: true });
+    entities.push({ id: 'exitPad', kind: 'cylinder', x: ex, y: 0.05, z: ez, sx: TS * 0.95, sy: 0.05, sz: TS * 0.95, color: '#5cc08a', glow: true });
     entities.push({ id: 'exitStar', kind: 'star', x: ex, y: 1.6, z: ez, sx: 1.1, sy: 1.1, sz: 1.1, color: '#ffd23f', glow: true });
     for (const i of s.trio) {
       const p = s.ps[i];
@@ -493,7 +538,7 @@ export const wandLabyrinth: MinigameDef<WandLabyrinthState> = {
         kind: 'player',
         player: i,
         x: lerp(worldX(p.cx * 2 + 1), worldX(p.tx * 2 + 1), f),
-        y: 0,
+        y: 0.02,
         z: lerp(worldZ(p.cy * 2 + 1), worldZ(p.ty * 2 + 1), f),
         ry: p.ry,
         sx: 0.8,
@@ -508,16 +553,18 @@ export const wandLabyrinth: MinigameDef<WandLabyrinthState> = {
       kind: 'player',
       player: s.solo,
       x: 0,
-      y: 0,
-      z: worldZ(TH - 1) + 2.2,
+      y: 0.3,
+      z: soloZ,
       ry: 0,
       anim: s.won !== null ? 'sad' : s.cooldown > COOLDOWN - 0.4 ? 'jump' : !s.practice && s.t >= s.duration ? 'cheer' : 'idle',
     });
     const left = trioDistance(s, s.hPos, s.vPos);
     return {
       env: 'grass',
+      scenery: { set: 'garden', clear: { w: TW * TS + 2.4, d: TH * TS + 5, z: 1.2 } },
       camera: { alpha: -Math.PI / 2, beta: 0.45, radius: 31, target: [0, 0, 0.8] },
       entities,
+      fx: viewFx(s),
       hud: {
         timer: s.practice ? undefined : Math.max(0, s.duration - s.t),
         teams: [

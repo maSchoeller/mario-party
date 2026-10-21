@@ -2,6 +2,11 @@
 
 3D-Party-Brettspiel im Browser: Ein Laptop am TV zeigt das Spielbrett, die Spieler steuern mit dem Handy.
 
+**v0.4:**
+- alle 21 Minispiele mit eigener Kulisse (Lagune, Vulkan, Stadt, Eismeer, Wolken, Studio, Wüste …),
+  Oberflächen, Props, Effekten und Tönen
+- Übergänge: Iris-Blende, Kamera-Anflug, Countdown-Töne, Abpfiff, Siegerjubel mit Konfetti
+
 **v0.3:**
 - 8 Figuren, jede mit eigenem Charakterwürfel
 - 2 echte 3D-Würfel pro Zug: Standard plus frei gewählter Zweitwürfel
@@ -62,6 +67,7 @@ npx tsx packages/shared/scripts/balance.ts 60   # Balancing-Kennzahlen (Aufholja
 npx tsx packages/shared/scripts/dice-balance.ts 96   # Siegquote je Charakterwürfel, Felder pro Zug
 npx tsx packages/shared/scripts/map-svg.ts apps/web/public/dev-maps   # Feldgraphen als SVG (→ /dev-maps/<map>.svg)
 node scripts/screenshots.mjs    # Map-Screenshots nach docs/screenshots (braucht laufendes npm run dev + Chrome)
+node scripts/mg-screenshots.mjs # Minispiel-Screenshots nach docs/screenshots/minigames (WIDE=1: zusätzlich weite Einstellung)
 npm run typecheck
 AZURITE=1 npx vitest run apps/server/test/tableStore.test.ts   # mit laufendem Azurite
 ```

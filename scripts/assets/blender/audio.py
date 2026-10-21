@@ -97,12 +97,26 @@ def music():
             write(x, rate, out, 112)
 
 
+def loopify(x, rate, xf=1.2):
+    """Seamless loop: the tail is crossfaded (equal power) into the head."""
+    n = min(int(xf * rate), len(x) // 3)
+    k = np.linspace(0, 1, n)[:, None]
+    out = x[:-n].copy()
+    out[:n] = x[:n] * np.sin(k * np.pi / 2) + x[-n:] * np.cos(k * np.pi / 2)
+    return out
+
+
 def short(kind, target_db, bitrate, mono):
     for src in sorted(glob.glob(os.path.join(SRC, kind, '*.mp3'))):
         out = os.path.join(PUB, kind, os.path.basename(src))
         if fresh(src, out):
             continue
         x, rate = load(src)
+        if os.path.basename(src).startswith('amb_'):
+            # ambience beds (v0.4): quieter, no trimming/fades, seamless loop point
+            x = gain_to(loopify(x, rate), -22)
+            write(x, rate, out, 96, mono)
+            continue
         x = fade(gain_to(trim(x, rate), target_db), rate)
         write(x, rate, out, bitrate, mono)
 

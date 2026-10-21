@@ -1,7 +1,7 @@
 import type { BotLevel } from '../../config';
 import type { Rng } from '../../rng';
 import type { ControllerLayout, MgEntity, MgInput, MgPlayer, MinigameDef } from '../types';
-import { TEAM_COLORS, clamp, faceAngle, teamRanks } from '../util';
+import { TEAM_COLORS, ageFx, clamp, emitFx, faceAngle, teamRanks, viewFx, type FxState } from '../util';
 
 /**
  * #13 Schatz-Tauziehen (2v2, Schütteln): tug of war over a treasure chest. Every shake
@@ -19,7 +19,7 @@ const PULL = 0.25; // rope speed per energy difference
 const WAVE_EVERY = 9;
 const WAVE_LEN = 2.5;
 
-export interface SchatzTauziehenState {
+export interface SchatzTauziehenState extends FxState {
   t: number;
   duration: number;
   practice: boolean;
@@ -67,6 +67,8 @@ export const schatzTauziehen: MinigameDef<SchatzTauziehenState> = {
       wins: [0, 0],
       botAcc: players.map(() => 0),
       botBurst: players.map(() => 1),
+      fx: [],
+      fxN: 0,
     };
   },
   layout: (): ControllerLayout => ({ kind: 'shake', labelKey: 'ctrl.shake' }),
@@ -77,20 +79,42 @@ export const schatzTauziehen: MinigameDef<SchatzTauziehenState> = {
     s.shakeVis[i] = 0.25;
   },
   tick(s, dt, rng) {
+    const wasWave = inWave(s);
+    const prevT = s.t;
+    const prevRope = s.rope;
     s.t += dt;
+    ageFx(s, dt);
     const decay = Math.exp(-DECAY * dt);
     s.energy = s.energy.map((e) => e * decay);
     s.shakeVis = s.shakeVis.map((v) => Math.max(0, v - dt));
     if (s.t >= s.waveAt + WAVE_LEN) s.waveAt = s.t + WAVE_EVERY + rng.range(-2, 2);
     if (s.winner !== null) return;
+    // power wave starts: the chest sparkles
+    if (!wasWave && inWave(s)) emitFx(s, { kind: 'sparkle', sfx: 'magic', x: s.rope, y: 1.6, z: 0, color: '#f2c14e', s: 1.4 }, 0.5);
+    // strong pullers kick up sand now and then (twice a second at most, silent)
+    if (Math.floor(s.t * 2) !== Math.floor(prevT * 2)) {
+      const k = [0, 0];
+      s.players.forEach((_, i) => {
+        const side = sideOf(s, i);
+        const n = k[side]++;
+        if (s.energy[i] > 1.4) emitFx(s, { kind: 'dust', x: s.rope + (side === 0 ? -1 : 1) * (3 + n * 1.8), y: 0.1, z: n % 2 ? 0.35 : -0.35, s: 0.55 });
+      });
+    }
+    // the rope creaks under heavy load
+    if (Math.abs(s.v) > 0.3 && Math.floor(s.t / 1.6) !== Math.floor(prevT / 1.6)) emitFx(s, { sfx: 'creak', x: s.rope, y: 1, z: 0 });
     let left = 0;
     let right = 0;
     s.energy.forEach((e, i) => (sideOf(s, i) === 0 ? (left += e) : (right += e)));
     const target = (right - left) * PULL;
     s.v += (target - s.v) * clamp(dt * 4, 0, 1);
     s.rope += s.v * dt;
+    // the chest slides past the halfway point towards a mark
+    if (Math.abs(s.rope) >= WIN / 2 && Math.abs(prevRope) < WIN / 2) emitFx(s, { kind: 'dust', sfx: 'slide', x: s.rope, y: 0.15, z: 0, s: 1.1 });
     if (Math.abs(s.rope) >= WIN) {
       const side = s.rope > 0 ? 1 : 0;
+      const x = Math.sign(s.rope) * WIN;
+      emitFx(s, { kind: 'coins', sfx: 'coin', x, y: 1.6, z: 0, s: 1.3 }, 0.5);
+      emitFx(s, { kind: 'dust', sfx: 'thud', x, y: 0.15, z: 0, s: 1.4 }, 0.5);
       if (s.practice) {
         s.wins[side]++;
         s.rope = 0;
@@ -129,24 +153,56 @@ export const schatzTauziehen: MinigameDef<SchatzTauziehenState> = {
   },
   view(s) {
     const r = s.rope;
+    const wave = inWave(s) && s.winner === null;
     const entities: MgEntity[] = [
-      { id: 'pit', kind: 'cylinder', x: 0, y: -0.15, z: 0, sx: 3, sy: 0.3, sz: 5, color: '#6fb7d9' },
-      { id: 'center', kind: 'box', x: 0, y: 0.02, z: 2.8, sx: 0.25, sy: 0.04, sz: 1.2, color: '#ffffff' },
-      { id: 'rope', kind: 'cylinder', x: r, y: 1, z: 0, rz: Math.PI / 2, sx: 0.16, sy: 17, sz: 0.16, color: '#c9a66b' },
-      { id: 'chest', kind: 'box', x: r, y: 0.9, z: 0, sx: 1.5, sy: 1, sz: 1.1, color: '#8b5a2b' },
-      { id: 'lid', kind: 'box', x: r, y: 1.55, z: 0, sx: 1.6, sy: 0.35, sz: 1.2, color: '#f2c14e', glow: inWave(s) },
-      { id: 'gem', kind: 'coin', x: r, y: 2.3, z: 0, sx: 0.7, sy: 0.7, sz: 0.7 },
+      // plank-framed water pit in the middle of the beach
+      { id: 'pitSand', kind: 'cylinder', x: 0, y: -0.1, z: 0, sx: 4.4, sy: 0.3, sz: 6.2, color: '#d9bf8a', mat: 'sand', taper: 0.94 },
+      { id: 'pitBed', kind: 'plane', x: 0, y: 0.11, z: 0, sx: 2.62, sz: 4.62, color: '#3aa6cc' },
+      { id: 'pit', kind: 'water', x: 0, y: 0.15, z: 0, sx: 2.6, sz: 4.6, color: '#3fb5da' },
+      { id: 'pitL', kind: 'box', x: -1.42, y: 0.14, z: 0, sx: 0.24, sy: 0.24, sz: 5.08, color: '#a8743f', mat: 'wood' },
+      { id: 'pitR', kind: 'box', x: 1.42, y: 0.14, z: 0, sx: 0.24, sy: 0.24, sz: 5.08, color: '#a8743f', mat: 'wood' },
+      { id: 'pitF', kind: 'box', x: 0, y: 0.14, z: -2.42, sx: 2.6, sy: 0.24, sz: 0.24, color: '#b98350', mat: 'wood' },
+      { id: 'pitB', kind: 'box', x: 0, y: 0.14, z: 2.42, sx: 2.6, sy: 0.24, sz: 0.24, color: '#b98350', mat: 'wood' },
+      { id: 'center', kind: 'box', x: 0, y: 0.03, z: 3.1, sx: 0.25, sy: 0.1, sz: 1, color: '#ffffff' },
+      { id: 'rope', kind: 'cylinder', x: r, y: 1, z: 0, rz: Math.PI / 2, sx: 0.16, sy: 17, sz: 0.16, color: '#d8b77a', mat: 'rope' },
+      { id: 'chest', kind: 'prop', prop: 'chest', x: r, y: 0, z: 0, sx: 1.35 },
+      { id: 'gem', kind: 'coin', x: r, y: 2.25, z: 0, sx: 0.7, sy: 0.7, sz: 0.7 },
+      // glowing ring around the chest during a power wave
+      { id: 'waveRing', kind: 'torus', x: r, y: wave ? 0.08 : -4, z: 0, sx: 2.6, sy: 1, sz: 2.6, color: '#f2c14e', glow: true },
+      // dressing: palms, festival bunting, a crab, beach gear
       { id: 'palm1', kind: 'palm', x: -11, y: 0, z: 6 },
-      { id: 'palm2', kind: 'palm', x: 11, y: 0, z: 6.5 },
+      { id: 'palm2', kind: 'palm', x: 11, y: 0, z: 6.5, ry: 2.2 },
+      { id: 'bunting', kind: 'prop', prop: 'bunting', x: 0, y: 0, z: 6.2, sx: 1.25 },
+      { id: 'crab', kind: 'prop', prop: 'crab', x: 7.2, y: 0, z: 4.4, ry: 0.6, sx: 0.45 },
+      { id: 'barrel1', kind: 'prop', prop: 'barrel', x: -8.6, y: 0, z: 4.6, ry: 0.4 },
+      { id: 'barrel2', kind: 'prop', prop: 'barrel', x: -7.7, y: 0, z: 5.2, ry: 1.3, sx: 0.9 },
+      { id: 'crate', kind: 'prop', prop: 'crate', x: -9.5, y: 0, z: 5.6, ry: 0.3 },
+      { id: 'drift', kind: 'prop', prop: 'driftwood', x: 8.8, y: 0, z: -3.6, ry: 2.6 },
+      { id: 'shell1', kind: 'prop', prop: 'shell', x: -5.6, y: 0, z: -3.4, ry: 0.5 },
+      { id: 'shell2', kind: 'prop', prop: 'shell', x: 3.2, y: 0, z: -4.2, ry: 2 },
+      { id: 'shell3', kind: 'prop', prop: 'shell', x: 6.3, y: 0, z: 2.9, ry: 4 },
+      { id: 'rock1', kind: 'prop', prop: 'rocksmall', x: -2.4, y: 0, z: 4.6, sx: 1.2 },
+      { id: 'grass1', kind: 'prop', prop: 'grass', x: -10.2, y: 0, z: 4.2 },
+      { id: 'grass2', kind: 'prop', prop: 'grass', x: 10.4, y: 0, z: 5, sx: 1.3 },
+      { id: 'bush1', kind: 'prop', prop: 'bush', x: 12.2, y: 0, z: 3.6, sx: 0.9 },
+      { id: 'torch1', kind: 'prop', prop: 'torch', x: -7.8, y: 0, z: -3.2 },
+      { id: 'torch2', kind: 'prop', prop: 'torch', x: 7.8, y: 0, z: -3.2 },
+      { id: 'sign', kind: 'prop', prop: 'signpost', x: -10.2, y: 0, z: -1.2, ry: 0.5 },
+      { id: 'rock2', kind: 'prop', prop: 'rocksmall', x: 5.2, y: 0, z: -6.4, ry: 1.1, sx: 1.4 },
+      { id: 'rock3', kind: 'prop', prop: 'rocksmall', x: 5.9, y: 0, z: -6.1, ry: 2.5, sx: 0.8 },
+      { id: 'shell4', kind: 'prop', prop: 'shell', x: -3.4, y: 0, z: -7.2, ry: 1.2, sx: 1.2 },
+      { id: 'grass3', kind: 'prop', prop: 'grass', x: -8.4, y: 0, z: -6.6, sx: 1.4 },
+      { id: 'grass4', kind: 'prop', prop: 'grass', x: 9.6, y: 0, z: -5.8, sx: 1.2 },
+      { id: 'coco1', kind: 'coconut', x: -10.2, y: 0.12, z: 5.3 },
+      { id: 'coco2', kind: 'coconut', x: -9.7, y: 0.12, z: 5.0 },
     ];
     [0, 1].forEach((side) => {
       const team = s.sides[side];
       const sign = side === 0 ? -1 : 1;
       const color = TEAM_COLORS[team] ?? '#ffffff';
-      // win mark on the ground and a flag
-      entities.push({ id: `mark${side}`, kind: 'box', x: sign * WIN, y: 0.03, z: 0, sx: 0.4, sy: 0.06, sz: 5, color, glow: true });
-      entities.push({ id: `flagPole${side}`, kind: 'cylinder', x: sign * WIN, y: 1.4, z: 2.8, sx: 0.12, sy: 2.8, sz: 0.12, color: '#7a5c45' });
-      entities.push({ id: `flag${side}`, kind: 'box', x: sign * WIN + sign * 0.5, y: 2.5, z: 2.8, sx: 0.9, sy: 0.6, sz: 0.06, color });
+      // win mark on the ground and a team flag
+      entities.push({ id: `mark${side}`, kind: 'box', x: sign * WIN, y: 0.04, z: 0, sx: 0.4, sy: 0.08, sz: 5, color, glow: true });
+      entities.push({ id: `flag${side}`, kind: 'prop', prop: 'flag', x: sign * WIN, y: 0, z: 2.9, ry: side === 0 ? 0 : Math.PI, sx: 0.85, color });
     });
     const k = [0, 0];
     s.players.forEach((_, i) => {
@@ -168,9 +224,12 @@ export const schatzTauziehen: MinigameDef<SchatzTauziehenState> = {
       });
       entities.push({ id: `ring${i}`, kind: 'torus', x, y: 0.05, z: n % 2 ? 0.35 : -0.35, sx: 1.4, sy: 1, sz: 1.4, color: TEAM_COLORS[s.players[i].team] ?? '#ffffff' });
     });
+    for (const e of entities) if (e.kind === 'prop' || e.kind === 'palm') e.y = -0.03;
     const pct = (side: number) => `${Math.round(clamp((side === 0 ? -r : r) / WIN, 0, 1) * 100)} %`;
     return {
       env: 'sand',
+      scenery: { set: 'beach', clear: { w: 26, d: 15, z: 0.5 } },
+      fx: viewFx(s),
       camera: { alpha: -Math.PI / 2, beta: 1.12, radius: 19, target: [r * 0.4, 1, 0] },
       entities,
       hud: {

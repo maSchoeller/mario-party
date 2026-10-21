@@ -1,6 +1,6 @@
 import type { Rng } from '../../rng';
 import type { MgEntity, MgInput, MgPlayer, MinigameDef } from '../types';
-import { clamp, dist2, faceAngle, moveWithStick, ranksFromScores, ringSpawn, skill, steerTo } from '../util';
+import { ageFx, clamp, dist2, emitFx, faceAngle, moveWithStick, ranksFromScores, ringSpawn, skill, steerTo, viewFx, type FxState } from '../util';
 
 /**
  * #1 Kokos-Regen (FFA, Joystick): catch falling coconuts (+1), dodge falling stones
@@ -29,7 +29,7 @@ interface P {
   think: number;
 }
 
-export interface KokosRegenState {
+export interface KokosRegenState extends FxState {
   t: number;
   duration: number;
   practice: boolean;
@@ -65,6 +65,8 @@ export const kokosRegen: MinigameDef<KokosRegenState> = {
       spawnIn: 0.5,
       nextId: 1,
       flashes: [],
+      fx: [],
+      fxN: 0,
     };
   },
   layout: () => ({ kind: 'joystick' }),
@@ -113,20 +115,26 @@ export const kokosRegen: MinigameDef<KokosRegenState> = {
         }
       });
       if (f.kind === 'stone') {
+        let hit = false;
         s.ps.forEach((p) => {
           if (dist2(p.x, p.z, f.x, f.z) < hitR * hitR && p.stun <= 0) {
             p.stun = 1.4;
             p.score = Math.max(0, p.score - 1);
             s.flashes.push({ x: p.x, z: p.z, t: 0.6, kind: 'hit' });
+            emitFx(s, { kind: 'hit', sfx: 'thud', x: p.x, y: 1.6, z: p.z });
+            hit = true;
           }
         });
+        if (!hit) emitFx(s, { kind: 'dust', sfx: 'land', x: f.x, y: 0.1, z: f.z, s: 0.9 });
       } else if (best >= 0) {
         s.ps[best].score++;
         s.flashes.push({ x: f.x, z: f.z, t: 0.5, kind: 'catch' });
-      }
+        emitFx(s, { kind: 'sparkle', sfx: 'catch', x: s.ps[best].x, y: 1.8, z: s.ps[best].z });
+      } else emitFx(s, { kind: 'dust', x: f.x, y: 0.1, z: f.z, s: 0.6 });
     }
     s.fallers = s.fallers.filter((f) => f.eta > 0);
     s.flashes = s.flashes.filter((fl) => (fl.t -= dt) > 0);
+    ageFx(s, dt);
   },
   isOver: (s) => !s.practice && s.t >= s.duration,
   result: (s) => ranksFromScores(s.ps.map((p) => p.score)),
@@ -156,10 +164,18 @@ export const kokosRegen: MinigameDef<KokosRegenState> = {
   },
   view(s) {
     const entities: MgEntity[] = [
-      { id: 'beach', kind: 'cylinder', x: 0, y: -0.25, z: 0, sx: R * 2, sy: 0.5, sz: R * 2, color: '#efe2c0' },
-      { id: 'palm1', kind: 'palm', x: -R - 1.5, y: 0, z: 3 },
-      { id: 'palm2', kind: 'palm', x: R + 1.5, y: 0, z: 2 },
-      { id: 'palm3', kind: 'palm', x: 2, y: 0, z: R + 1.5 },
+      // sandy island with a wet rim sloping into the lagoon, palms and a few shells
+      { id: 'beach', kind: 'cylinder', x: 0, y: -0.3, z: 0, sx: R * 2 + 2, sy: 0.6, sz: R * 2 + 2, color: '#f0e0b6', mat: 'sand', taper: (R * 2) / (R * 2 + 2) },
+      { id: 'rim', kind: 'cylinder', x: 0, y: -1.1, z: 0, sx: R * 2 + 7, sy: 1, sz: R * 2 + 7, color: '#d6c08c', mat: 'sand', taper: (R * 2 + 2) / (R * 2 + 7) },
+      { id: 'palm1', kind: 'palm', x: -R - 0.4, y: -0.1, z: 3 },
+      { id: 'palm2', kind: 'palm', x: R + 0.2, y: -0.1, z: 2, ry: 2 },
+      { id: 'palm3', kind: 'palm', x: 2, y: -0.1, z: R + 0.3, ry: 4 },
+      { id: 'bush1', kind: 'prop', prop: 'bush', x: -R + 0.4, y: 0, z: 5.6 },
+      { id: 'bush2', kind: 'prop', prop: 'bush', x: R - 1.4, y: 0, z: 5.2, sx: 0.8 },
+      { id: 'fern1', kind: 'prop', prop: 'fern', x: 4.6, y: 0, z: R - 1.2 },
+      { id: 'shell1', kind: 'prop', prop: 'shell', x: -3, y: 0, z: -R + 0.8 },
+      { id: 'shell2', kind: 'prop', prop: 'shell', x: 5.2, y: 0, z: -R + 2.4, ry: 2 },
+      { id: 'drift', kind: 'prop', prop: 'driftwood', x: -R + 1.6, y: 0, z: -3.2, ry: 0.7 },
     ];
     s.ps.forEach((p, i) =>
       entities.push({
@@ -181,8 +197,10 @@ export const kokosRegen: MinigameDef<KokosRegenState> = {
     s.flashes.forEach((fl, k) => entities.push({ id: `fx${k}`, kind: fl.kind === 'catch' ? 'coin' : 'star', x: fl.x, y: 1.5 + (0.6 - fl.t) * 3, z: fl.z, alpha: fl.t * 2, sx: 0.6, sy: 0.6, sz: 0.6 }));
     return {
       env: 'water',
+      scenery: { set: 'lagoon', clear: { r: R + 3 }, water: -0.5 },
       camera: { alpha: -Math.PI / 2, beta: 0.85, radius: 24, target: [0, 0, 0.5] },
       entities,
+      fx: viewFx(s),
       hud: {
         timer: s.practice ? undefined : Math.max(0, s.duration - s.t),
         scores: s.ps.map((p, i) => ({ player: i, value: `🥥 ${p.score}` })),
