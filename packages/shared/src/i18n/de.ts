@@ -23,6 +23,7 @@ export const de: Record<string, string> = {
   'common.loading': 'Lädt …',
   'common.bot': 'CPU',
   'common.you': 'Du',
+  'common.close': 'Schließen',
 
   // ------------------------------------------------------------------ host
   'host.createLobby': 'Lobby erstellen',
@@ -70,6 +71,7 @@ export const de: Record<string, string> = {
   'host.devPanel': 'Testansicht mit simulierten Handys',
   'host.coinsShort': 'Münzen',
   'host.reaction': 'Reaktion',
+  'host.minimap': 'Übersicht des Spielbretts',
 
   // ------------------------------------------------------------------ controller (phone)
   'play.title': 'Würfel-Bande Controller',
@@ -166,6 +168,17 @@ export const de: Record<string, string> = {
   'play.reconnecting': 'Verbinde neu …',
   'play.relayMode': 'Relay-Modus',
   'play.transferChief': 'Chef-Rolle abgeben',
+  'play.inventory': 'Inventar',
+  'play.roundLabel': 'Runde',
+  'play.itemsCount': 'Items ({count} / {max})',
+  'play.noItemsHint': 'Noch keine Items – es gibt sie im Laden und auf Item-Feldern.',
+  'play.ticketsDesc': 'Damit fährst du am Bahnhof gratis.',
+  'play.starDiscountDesc': 'Der nächste Stern kostet nur die Hälfte.',
+  'play.yourDie': 'Dein Würfel: {die}',
+  'play.chiefMenu': 'Bandenchef',
+  'play.volume': 'Ton',
+  'play.volumeTitle': 'Lautstärke am TV',
+  'play.volumeHint': 'Gilt für den Fernseher – wird dort gespeichert.',
 
   // controller layouts
   'ctrl.tapFast': 'TIPPEN!',
@@ -358,6 +371,7 @@ export const de: Record<string, string> = {
   'mod.blue': '{player} bekommt Münzen!',
   'mod.red': 'Autsch, {player} verliert Münzen!',
   'mod.starBought': '{player} schnappt sich einen Stern! Der Stern zieht weiter …',
+  'mod.starLimit': 'Nur ein Stern pro Zug – {player} läuft weiter!',
   'mod.starTooExpensive': '{player} hat zu wenig Münzen für den Stern. Er kostet {price}!',
   'mod.shopBought': '{player} kauft {item}!',
   'mod.shopNoMoney': 'Der Händler winkt ab – {player} ist pleite!',
@@ -365,6 +379,7 @@ export const de: Record<string, string> = {
   'mod.itemField': '{player} findet {item}!',
   'mod.duel': 'Duell! {player} fordert jemanden heraus!',
   'mod.duelWin': '{player} gewinnt das Duell!',
+  'mod.duelNoCoins': 'Duellfeld – aber ohne Münzen gibt es nichts zu holen!',
   'mod.draw': 'Unentschieden!',
   'mod.steal': '{player} klaut {coins} Münzen!',
   'mod.starSteal': 'Frechheit! {player} klaut einen Stern!',
@@ -389,6 +404,8 @@ export const de: Record<string, string> = {
   'mod.finale': 'Das Finale beginnt! {leader} führt mit {stars} Sternen. Noch fünf Runden – blaue und rote Felder zählen doppelt!',
   'mod.catchup': 'Halbzeit! {player} liegt hinten und darf am Aufhol-Rad drehen!',
   'mod.starFlees': 'Der Stern flieht vor der Lava!',
+  'mod.starFleesTide': 'Die Flut schneidet den Stern ab – er zieht weiter!',
+  'mod.blocked': 'Der Weg ist versperrt – {player} bleibt hier stehen.',
   'mod.wheel.star': 'Ein Stern! Einfach so!',
   'mod.wheel.stealStar': 'Stern-Raub beim Führenden!',
   'mod.finaleWheel': '{player} liegt hinten und darf am Glücksrad drehen!',
@@ -418,7 +435,7 @@ export const de: Record<string, string> = {
 
   // ------------------------------------------------------------------ minigames (MINI-04 explanations)
   'mg.kokosRegen.name': 'Kokos-Regen',
-  'mg.kokosRegen.desc': 'Fang die fallenden Kokosnüsse und weich den Steinen aus! Rote Schatten = Stein.',
+  'mg.kokosRegen.desc': 'Fang die fallenden Kokosnüsse und weich den Steinen aus! Rote Schatten = Stein. Gleichstand? Weniger Steintreffer gewinnen.',
   'mg.kokosRegen.controls': 'Joystick: laufen',
   'mg.gipfelSprint.name': 'Gipfel-Sprint',
   'mg.gipfelSprint.desc': 'Renn den Vulkan hoch – wer zuerst oben ist, gewinnt!',

@@ -10,7 +10,7 @@ import { clear, h } from '../common/dom';
 import type { LinkMode } from '../net/peerLink';
 import { PhoneNetwork } from '../net/phoneNetwork';
 import { layoutKey, mountController, type MountedController } from './controllers';
-import { renderScreen, renderHeader, screenKey } from './screens';
+import { renderScreen, renderHeader, renderSheet, screenKey, sheetAllowed, sheetKey, type SheetKind } from './screens';
 import { requestMotionPermission, vibrate, wantWakeLock } from './sensors';
 
 /**
@@ -24,6 +24,9 @@ export interface PlayApp {
   mode: LinkMode;
   token: string;
   rerender(): void;
+  /** bottom sheet over the current screen (inventory, chief's TV volumes) */
+  openSheet(kind: SheetKind): void;
+  closeSheet(): void;
 }
 
 const params = new URLSearchParams(location.search);
@@ -39,6 +42,7 @@ let headerEl: HTMLElement | null = null;
 let code = normalizeCode(params.get('code') ?? localStorage.getItem('wb.lastCode') ?? '');
 let name = localStorage.getItem('wb.name') ?? '';
 let hostOnline = true;
+let sheet: { kind: SheetKind; key: string; el: HTMLElement } | null = null;
 
 // the dev view (/dev) runs several simulated phones in one browser: keep their tokens apart
 const devSuffix = params.get('dev') ? `.dev${params.get('dev')}` : '';
@@ -114,7 +118,32 @@ const app: PlayApp = {
   mode: 'connecting',
   token: '',
   rerender: () => render(true),
+  openSheet(kind) {
+    closeSheet();
+    if (!env || !sheetAllowed(env, kind)) return;
+    sheet = { kind, key: sheetKey(env, kind), el: renderSheet(app, env, kind) };
+    document.body.append(sheet.el);
+  },
+  closeSheet: () => closeSheet(),
 };
+
+function closeSheet() {
+  sheet?.el.remove();
+  sheet = null;
+}
+
+/** Keeps an open sheet across re-renders (it lives outside #app); content changes with its key only. */
+function syncSheet() {
+  if (!sheet) return;
+  if (!env || !sheetAllowed(env, sheet.kind)) return closeSheet();
+  const key = sheetKey(env, sheet.kind);
+  if (key !== sheet.key) {
+    const fresh = renderSheet(app, env, sheet.kind);
+    sheet.el.replaceWith(fresh);
+    sheet = { kind: sheet.kind, key, el: fresh };
+  }
+  if (!sheet.el.isConnected) document.body.append(sheet.el);
+}
 
 let motionOk = false;
 function hello() {
@@ -188,6 +217,7 @@ function render(force = false) {
   if (!joined || (!env && errorKey)) {
     mounted?.destroy();
     mounted = null;
+    closeSheet();
     clear(root);
     currentKey = 'join';
     if (joined && !env) root.append(h('div', { class: 'screen center' }, h('div', { class: 'card pad' }, t('play.joining'))));
@@ -207,14 +237,19 @@ function render(force = false) {
     // same screen: update header + dynamic controller parts only
     updateHeader();
     if (mounted?.update && (env.view.screen === 'mg' || env.view.screen === 'mgIntro')) mounted.update(env.view.layout);
-    const dyn = screenEl.querySelector('[data-dynamic]');
-    if (dyn) {
+    const dyn = screenEl.querySelectorAll('[data-dynamic]');
+    if (dyn.length) {
       const fresh = renderScreen(app, env, { mountController: () => null });
-      const freshDyn = fresh.querySelector('[data-dynamic]');
-      if (freshDyn) dyn.replaceWith(freshDyn);
+      const freshDyn = fresh.querySelectorAll('[data-dynamic]');
+      // pairs by position; a changed structure falls back to a full render
+      if (freshDyn.length !== dyn.length) return render(true);
+      dyn.forEach((el, i) => el.replaceWith(freshDyn[i]));
     }
+    syncSheet();
     return;
   }
+  // a new decision is more important than an open sheet (opening one during a decision is fine)
+  if (env.view.screen === 'decide') closeSheet();
   currentKey = key;
   mounted?.destroy();
   mounted = null;
@@ -230,6 +265,7 @@ function render(force = false) {
     },
   });
   root.append(headerEl, screenEl);
+  syncSheet();
 }
 
 // auto-join with a stored token (reconnect, LOBBY-05); QR links prefill the code

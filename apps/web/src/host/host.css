@@ -233,6 +233,24 @@ button.primary {
   font-size: 2.8vh;
   font-weight: 800;
 }
+.pstats .items {
+  display: flex;
+  gap: 0.4vh;
+  margin-left: auto;
+}
+.pstats .it {
+  display: inline-flex;
+  align-items: center;
+  font-size: 2.4vh;
+  line-height: 1;
+  padding: 0.4vh 0.5vh;
+  border-radius: 1vh;
+  background: rgba(236, 234, 246, 0.9);
+}
+.pstats .it small {
+  font-size: 1.6vh;
+  margin-left: 0.2vh;
+}
 .pstats .stars {
   color: #c99a1a;
 }
@@ -418,7 +436,7 @@ button.primary {
 }
 .layer-gimmick .gimmick {
   position: absolute;
-  top: 13vh;
+  top: 15vh;
   right: 2vh;
   padding: 1.2vh 2vh;
   font-size: 2.4vh;
@@ -805,9 +823,10 @@ table.stats td:first-child {
   text-align: center;
   font-size: 2.6vh;
 }
+/* rare connection notice: top centre under the round pill, the bottom belongs to the minimap */
 .server-status {
   position: fixed;
-  bottom: 2vh;
+  top: 15.5vh;
   left: 50%;
   transform: translateX(-50%);
   padding: 1vh 3vh;
@@ -815,28 +834,33 @@ table.stats td:first-child {
   font-size: 2.4vh;
 }
 
+/* mouse-only settings: the gear appears while the mouse moves (right edge, middle – free of HUD cards) */
 .settings-dock {
   position: fixed;
-  left: 50%;
-  bottom: 1vh;
-  transform: translateX(-50%) translateX(42vw);
-  pointer-events: auto;
+  right: 2vh;
+  top: 50%;
+  transform: translateY(-50%);
   display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 1vh;
-  opacity: 0.35;
+  align-items: center;
+  gap: 1.2vh;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.3s;
 }
-.settings-dock:hover {
+.settings-dock.show {
   opacity: 1;
+  pointer-events: auto;
 }
 .settings-dock .gear {
-  font-size: 2.4vh;
+  font-size: 3vh;
+  width: 6vh;
+  height: 6vh;
   min-height: 0;
   min-width: 0;
-  padding: 0.5vh 1vh;
-  background: transparent;
-  box-shadow: none;
+  padding: 0;
+  border-radius: 50%;
+  background: var(--card);
+  box-shadow: var(--shadow);
 }
 .volume {
   padding: 1.5vh 2vh;
@@ -844,7 +868,7 @@ table.stats td:first-child {
   flex-direction: column;
   gap: 1vh;
   font-weight: 800;
-  font-size: 1.8vh;
+  font-size: 2vh;
 }
 .volume.hidden {
   display: none;
@@ -852,6 +876,91 @@ table.stats td:first-child {
 .volume label {
   display: flex;
   justify-content: space-between;
-  gap: 1vh;
+  gap: 1.5vh;
   align-items: center;
+}
+
+/* board overview (v0.5): bottom centre between the lower player cards */
+.layer-minimap {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding-bottom: 2vh;
+}
+.minimap {
+  padding: 1vh 1.4vh;
+  background: rgba(255, 255, 255, 0.62);
+  transition: opacity 0.3s, visibility 0.3s;
+}
+.minimap svg {
+  display: block;
+  height: 19vh;
+  width: auto;
+  max-width: 36vw;
+  overflow: visible;
+}
+#ui:has(.layer-overlay > *, .layer-system > *, .layer-center .wheel, .layer-transition .iris) .minimap {
+  opacity: 0;
+  visibility: hidden;
+}
+/* the moderator subtitle sits above the minimap */
+#ui:has(.layer-minimap > .minimap) .layer-subtitle {
+  padding-bottom: 25vh;
+}
+.mm-paths line {
+  stroke: #8f88ad;
+  stroke-width: 1.1;
+  stroke-linecap: round;
+  opacity: 0.75;
+}
+.mm-fields circle {
+  stroke: rgba(61, 58, 85, 0.55);
+  stroke-width: 0.3;
+}
+.mm-icons text {
+  font-size: 4.6px;
+  text-anchor: middle;
+  dominant-baseline: central;
+}
+.mm-warn {
+  fill: none;
+  stroke: #e8676b;
+  stroke-width: 0.55;
+  stroke-dasharray: 1 0.7;
+}
+.mm-blocked circle {
+  stroke: #fff;
+  stroke-width: 0.35;
+}
+.mm-blocked.water circle {
+  fill: #3f8fd0;
+}
+.mm-blocked.lava circle {
+  fill: #ff6a2b;
+}
+.mm-blocked path {
+  stroke: #fff;
+  stroke-width: 0.5;
+  stroke-linecap: round;
+}
+.mm-star {
+  fill: #ffd25e;
+  stroke: #8a5a00;
+  stroke-width: 0.4;
+  stroke-linejoin: round;
+}
+.mm-token {
+  stroke: #fff;
+  stroke-width: 0.55;
+  stroke-linejoin: round;
+}
+.mm-active {
+  fill: none;
+  stroke-width: 0.6;
+  animation: mm-pulse 1.4s ease-in-out infinite;
+}
+@keyframes mm-pulse {
+  50% {
+    opacity: 0.2;
+  }
 }

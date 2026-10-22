@@ -75,6 +75,8 @@ export interface MeInfo {
   stars: number;
   items: ItemId[];
   tickets: number;
+  /** the current map knows train tickets (show the count even when it is 0) */
+  usesTickets?: boolean;
   starDiscount: boolean;
 }
 
@@ -92,6 +94,10 @@ export type PhoneDecision =
   | { kind: 'itemReplace'; newItem: ItemId }
   | { kind: 'duelPick'; options: { player: number; name: string; character: CharacterId; coins: number }[] }
   | { kind: 'wheel'; segments: string[] };
+
+/** Separate TV volumes (AUDIO-06), 0..1 each. */
+export type VolumeKind = 'music' | 'sfx' | 'voice';
+export type Volumes = Record<VolumeKind, number>;
 
 export interface AfkInfo {
   /** seconds until the computer decides for an idle player (BOARD-04) */
@@ -134,6 +140,8 @@ export interface ViewEnvelope {
   paused: boolean;
   round?: { round: number; total: number };
   afk?: AfkInfo | null;
+  /** current TV volumes, only sent to the chief (who can change them) */
+  volumes?: Volumes;
   view: ControllerView;
 }
 
@@ -150,6 +158,7 @@ export type PhoneToHost =
   | { t: 'ready' }
   | { t: 'pause'; paused: boolean }
   | { t: 'ff'; on: boolean }
+  | { t: 'volume'; kind: VolumeKind; value: number }
   | { t: 'emoji'; emoji: string }
   | { t: 'time'; id: number; c: number }
   | { t: 'postgame'; choice: 'rematch' | 'lobby' };

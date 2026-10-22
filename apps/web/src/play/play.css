@@ -28,7 +28,7 @@ body.play {
   gap: 0.35rem;
   font-size: 1.1rem;
   flex: 1;
-  min-width: 0;
+  min-width: 4.5rem;
 }
 .phone-header .name {
   overflow: hidden;
@@ -43,8 +43,16 @@ body.play {
   gap: 0.6rem;
 }
 .phone-header .round {
-  font-size: 0.8rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  font-size: 0.85rem;
+  line-height: 1.05;
   color: var(--ink-soft);
+}
+.phone-header .round small {
+  font-size: 0.62rem;
+  font-weight: 700;
 }
 .phone-header .link {
   font-size: 0.7rem;
@@ -676,9 +684,14 @@ button.primary.done {
   font-weight: 800;
 }
 .afk {
+  /* stays in view on long decision screens (shop) */
+  position: sticky;
+  top: 0.4rem;
+  z-index: 2;
   background: #fff1d6;
   font-weight: 900;
   text-align: center;
+  box-shadow: 0 0 0 3px #f4a259, var(--shadow);
 }
 
 /* ---------------------------------------------------------------- dice (v0.3) */
@@ -749,4 +762,160 @@ button.primary.done {
   font-weight: 600;
   color: var(--ink-soft);
   line-height: 1.15;
+}
+
+/* ---------------------------------------------------------------- inventory + chief sheets (v0.5) */
+.phone-header .inv-btn {
+  position: relative;
+  font-size: 1.5rem;
+  padding: 0 0.5rem;
+  background: #fff;
+  flex: none;
+}
+.phone-header .inv-btn .badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 20px;
+  height: 20px;
+  border-radius: 10px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 0.75rem;
+  line-height: 20px;
+  text-align: center;
+}
+.sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  background: rgba(50, 48, 80, 0.45);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  animation: sheet-fade 0.18s ease-out;
+}
+.sheet {
+  width: min(560px, 100%);
+  max-height: 88dvh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border-radius: 24px 24px 0 0;
+  padding: 0.8rem 1rem calc(1rem + env(safe-area-inset-bottom));
+  background: #fff;
+  animation: sheet-up 0.22s cubic-bezier(0.2, 0.9, 0.3, 1);
+}
+.sheet-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  position: sticky;
+  top: -0.8rem;
+  padding-top: 0.2rem;
+  background: inherit;
+}
+.sheet-head h2 {
+  margin: 0;
+}
+.sheet-head .close {
+  background: #eceaf6;
+  font-size: 1.2rem;
+  flex: none;
+}
+.sheet-body h3 {
+  margin: 0.9rem 0 0.4rem;
+}
+.inv-stats {
+  display: flex;
+  gap: 1.2rem;
+  font-size: 1.4rem;
+  font-weight: 900;
+  margin-top: 0.4rem;
+}
+.inv-stats .stars {
+  color: #c99a1a;
+}
+.inv-items {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+.inv-items li {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  background: #f4f3fa;
+  border-radius: 14px;
+  padding: 0.5rem 0.7rem;
+}
+.inv-items .emoji {
+  font-size: 1.9rem;
+  flex: none;
+}
+.inv-items div {
+  display: flex;
+  flex-direction: column;
+}
+.inv-items small {
+  color: var(--ink-soft);
+  font-weight: 600;
+  line-height: 1.2;
+}
+.sheet-body + .inv-items {
+  margin-top: 0.4rem;
+}
+.inv-die {
+  text-align: center;
+}
+.inv-die h3 {
+  text-align: left;
+}
+.vol-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 0.2rem 0.6rem;
+  margin: 0.8rem 0;
+  font-weight: 800;
+}
+.vol-row output {
+  color: var(--ink-soft);
+  font-variant-numeric: tabular-nums;
+}
+.vol-row input[type='range'] {
+  grid-column: 1 / -1;
+  width: 100%;
+  min-height: 48px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  accent-color: var(--pill);
+}
+.chief-menu h3 {
+  margin: 0 0 0.5rem;
+}
+.chief-tools {
+  flex-wrap: wrap;
+}
+button.wide {
+  width: 100%;
+  margin-bottom: 0.6rem;
+}
+.pause-overlay .vol-btn {
+  font-size: 1rem;
+}
+@keyframes sheet-up {
+  from {
+    transform: translateY(40%);
+    opacity: 0;
+  }
+}
+@keyframes sheet-fade {
+  from {
+    opacity: 0;
+  }
 }
