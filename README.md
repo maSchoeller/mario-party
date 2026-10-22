@@ -2,6 +2,11 @@
 
 3D-Party-Brettspiel im Browser: Ein Laptop am TV zeigt das Spielbrett, die Spieler steuern mit dem Handy.
 
+**v0.5:**
+- Feinschliff statt neuer Features: Bots nach menschlichem Referenzmodell, fairere 1-gegen-3-Spiele,
+  Vulkan-Map mit echtem Kraterpfad, keine flackernden Flächen, scharfes Bild nach dem Laden
+- Minimap am TV, Item-Symbole aller Spieler, Inventar und Lautstärke am Handy
+
 **v0.4:**
 - alle 21 Minispiele mit eigener Kulisse (Lagune, Vulkan, Stadt, Eismeer, Wolken, Studio, Wüste …),
   Oberflächen, Props, Effekten und Tönen

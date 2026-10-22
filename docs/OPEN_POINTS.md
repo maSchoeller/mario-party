@@ -1,6 +1,20 @@
 # Offene Punkte
 
-Stand 20.10.2026 (v0.3). Alles andere ist lokal lauffähig und getestet, siehe [STATUS.md](STATUS.md).
+Stand 21.10.2026 (v0.5). Alles andere ist lokal lauffähig und getestet, siehe [STATUS.md](STATUS.md).
+
+## 0b. Neu in v0.5 (Feinschliff, zur Abnahme)
+
+| Thema | Ergebnis | Zur Abstimmung |
+|---|---|---|
+| **Bots gegen Menschen** | Minispiel-Bots folgen einem menschlichen Referenzmodell (Reaktionszeit, Tippen, Zielen, Zählen …), sehen nur, was am TV sichtbar ist, und reagieren mit TV-Verzögerung ([BALANCING.md](BALANCING.md)). | In reinen Geschicklichkeitsspielen (Tippen, Schnellzieher, Schatz-Tauziehen, Strich-Künstler) gewinnt „Schwer“ gegen „Mittel“ weiter 85–98 %. Mehr Streuung pro Bot wäre möglich, wirkt aber unrealistisch. |
+| **Geänderte Spielgefühle** | Ballon-Bombardement: ein Pumpstoß braucht 0,2 s (hektisches Schütteln ist nicht schneller). Kokos-Kanonier: Flugzeit 0,68 s, Trefferradius 2,0. Laternen-Jagd: Fangzeit 1,25 → 0,85 s. Joystick: äußerer Ring = volle Geschwindigkeit. Wackel-Brücke: sanftere Böen. Tandem-Tretboot: kürzere Strecke. | Kurzer Playtest mit Menschen. |
+| **Vulkan-Map** | Der Kraterpfad führt jetzt wirklich über den Vulkan, der Ringweg außen herum, die Lava entspringt im Krater. Feldzahl/Abzweigungen gleich. | – |
+| **Weitere Felder** | Kokosnuss 73 → 75 Felder (Dschungel- und Leuchtturmweg je +1), Bimmelbahn 61 → 62 (Marktstraße +1) – sonst gab es zu lange Einzelschritte. | – |
+| **Minimap, Items, Inventar, Lautstärke** | Minimap unten Mitte; Item-Symbole auf allen TV-Spielerkarten; 🎒-Inventar jederzeit am Handy; Lautstärke im Bandenchef-Menü, Zahnrad am TV nur bei Mausbewegung. | – |
+| **Bandenchef nach Reconnect** | Verbindet sich das Handy des Bandenchefs kurz neu, geht die Rolle an den nächsten Spieler und kommt nicht zurück. | Soll die Rolle bei Rückkehr zurückgehen? |
+| **Sterne auf reichen Maps** | Kokosnuss/Vulkan enden mit 55–67 ungenutzten Münzen (Sterne sind durch Wege, nicht Münzen begrenzt). | Sternpreis auf diesen Maps erhöhen? |
+| **Charakterwürfel** | Foxy 18,7 ± 4,4 % (300 Partien), sonst alle um 25 %. | Beobachten, erst mit 600+ Partien entscheiden. |
+| **Laternen-Radar** | Während der Solo läuft, schickt der Host 7–10 Ansichten pro Sekunde an alle Handys. | Bei Problemen im echten WLAN nur an den Solo senden. |
 
 ## 0a. Neu in v0.4 (Feature-Branch, zur Abnahme)
 
