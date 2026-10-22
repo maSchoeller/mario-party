@@ -76,14 +76,17 @@ schauen bei `ry = 0` zur Kamera; `faceAngle(dx, dz)` liefert `ry` für eine Blic
 | `cone` | Kegel Ø 1 unten, Höhe 1, **Basis bei y** |
 | `torus` | Ring Ø 1, liegt flach, zentriert |
 | `plane` | flache Fläche `sx × sz` bei Höhe y |
-| `coin` / `star` | Münze / Stern ~Ø 1, dreht sich |
-| `rock` / `coconut` / `balloon` | Fels Ø ~1 / Kokosnuss Ø ~0.7 / Ballon Ø 1 mit Schnur (zentriert) |
+| `coin` / `star` | Münze (steht aufrecht) / Stern ~Ø 1, zentriert, drehen sich um y |
+| `rock` / `coconut` / `balloon` | Fels Ø ~1 (×0.7 flach) / Kokosnuss Ø ~0.7 / Ballon Ø 1 (zentriert); die Schnur bleibt 1 lang und hängt immer am Ballon |
 | `palm` | Palme ~5 hoch, Basis bei y |
-| `boat` | Floß/Boot ~3 lang (x-Achse), Basis bei y |
-| `train` | Lok ~4 lang (x-Achse), Basis bei y |
-| `lantern` | Laterne mit Lichtschein (für `env: 'night'`) |
+| `boat` | Ruderboot ~3 lang, **Bug bei +x** (`ry = 0`), Wasserlinie bei y |
+| `train` | Lok ~4 lang, **Front bei +x** (`ry = 0`), Basis bei y |
+| `lantern` | Handlaterne ~0,7 hoch mit Licht, **Griff bei y** (getragen: y ≈ 1,2), das Glas hängt darunter |
 
-Weitere Felder: `color` (Hex), `alpha` (0..1), `glow` (leuchtet), `rx/ry/rz` (Radiant),
+Boot und Lok in Richtung `(dx, dz)` drehen: `ry = Math.atan2(-dz, dx)`.
+
+Weitere Felder: `color` (Hex), `alpha` (0..1, wirkt pro Frame auf alle Teile inkl. Figuren und
+Label – Ein-/Ausblenden baut nichts neu; ab < 0,5 kein Schatten, ≤ 0,02 ausgeblendet), `glow` (leuchtet), `rx/ry/rz` (Radiant),
 `label` (kurzer Text **ohne** Sprache, z. B. Zahl) bzw. `labelKey` (i18n-Key).
 Entity-IDs müssen über die Zeit stabil sein (der Renderer diffed per `id`).
 
@@ -101,11 +104,21 @@ Alles optional, aber jedes Minispiel nutzt es:
 | Feld | Wirkung |
 |---|---|
 | `view.scenery = { set, clear, ground?, water?, seed? }` | Kulisse rund um die Spielfläche (`apps/web/src/host/render/mgScenery.ts`): Höhenfeld wie auf den Brettern, Wasser/Lava, Vegetation und Props aus der Bibliothek, Landmarken, Vögel, Wolken, Partikel, Licht und ein Ambient-Loop. `clear` (Kreis `r` oder Rechteck `w × d`) bleibt frei. Sets: `lagoon`, `beach`, `volcano`, `summit`, `meadow`, `garden`, `city`, `ice`, `clouds`, `studio`, `desert`, `nightwood`. Ohne `scenery` gilt der alte `env`-Hintergrund. |
-| `entity.mat` | Oberfläche für box/cylinder/plane/sphere/cone: `wood`, `planks`, `stone`, `tiles`, `metal`, `ice`, `snow`, `sand`, `grass`, `cloth`, `rope`, `lava` (leuchtet), `paper`, `gold`, `basalt`. Kachelnde Detail-Textur in Weltgröße + weiche Schattierung nach unten. Die Geometrie wird in der **ersten** Größe gebaut, spätere Skalierung streckt die Textur. |
+| `entity.mat` | Oberfläche für box/cylinder/plane/sphere/cone: `wood`, `planks`, `stone`, `tiles`, `metal`, `ice`, `snow`, `sand`, `grass`, `cloth`, `rope`, `lava` (leuchtet), `paper`, `gold`, `basalt`. Kachelnde Detail-Textur in Weltgröße + weiche Schattierung nach unten. Die Geometrie wird in ihrer Größe gebaut und bei > 10 % Größenänderung neu gebaut (die Textur behält ihren Maßstab). |
 | `entity.taper` | Zylinder mit `mat`: oberer Durchmesser relativ zum unteren (z. B. abfallender Strand). |
 | `kind: 'prop'`, `prop: '<id>'` | Modell aus der Prop-Bibliothek (Basis bei `y`, Größe über `sx`, `color` = Tönung). Vorschau mit Maßen: `assets-src/previews/props/*.png`. |
 | `kind: 'water'` | Animierte Wasserfläche `sx × sz` (mit `mat: 'lava'`: Lava). |
 | `view.fx` | Einmalige Effekte + Ton: `emitFx(s, { kind, sfx, x, y, z, color?, s? })` aus `util.ts` im `tick()`/`input()`, `ageFx(s, dt)` im `tick()`, `fx: viewFx(s)` in `view()`; State erweitert `FxState` (`fx: []`, `fxN: 0`). Der Host spielt jede id einmal (mit Stereo-Position nach Bildschirm-x). **Nie `rng` dafür verwenden.** |
+
+**Keine koplanaren Flächen** (Z-Fighting/Flimmern): nie zwei sich überlappende flache
+Oberseiten (box/cylinder-Top, `plane`, `water`) auf derselben Höhe – mindestens 1 cm Abstand,
+≥ 3 cm bei transparenten oder wippenden Flächen. Nie eine flache Oberseite innerhalb von
+0,05 um den Wasserspiegel der Kulisse (`scenery.water`, Standard `ground − 0,35`; das Wasser
+wippt ±0,03). Der Kulissenboden liegt in der Spielfläche bei `ground − 0,04` (Studio −0,06,
+Bühnenpodest −0,03), Spielböden bei `ground` sind also frei. Test:
+`packages/shared/test/minigames/coplanar.test.ts`.
+Was unter dem Kulissenboden liegt, wirft keinen Schatten (wird beim Anheben automatisch wieder
+zum Schattenwerfer).
 
 Ablauf, Iris-Blende, Kamera-Anflug, Countdown-Töne, Abpfiff, Jubel der Sieger und Konfetti
 macht der Host – Minispiele kümmern sich nur um ihre eigenen Momente.

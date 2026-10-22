@@ -20,8 +20,8 @@ import { AssetLibrary } from './assets';
 
 /**
  * Babylon engine + scene setup (TECH-01): WebGL2, Havok physics for visual effects,
- * soft shadows, gentle fog and a gradient sky (ART-04). Quality is lowered
- * automatically when the frame rate drops (PERF-01).
+ * soft shadows, gentle fog and a gradient sky (ART-04). Quality is lowered in gentle
+ * steps when the frame rate stays low and raised again when it recovers (PERF-01).
  */
 export interface CameraGoal {
   alpha: number;
@@ -29,6 +29,9 @@ export interface CameraGoal {
   radius: number;
   target: Vector3;
 }
+
+/** lowest adaptive quality step */
+const MAX_STEP = 4;
 
 export class Stage {
   readonly engine: Engine;
@@ -45,9 +48,22 @@ export class Stage {
   private camSpeed = 2.5;
   private shake = 0;
   private matCache = new Map<string, StandardMaterial>();
-  private quality = 2;
+  /** adaptive quality step: 0 = full … MAX_STEP = lowest (see applyStep) */
+  private step = 0;
+  /** ?quality=0: fixed lowest quality for automated tests */
+  private readonly testMode: boolean;
+  private baseScale: number;
   private sky: Mesh;
-  private fpsSamples: number[] = [];
+  /** fps probe: frame times of the current window + consecutive bad/good windows */
+  private probe = { t: 0, dts: [] as number[], bad: 0, good: 0 };
+  /** seconds left in which frame times are ignored (loading, shader compiles) */
+  private warm = 6;
+  /** good windows needed to step back up (doubles when a recovery fails again) */
+  private recoverNeed = 5;
+  private lastUp = -1e9;
+  private clock = 0;
+  /** hitches since the last complete fps window */
+  private hitches = 0;
   private updaters = new Set<(dt: number) => void>();
   timeScale = 1;
   paused = false;
@@ -64,7 +80,8 @@ export class Stage {
 
     this.camera = new ArcRotateCamera('cam', -Math.PI / 2, 0.85, 60, Vector3.Zero(), scene);
     this.camera.fov = 0.8;
-    this.camera.minZ = 0.5;
+    // closest shots stay ~9 m away: a 1 m near plane doubles the depth precision
+    this.camera.minZ = 1;
     this.camera.maxZ = 600;
 
     const hemi = new HemisphericLight('hemi', new Vector3(0.2, 1, -0.3), scene);
@@ -79,6 +96,14 @@ export class Stage {
     this.shadows.darkness = 0.45;
     this.glow = new GlowLayer('glow', scene, { blurKernelSize: 32 });
     this.glow.intensity = 0.6;
+    // fading meshes (visibility < 1) glow accordingly instead of blooming at full strength
+    this.glow.customEmissiveColorSelector = (mesh, _sub, material, out) => {
+      const m = material as StandardMaterial;
+      const e = m.emissiveColor;
+      if (!e) return out.copyFrom(this.glow.neutralColor);
+      const k = mesh.visibility;
+      out.set(e.r * k, e.g * k, e.b * k, m.alpha * k);
+    };
     // gentle grading: a touch of contrast and a soft vignette for the TV look
     const ip = scene.imageProcessingConfiguration;
     ip.isEnabled = true;
@@ -92,11 +117,12 @@ export class Stage {
     this.sky = this.buildSky();
 
     // ?quality=0 forces the lowest quality (software rendering in automated tests)
-    const q = new URLSearchParams(location.search).get('quality');
-    if (q === '0') {
+    this.baseScale = this.engine.getHardwareScalingLevel();
+    this.testMode = new URLSearchParams(location.search).get('quality') === '0';
+    if (this.testMode) {
       // automated tests on software rendering (CI): render as little as possible so the
       // main thread stays free for the game logic and timers
-      this.quality = 0;
+      this.step = MAX_STEP;
       this.shadows.getShadowMap()!.refreshRate = 0;
       this.glow.isEnabled = false;
       scene.imageProcessingConfiguration.vignetteEnabled = false;
@@ -145,30 +171,88 @@ export class Stage {
       const s = this.shake * 0.6;
       this.camera.target.addInPlace(new Vector3((Math.random() - 0.5) * s, (Math.random() - 0.5) * s, (Math.random() - 0.5) * s));
     }
-    this.adaptQuality(rawDt);
+    this.adaptQuality(this.engine.getDeltaTime() / 1000);
   }
 
-  /** Lowers shadow quality / resolution if fps stays below ~45 (PERF-01). */
+  /**
+   * Restarts the fps probe with a warm-up in which frame times are ignored. Call after
+   * scene switches (board ↔ minigame): building and shader compiles are no slowness.
+   */
+  settle(seconds = 6): void {
+    this.hitches = 0;
+    this.restartProbe(seconds);
+  }
+
+  private restartProbe(seconds: number) {
+    this.warm = Math.max(this.warm, seconds);
+    const p = this.probe;
+    p.t = 0;
+    p.dts = [];
+    p.bad = 0;
+    p.good = 0;
+  }
+
+  /**
+   * Lowers quality one step when the median fps of two consecutive 2 s windows stays
+   * below 45, raises it again after ~10 s above 57 (PERF-01). Hitches (> 0.25 s) mean
+   * loading or compiling, not a slow device: they only restart the warm-up (unless
+   * nothing but hitches happens).
+   */
   private adaptQuality(dt: number) {
-    if (dt <= 0) return;
-    this.fpsSamples.push(1 / dt);
-    if (this.fpsSamples.length < 180) return;
-    const avg = this.fpsSamples.reduce((a, b) => a + b, 0) / this.fpsSamples.length;
-    this.fpsSamples = [];
-    if (avg < 45 && this.quality > 0) {
-      this.quality--;
-      if (this.quality === 1) {
-        this.shadows.blurKernel = 8;
-        this.glow.isEnabled = false;
-      } else {
-        this.shadows.getShadowMap()?.renderList?.splice(0);
-        this.engine.setHardwareScalingLevel(1.4);
+    if (this.testMode || dt <= 0) return;
+    this.clock += dt;
+    if (dt > 0.25) {
+      // a device that only ever hitches (no window completes in between) is just slow
+      if (++this.hitches >= 15 && this.step < MAX_STEP) this.applyStep(this.step + 1);
+      else this.restartProbe(3);
+      return;
+    }
+    if (this.warm > 0) {
+      this.warm -= dt;
+      return;
+    }
+    const p = this.probe;
+    p.dts.push(dt);
+    p.t += dt;
+    if (p.t < 2) return;
+    p.dts.sort((a, b) => a - b);
+    const fps = 1 / p.dts[p.dts.length >> 1];
+    p.t = 0;
+    p.dts = [];
+    this.hitches = 0;
+    if (fps < 45) {
+      p.good = 0;
+      if (++p.bad >= 2 && this.step < MAX_STEP) {
+        // stepped up shortly before and too slow again: wait longer next time
+        if (this.clock - this.lastUp < 30) this.recoverNeed = Math.min(60, this.recoverNeed * 2);
+        this.applyStep(this.step + 1);
       }
+    } else if (fps > 57) {
+      p.bad = 0;
+      if (++p.good >= this.recoverNeed && this.step > 0) {
+        this.lastUp = this.clock;
+        this.applyStep(this.step - 1);
+      }
+    } else {
+      p.bad = 0;
+      p.good = 0;
     }
   }
 
+  /** 1: cheaper shadow blur · 2: no glow · 3: no shadows · 4: 80 % resolution (mild, last). */
+  private applyStep(step: number) {
+    this.step = step;
+    this.shadows.blurKernel = step >= 1 ? 8 : 24;
+    this.glow.isEnabled = step < 2;
+    this.sun.shadowEnabled = step < 3;
+    this.engine.setHardwareScalingLevel(this.baseScale * (step >= 4 ? 1.25 : 1));
+    // the switch itself recompiles shaders
+    this.settle(2);
+  }
+
+  /** 2 = full, 1 = reduced effects, 0 = lowest (also the ?quality=0 test mode). */
   get qualityLevel(): number {
-    return this.quality;
+    return this.step === 0 ? 2 : this.step < 3 ? 1 : 0;
   }
 
   /**
@@ -219,7 +303,8 @@ export class Stage {
   }
 
   castShadow(mesh: AbstractMesh, recursive = true): void {
-    if (this.quality === 0) return;
+    // casters are always registered at runtime: a lowered step only switches shadows off
+    if (this.testMode) return;
     this.shadows.addShadowCaster(mesh, recursive);
   }
 
