@@ -129,7 +129,8 @@ export function chooseDice(e: GameEngine, i: number, options: DiceId[], level: B
   if (me.coins >= e.starPrice(i) && toStar <= 14) {
     const chance = (id: DiceId) => {
       let p = 0;
-      for (const [steps, q] of stepDistribution(['standard', id])) if (steps >= toStar) p += q;
+      // the star field itself costs no step: passing it needs more steps than `toStar`
+      for (const [steps, q] of stepDistribution(['standard', id])) if (steps > toStar) p += q;
       return p;
     };
     return [...options].sort((a, b) => chance(b) - chance(a))[0];
@@ -157,8 +158,9 @@ function chooseItem(e: GameEngine, i: number, level: BotLevel, rng: Rng): ItemId
   const ahead = (pred: (o: number) => boolean) =>
     others.some((o) => pred(o) && distance(e, me.field, e.player(o).field) <= 9);
   if (has('starTicket') && ahead((o) => e.player(o).stars > 0)) return 'starTicket';
-  if (has('goldDice') && !canAfford && me.coins + 9 >= e.starPrice(i)) return 'goldDice';
-  if (has('riskDice') && canAfford && toStar >= 9 && toStar <= 14) return 'riskDice';
+  // gold die pays 3–4 coins right after the roll; risk die (+ standard) reaches at most 14 steps
+  if (has('goldDice') && !canAfford && me.coins + 4 >= e.starPrice(i)) return 'goldDice';
+  if (has('riskDice') && canAfford && toStar >= 9 && toStar < 14) return 'riskDice';
   if (has('miniDice') && bestMiniSteps(e, i).value >= (canAfford ? 15 : 4)) return 'miniDice';
   if (canAfford && toStar > 20 && has('tripleDice')) return 'tripleDice';
   if (canAfford && toStar > 10 && has('doubleDice')) return 'doubleDice';
@@ -189,7 +191,8 @@ export function bestMiniSteps(e: GameEngine, i: number): { steps: number; value:
     let passedStar = false;
     let guard = 0;
     while (remaining > 0 && guard++ < 20) {
-      const options = e.openNext(field);
+      const options = e.moveOptions(field);
+      if (!options.length) break;
       const next = options.length > 1 ? [...options].sort((a, b) => distance(e, a, e.state.starField) - distance(e, b, e.state.starField))[0] : options[0];
       field = next;
       if (next === e.state.starField) passedStar = true;

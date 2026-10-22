@@ -3,8 +3,10 @@
  * only systematic difference is the character die. Reports per character the win rate,
  * stars, coins and fields walked, plus per map the average fields per turn and how often
  * players pass the star.
- *   npx tsx packages/shared/scripts/dice-balance.ts [gamesPerMap=48]
+ *   npx tsx packages/shared/scripts/dice-balance.ts [gamesPerMap=48] [maps=all, comma separated] [json=out file]
+ * The optional JSON file holds the per-character totals (to merge parallel runs per map).
  */
+import { writeFileSync } from 'node:fs';
 import { CHARACTERS, PLAYER_COLORS, type CharacterId } from '../src/config';
 import { botAction } from '../src/game/bots';
 import { createGame, GameEngine } from '../src/game/engine';
@@ -15,10 +17,11 @@ import { getMinigame } from '../src/minigames/registry';
 import { Rng } from '../src/rng';
 
 const games = Number(process.argv[2] ?? 48);
+const maps = process.argv[3] ? process.argv[3].split(',') : MAP_IDS;
 type Acc = { games: number; wins: number; stars: number; coins: number; walked: number; place: number };
 const per = new Map<CharacterId, Acc>(CHARACTERS.map((c) => [c, { games: 0, wins: 0, stars: 0, coins: 0, walked: 0, place: 0 }]));
 
-for (const mapId of MAP_IDS) {
+for (const mapId of maps) {
   let turns = 0;
   let steps = 0;
   let bought = 0;
@@ -63,9 +66,11 @@ for (const mapId of MAP_IDS) {
   }
   console.log(`${mapId}: Ø ${(steps / turns).toFixed(2)} Felder/Zug, rückwärts ${((backwards / turns) * 100).toFixed(1)} % der Züge, gekaufte Sterne/Partie ${(bought / games).toFixed(2)}`);
 }
-console.log('\nFigur      Siege  Ø Platz  Ø Sterne  Ø Münzen  Ø Felder');
+console.log('\nFigur      Siege  ±95 %  Partien  Ø Platz  Ø Sterne  Ø Münzen  Ø Felder');
 for (const [c, a] of per) {
+  const p = a.wins / a.games;
   console.log(
-    `${c.padEnd(9)} ${((a.wins / a.games) * 100).toFixed(1).padStart(5)} %  ${(a.place / a.games).toFixed(2).padStart(6)}  ${(a.stars / a.games).toFixed(2).padStart(8)}  ${(a.coins / a.games).toFixed(1).padStart(8)}  ${(a.walked / a.games).toFixed(0).padStart(8)}`,
+    `${c.padEnd(9)} ${(p * 100).toFixed(1).padStart(5)} %  ${(196 * Math.sqrt((p * (1 - p)) / a.games)).toFixed(1).padStart(4)}  ${String(a.games).padStart(7)}  ${(a.place / a.games).toFixed(2).padStart(6)}  ${(a.stars / a.games).toFixed(2).padStart(8)}  ${(a.coins / a.games).toFixed(1).padStart(8)}  ${(a.walked / a.games).toFixed(0).padStart(8)}`,
   );
 }
+if (process.argv[4]) writeFileSync(process.argv[4], JSON.stringify(Object.fromEntries(per)));

@@ -1,6 +1,7 @@
 /**
  * Balancing report with bots (review KPIs): comeback chance, bonus stars for the leader,
- * coin economy, star access, strength dominance. Usage: npx tsx scripts/balance.ts [games=60]
+ * coin economy, star access, strength dominance.
+ * Usage: npx tsx scripts/balance.ts [games=60] [strengthGames=games/3] [maps=all, comma separated]
  */
 import type { BotLevel } from '../src/config';
 import { createGame, GameEngine } from '../src/game/engine';
@@ -50,7 +51,11 @@ function play(mapId: string, seed: number, levels: BotLevel[]) {
 }
 
 const games = Number(process.argv[2] ?? 60);
-for (const mapId of MAP_IDS) {
+const strength = Number(process.argv[3] ?? Math.max(10, Math.floor(games / 3)));
+const maps = process.argv[4] ? process.argv[4].split(',') : MAP_IDS;
+/** 95 % confidence half-width of a rate in percentage points */
+const ci = (k: number, n: number) => (196 * Math.sqrt((k / n) * (1 - k / n) / n)).toFixed(0);
+for (const mapId of maps) {
   let comeback = 0;
   let bonusLeader = 0;
   let bonusAll = 0;
@@ -69,15 +74,14 @@ for (const mapId of MAP_IDS) {
     for (const [k, v] of Object.entries(r.formats)) fm[k] = (fm[k] ?? 0) + v;
   }
   let hardWins = 0;
-  const strength = Math.max(10, Math.floor(games / 3));
   for (let g = 0; g < strength; g++) {
     const r = play(mapId, 500 + g, ['hard', 'easy', 'hard', 'easy']);
     if (r.winner === 0 || r.winner === 2) hardWins++;
   }
   const per = (v: number) => (v / games).toFixed(1);
   console.log(
-    `${mapId}: comeback(last after R10 wins)=${((comeback / games) * 100).toFixed(0)}% bonusToLeader=${((bonusLeader / Math.max(1, bonusAll)) * 100).toFixed(0)}% ` +
+    `${mapId}: comeback(last after R10 wins)=${((comeback / games) * 100).toFixed(0)}±${ci(comeback, games)}% bonusToLeader=${((bonusLeader / Math.max(1, bonusAll)) * 100).toFixed(0)}% ` +
       `avgEndCoins=${per(coins)} starsBought/game=${per(bought)} tooExpensive/game=${per(expensive)} ` +
-      `formats/game=${Object.entries(fm).map(([k, v]) => `${k}:${per(v)}`).join(' ')} hardSeatsWin=${((hardWins / strength) * 100).toFixed(0)}%`,
+      `formats/game=${Object.entries(fm).map(([k, v]) => `${k}:${per(v)}`).join(' ')} hardSeatsWin=${((hardWins / strength) * 100).toFixed(0)}±${ci(hardWins, strength)}%`,
   );
 }

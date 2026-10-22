@@ -113,6 +113,8 @@ export interface TurnState {
   /** after landing effects are done */
   landed: boolean;
   stepsTaken: number;
+  /** a star was bought this turn (max. one star per turn) */
+  starBought?: boolean;
   /** after landing the turn may still wait for e.g. a duel */
   afterLanding?: 'duel' | null;
 }

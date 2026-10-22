@@ -2,12 +2,12 @@ import { describe, expect, it } from 'vitest';
 import { simulateGame } from '../scripts/simulate';
 import { BALANCE, CHARACTERS, PLAYER_COLORS } from '../src/config';
 import { computeBonus } from '../src/game/bonus';
-import { DICE, expectedValue } from '../src/game/dice';
+import { DICE, expectedValue, stepDistribution, type DiceId } from '../src/game/dice';
 import { createGame, GameEngine, marathonPoints, minigameRewards } from '../src/game/engine';
-import { botAction as botActionFor } from '../src/game/bots';
+import { botAction as botActionFor, chooseDice, distance } from '../src/game/bots';
 import { COMEBACK_CATEGORIES } from '../src/game/bonus';
-import type { GameConfig, PlayerSetup } from '../src/game/types';
-import { getMap, MAP_IDS, validateMap } from '../src/maps';
+import type { GameConfig, GameEvent, PlayerSetup } from '../src/game/types';
+import { getMap, MAP_IDS, PASS_FIELDS, validateMap } from '../src/maps';
 import { ALL_MINIGAMES } from '../src/minigames/all';
 import { makeMgPlayers, runMinigameHeadless } from '../src/minigames/headless';
 import { MINIGAMES, pickMinigame } from '../src/minigames/registry';
@@ -325,5 +325,239 @@ describe('dice (v0.3)', () => {
     expect(e.isOpen(ford[0].id)).toBe(false);
     e.state.gimmick.tide = 'low';
     expect(e.isOpen(ford[0].id)).toBe(true);
+  });
+});
+
+describe('v0.5 rule fixes', () => {
+  const started = (mapId = 'kokosnuss', seed = 7) => {
+    const e = new GameEngine(createGame(config(mapId, { seed }), setups()));
+    e.start();
+    for (let i = 0; i < 4; i++) e.act(i, { type: 'roll' });
+    return e;
+  };
+  type Internals = { continueMove(): void; gimmick: { onRoundEnd(e: GameEngine): void; onRedField(e: GameEngine, p: number): void } };
+  const internals = (e: GameEngine) => e as unknown as Internals;
+  const record = (e: GameEngine) => {
+    const events: GameEvent[] = [];
+    const emit = e.emit.bind(e);
+    e.emit = (ev) => {
+      events.push(ev);
+      emit(ev);
+    };
+    return events;
+  };
+  /** Blocks the given fields on top of the map gimmick (generic, independent of map data). */
+  const block = (e: GameEngine, ids: string[]) => {
+    const orig = e.isOpen.bind(e);
+    e.isOpen = (id: string) => !ids.includes(id) && orig(id);
+  };
+  /** Sets up the current player's move: `steps` left, standing on `field`. */
+  const move = (e: GameEngine, field: string, steps: number) => {
+    const p = e.state.order[0];
+    e.state.players[p].field = field;
+    e.state.turn = { player: p, dice: [], remaining: steps, rolled: true, usedItem: null, glove: false, starSteal: false, passResolved: null, landed: false, stepsTaken: 0, starBought: false };
+    e.state.pending = null;
+    return p;
+  };
+  /** A field followed by `n` fields without branch or pass field. */
+  const straight = (e: GameEngine, n: number): string[] => {
+    for (const f of e.map.fields) {
+      if (PASS_FIELDS.includes(f.type)) continue;
+      const ids = [f.id];
+      let cur = f;
+      while (ids.length <= n && cur.next.length === 1) {
+        cur = e.field(cur.next[0]);
+        if (PASS_FIELDS.includes(cur.type) || ids.includes(cur.id)) break;
+        ids.push(cur.id);
+      }
+      if (ids.length > n) return ids;
+    }
+    throw new Error('no straight path');
+  };
+
+  it('never walks into a blocked field; with every way blocked the move ends there', () => {
+    const e = started();
+    const [a, b] = straight(e, 3);
+    block(e, [b]);
+    const p = move(e, a, 4);
+    e.state.starField = e.map.starSpots.find((s) => s !== a && s !== b)!;
+    const events = record(e);
+    internals(e).continueMove();
+    expect(e.state.players[p].field).toBe(a);
+    expect(events.some((ev) => ev.type === 'move' && ev.player === p)).toBe(false);
+    expect(events).toContainEqual(expect.objectContaining({ type: 'announce', key: 'mod.blocked' }));
+    expect(e.state.turn?.player).not.toBe(p); // the turn ended, no softlock
+  });
+
+  it('junctions do not offer a branch that only leads into blocked fields (look-ahead)', () => {
+    const e = started();
+    e.state.gimmick.tide = 'low';
+    const junction = e.map.fields.find((f) => f.next.length === 2 && e.field(f.next[1]).next.length === 1)!;
+    const [main, side] = junction.next;
+    expect(e.moveOptions(junction.id)).toEqual(junction.next);
+    // cut the side branch one field after the junction: it becomes a dead end
+    block(e, e.field(side).next);
+    expect(e.isOpen(side)).toBe(true);
+    expect(e.isLive(side)).toBe(false);
+    expect(e.moveOptions(junction.id)).toEqual([main]);
+  });
+
+  it('high tide: no branch option is flooded or cut off, low tide offers the shortcuts again', () => {
+    const e = started();
+    e.state.gimmick.tide = 'high';
+    let removed = 0;
+    for (const f of e.map.fields.filter((x) => x.next.length > 1)) {
+      const opts = e.moveOptions(f.id);
+      expect(opts.length, f.id).toBeGreaterThan(0);
+      for (const o of opts) expect(e.isLive(o), `${f.id}->${o}`).toBe(true);
+      removed += f.next.length - opts.length;
+    }
+    expect(removed).toBeGreaterThan(0);
+    e.state.gimmick.tide = 'low';
+    for (const f of e.map.fields.filter((x) => x.next.length > 1)) expect(e.moveOptions(f.id)).toEqual(f.next);
+  });
+
+  it('high tide washes players off flooded and cut-off fields onto a live field', () => {
+    const e = started();
+    e.state.gimmick.tide = 'low';
+    const flooded = e.map.fields.filter((f) => f.tags?.includes('ford') || f.tags?.includes('sandbank'));
+    e.state.players.forEach((pl, i) => (pl.field = flooded[i % flooded.length].id));
+    e.state.round = BALANCE.tideInterval;
+    internals(e).gimmick.onRoundEnd(e);
+    expect(e.state.gimmick.tide).toBe('high');
+    for (const pl of e.state.players) expect(e.isLive(pl.field), pl.field).toBe(true);
+  });
+
+  it('the star is always placed where everybody can walk to it', () => {
+    for (let seed = 1; seed <= 40; seed++) {
+      const s = createGame(config('kokosnuss', { seed }), setups());
+      expect(new GameEngine(s).reachableStarSpots()).toContain(s.starField);
+    }
+    const e = started();
+    e.state.gimmick.tide = 'high';
+    const high = e.reachableStarSpots();
+    e.state.gimmick.tide = 'low';
+    const cutOff = e.reachableStarSpots().filter((s) => !high.includes(s));
+    expect(high.length).toBeGreaterThan(1);
+    // no star spot behind the ford/sandbank: the reachability rule is covered by the lava test
+    if (!cutOff.length) return;
+    // the tide turns while the star waits behind the ford: it moves on to a reachable spot
+    e.state.starField = cutOff[0];
+    e.state.round = BALANCE.tideInterval;
+    internals(e).gimmick.onRoundEnd(e);
+    expect(e.state.gimmick.tide).toBe('high');
+    expect(high).toContain(e.state.starField);
+    for (let k = 0; k < 20; k++) {
+      e.moveStar();
+      expect(high).toContain(e.state.starField);
+    }
+  });
+
+  it('only one star per turn, even if the star moves further along the path', () => {
+    const e = started();
+    const path = straight(e, 5);
+    const p = move(e, path[0], 5);
+    e.state.players[p].coins = 100;
+    e.state.starField = path[1];
+    e.moveStar = function () {
+      this.state.starField = path[3];
+    };
+    internals(e).continueMove();
+    expect(e.pending).toMatchObject({ kind: 'buyStar', player: p });
+    const events = e.act(p, { type: 'buyStar', accept: true });
+    expect(e.state.players[p].stars).toBe(1);
+    expect(events.filter((ev) => ev.type === 'stars' && ev.reason === 'buy')).toHaveLength(1);
+    expect(events).toContainEqual(expect.objectContaining({ type: 'announce', key: 'mod.starLimit', player: p }));
+    expect(e.pending?.kind).not.toBe('buyStar');
+  });
+
+  it('comeback wheels: a tied last place is decided by coins, then by lot', () => {
+    const e = started();
+    const ps = e.state.players;
+    ps.forEach((pl) => ((pl.stars = 0), (pl.coins = 5)));
+    ps[0].stars = 1;
+    ps[2].coins = 3;
+    expect(e.lastPlace()).toBe(2);
+    ps[2].coins = 5;
+    const seen = new Set<number>();
+    for (let k = 0; k < 60; k++) seen.add(e.lastPlace());
+    expect([...seen].sort()).toEqual([1, 2, 3]);
+  });
+
+  it('no duel without coins to play for', () => {
+    const duelSetup = (coins: number) => {
+      const e = started();
+      const duel = e.map.fields.find((f) => f.type === 'duel' && e.map.fields.some((x) => x.next.length === 1 && x.next[0] === f.id && !PASS_FIELDS.includes(x.type)))!;
+      const from = e.map.fields.find((f) => f.next.length === 1 && f.next[0] === duel.id && !PASS_FIELDS.includes(f.type))!;
+      const p = move(e, from.id, 1);
+      e.state.starField = e.map.starSpots.find((s) => s !== duel.id)!;
+      e.state.players[p].coins = coins;
+      internals(e).continueMove();
+      expect(e.state.players[p].field).toBe(duel.id);
+      return e;
+    };
+    expect(duelSetup(0).pending?.kind).not.toBe('duelPick');
+    // with coins the duel is offered; the stake never exceeds what the challenger owns
+    expect(duelSetup(4).pending).toMatchObject({ kind: 'duelPick', stake: 4 });
+  });
+
+  it('a trap laid on a pass field (start) goes onto the next field where players stop', () => {
+    const e = started();
+    const p = e.state.order[0];
+    expect(e.state.players[p].field).toBe(e.map.start);
+    e.state.players[p].items = ['trapStone'];
+    e.state.pending = { kind: 'turnMenu', player: p, canUseItem: true, dice: ['standard'] };
+    e.act(p, { type: 'useItem', item: 'trapStone' });
+    const trap = e.state.traps.find((t) => t.owner === p)!;
+    expect(PASS_FIELDS.includes(e.field(trap.field).type)).toBe(false);
+    expect(trap.field).not.toBe(e.state.starField);
+  });
+
+  it('eruption: an active lava stream cools first, the coin rain drops 5 distinct bags', () => {
+    const e = started('vulkan');
+    const events = record(e);
+    e.state.gimmick.lava = { group: 0, until: e.state.round + 1 };
+    e.state.gimmick.lavaNext = 1;
+    e.state.gimmick.eruption = BALANCE.eruptionThreshold - 1;
+    internals(e).gimmick.onRedField(e, 0);
+    expect(events).toContainEqual({ type: 'lava', group: 0, active: false });
+    expect(e.state.gimmick.lava?.group).toBe(1);
+    const bags = events.filter((ev) => ev.type === 'coinBag' && ev.placed).map((ev) => (ev as { field: string }).field);
+    expect(new Set(bags).size).toBe(5);
+    for (const pl of e.state.players) expect(e.isLive(pl.field)).toBe(true);
+    expect(e.reachableStarSpots()).toContain(e.state.starField);
+  });
+
+  it('an invalid decision is rejected without losing the pending decision', () => {
+    const e = started();
+    const p = e.state.order[0];
+    e.state.turn = { player: p, dice: [], remaining: 2, rolled: true, usedItem: null, glove: false, starSteal: false, passResolved: null, landed: false, stepsTaken: 1 };
+    e.state.pending = { kind: 'shop', player: p, offer: ['doubleDice'] };
+    expect(() => e.act(p, { type: 'buy', item: 'tripleDice' })).toThrow();
+    expect(e.pending).toMatchObject({ kind: 'shop' });
+    e.state.players[p].coins = 2;
+    expect(() => e.act(p, { type: 'buy', item: 'doubleDice' })).toThrow();
+    expect(e.pending).toMatchObject({ kind: 'shop' });
+  });
+
+  it('bots pick the die with the best chance to pass the star (the star field costs no step)', () => {
+    const e = started();
+    const p = e.state.order[0];
+    const me = e.state.players[p];
+    me.coins = 100;
+    const rng = Rng.fromSeed(1);
+    let checked = 0;
+    for (const f of e.map.fields) {
+      me.field = f.id;
+      const toStar = distance(e, f.id, e.state.starField);
+      if (toStar > 14) continue;
+      for (const c of CHARACTERS) {
+        const pass = (id: DiceId) => [...stepDistribution(['standard', id])].reduce((s, [steps, q]) => s + (steps > toStar ? q : 0), 0);
+        const best = pass(c) > pass('standard') ? c : 'standard';
+        expect(chooseDice(e, p, ['standard', c], 'hard', rng), `${c} at ${toStar}`).toBe(best);
+        checked++;
+      }
+    }
+    expect(checked).toBeGreaterThan(20);
   });
 });
