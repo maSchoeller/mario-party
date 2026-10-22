@@ -89,6 +89,8 @@ export interface DecorDef {
   r?: number;
   /** optional runtime tint for props with a `tint` material */
   tint?: string;
+  /** vertical offset from the ground (e.g. the crater prop sunk into the volcano terrain) */
+  dy?: number;
 }
 
 /**
@@ -106,11 +108,20 @@ export interface TerrainDef {
   cuts?: { x: number; z: number; rx: number; rz: number; rot?: number }[];
   /** additive hills (gaussian), h may be negative for basins */
   hills?: { x: number; z: number; r: number; h: number; rz?: number }[];
+  /**
+   * Volcano cone (terrain): rises by `h` from the foot radius `r` to a level plateau of
+   * radius `top` around the crater, where the crater prop sits. Paths climb its flanks.
+   */
+  volcano?: { x: number; z: number; r: number; h: number; top: number };
   /** shallow lagoons: the sea floor rises to `y` inside (stilt huts, wading boats) */
   shallows?: { x: number; z: number; rx: number; rz: number; rot?: number; y: number }[];
   /** width of the sand strip along the coast (default 3.2) */
   beach?: number;
-  /** channels (river, lava stream, canal): carved below the water level */
+  /**
+   * channels (river, lava stream, canal): water channels are carved below the water level;
+   * lava streams cut a groove following the ground (down the volcano, across the land) that
+   * the renderer fills with a flowing lava ribbon until it pours into the lava sea.
+   */
   channels?: { points: [number, number][]; width: number; kind: 'water' | 'lava' }[];
   /** ground colors */
   colors: { grass: string; grass2: string; sand: string; rock: string; path: string; seabed: string };

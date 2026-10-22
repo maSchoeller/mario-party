@@ -54,27 +54,28 @@ setType(at(-14, -20), 'shop');
 // Market street west -> east and the north-south street, crossing at the market square.
 b.add('x', 'blue', 0, 0);
 const midW = b.path('mw', 'BLR', [{ x: -20, z: -1 }, { x: -10, z: 0 }], { from: at(-28, -4), to: 'x' });
-const midE = b.path('me', 'IBL', [{ x: 10, z: 0 }, { x: 20, z: -1 }], { from: 'x', to: at(28, 4) });
+const midE = b.path('me', 'IBLB', [{ x: 10, z: 0 }, { x: 20, z: -1 }], { from: 'x', to: at(28, 4) });
 const nsS = b.path('ns', 'DB', [{ x: 1, z: -13 }, { x: 0, z: -7 }], { from: at(6, -20), to: 'x' });
 const nsN = b.path('nn', 'BR', [{ x: 0, z: 7 }, { x: -1, z: 13 }], { from: 'x', to: at(-5, 20) });
 
 // Park detour in the north-west (around the pond).
 b.path('p', 'BLIB', [{ x: -11, z: 13 }, { x: -17, z: 9 }, { x: -22, z: 5 }], { from: at(-9, 20), to: at(-28, 4) });
 
-// Harbour detour over the canal bridges.
-const harbour = b.path(
-  'h',
-  'BBLIBB',
-  [
-    { x: -21, z: -25 },
-    { x: -19, z: -32 },
-    { x: -11, z: -34 },
-    { x: -4, z: -31 },
-    { x: -3, z: -25 },
-  ],
-  { from: at(-24, -18), to: at(-3, -20) },
-);
-tagCrossings(b, BIMMEL_CANAL, 2.4, 1.1);
+// Harbour detour over the canal bridges (placed field by field: both bridge fields sit
+// in the middle of the canal, so their decks reach the same height on either bank).
+const harbourPos = [
+  { x: -25.4, z: -22.6 },
+  { x: -24.2, z: -28 },
+  { x: -19.6, z: -32.2 },
+  { x: -13, z: -33.8 },
+  { x: -6.6, z: -32.2 },
+  { x: -3.4, z: -26.9 },
+];
+const harbour = [...'BBLIBB'].map((code, i) => b.add(`h${i}`, code === 'L' ? 'lucky' : code === 'I' ? 'item' : 'blue', harbourPos[i].x, harbourPos[i].z));
+b.chain(harbour);
+b.link(at(-24, -18), harbour[0]);
+b.link(harbour[harbour.length - 1], at(-3, -20));
+tagCrossings(b, BIMMEL_CANAL, 2.4);
 for (const id of harbour) if (!b.get(id).tags?.includes('bridge')) b.get(id).tags = ['harbour'];
 
 // Tram routes: five fields each, the timetable cycles through them.
@@ -97,11 +98,13 @@ const block = (x0: number, x1: number, z0: number, z1: number) => {
     houses.push({ kind: kinds[n % 4], x, z: z0, r: facing(0, -1), s: 0.8, tint: ROOFS[n++ % ROOFS.length] });
   }
 };
-block(6, 21, -15, -6); // south-east
-block(6, 21, 6, 15); // north-east
-block(-21, -8, -15, -6); // south-west
-// outside the ring
+// (rows keep clear of the market square and of the shops on the ring)
+block(7.5, 21, -12.5, -6); // south-east
+block(7.5, 21, 6, 12.5); // north-east
+block(-21, -8, -12.5, -6); // south-west
+// outside the ring (the north station and the shop take three of the plots)
 for (let x = -30; x <= 30; x += 7.5) {
+  if (x === 0 || x === 7.5 || x === 15) continue;
   houses.push({ kind: kinds[n % 4], x, z: 27, r: facing(0, -1), s: 0.8, tint: ROOFS[n++ % ROOFS.length] });
 }
 for (const side of [-1, 1]) {
@@ -153,9 +156,10 @@ export const BIMMELBAHN: MapDef = {
     ],
   },
   decor: [
-    { kind: 'tower', x: -5, z: -5 },
-    { kind: 'fountain', x: 5, z: 5 },
-    { kind: 'marketstall', x: 5, z: -5, r: 0.8, tint: '#e87d7d' },
+    // the clock tower stands south of the market square so it never hides the crossing
+    { kind: 'tower', x: -3.5, z: -14 },
+    { kind: 'fountain', x: 4.5, z: 4.5 },
+    { kind: 'marketstall', x: 4.5, z: -4.5, r: 0.8, tint: '#e87d7d' },
     { kind: 'marketstall', x: -6, z: 5, r: -2.2, tint: '#6f9de6' },
     { kind: 'kiosk', x: 35, z: -21, r: -1.6 },
     { kind: 'boat', x: 18, z: -27.5, r: 1.6 },

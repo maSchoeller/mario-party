@@ -18,6 +18,21 @@ import {
 import type { CharacterId, PlayerColor } from '@wb/shared/config';
 import { PLAYER_COLOR_HEX } from '@wb/shared/config';
 import { getField, predecessors, type FieldDef, type MapDef } from '@wb/shared/maps/index';
+import {
+  BRIDGE_DECK,
+  cablePoint,
+  GONDOLA_DROP,
+  PIER_DECK,
+  planBoard,
+  planRibbons,
+  ribbonHalf,
+  ribbonLift,
+  RIBBON_BORDER,
+  RIBBON_BORDER_CITY,
+  type BoardLayout,
+  type CablePlan,
+  type KeepOut,
+} from '@wb/shared/maps/boardLayout';
 import { CharacterRig, lookAtYaw } from './characters';
 import { DiceRoller, type DieThrow } from './dice3d';
 import { fbm, noise2, prng, smoothstep } from './noise';
@@ -53,21 +68,23 @@ const FIELD_ICON: Record<string, string> = {
   station: '🚉',
   cablecar: '🚡',
 };
+/** Props whose origin is not at their foot (props.py): height of the origin above the ground. */
+const PROP_ORIGIN: Record<string, number> = { tower: 3.5, fountain: 0.3 };
 /** Tile top above the field height (where tokens stand). */
 const TILE_TOP = 0.26;
-/** Deck height of the bridge/pier props in their own space (see props.py). */
-const BRIDGE_DECK = 0.45;
-const PIER_DECK = 0.45;
+/**
+ * Tile layers relative to the field height – no two flat faces share a plane: terrain pad
+ * fy-0.22, path ribbons fy-0.17..-0.14 (tucked under the base), base top fy-0.13, rim top
+ * fy+0.22, tile top fy+0.26, icon fy+0.285. The base reaches down to fy-0.6 so sloped
+ * ground never shows a gap under it.
+ */
+const BASE_TOP = -0.13;
+const BASE_H = 0.47;
+const ICON_LIFT = 0.025;
 
 export interface TokenInfo {
   character: CharacterId;
   color: PlayerColor;
-}
-
-interface KeepOut {
-  x: number;
-  z: number;
-  r: number;
 }
 
 export class BoardView {
@@ -87,6 +104,8 @@ export class BoardView {
   private waterfall: { tex: Texture; foam: Mesh[] } | null = null;
   private positions: string[] = [];
   private keepOut: KeepOut[] = [];
+  private layout: BoardLayout;
+  private cable: (CablePlan & { gondola: TransformNode; rest: number }) | null = null;
   private updater: () => void;
   private t = 0;
   private trainMesh: TransformNode | null = null;
@@ -101,6 +120,8 @@ export class BoardView {
     const p = map.palette;
     stage.setSky(p.sky[0], p.sky[1], p.fog);
     this.terrain = new Terrain(stage, map, this.root);
+    this.layout = planBoard(map, this.terrain.model);
+    this.keepOut = [...this.layout.keepOut];
     this.buildTiles();
     this.buildPaths();
     this.buildStructures();
@@ -155,12 +176,6 @@ export class BoardView {
     return d.lengthSquared() > 0 ? d.normalize() : new Vector3(0, 0, 1);
   }
 
-  private isFree(x: number, z: number, r: number, ignore?: string): boolean {
-    for (const f of this.map.fields) if (f.id !== ignore && Math.hypot(f.x - x, f.z - z) < r + 1.4) return false;
-    for (const k of this.keepOut) if (Math.hypot(k.x - x, k.z - z) < r + k.r) return false;
-    return this.terrain.clearance(x, z) > r + 0.6 && this.terrain.height(x, z) > this.terrain.def.water.high + 0.15;
-  }
-
   /** Positions a static prop and freezes it – set every transform here, later changes are ignored. */
   private place(node: TransformNode, x: number, z: number, yaw: number, scale: number | Vector3 = 1, y?: number): TransformNode {
     node.position.set(x, y ?? this.terrain.height(x, z) - 0.04, z);
@@ -181,7 +196,7 @@ export class BoardView {
     const s = this.stage;
     const fields = this.map.fields;
     const rimT = flatCyl(s, 'tileRim', 2.6, 0.5, 20, '#f2ece0', this.root);
-    const baseT = flatCyl(s, 'tileBase', 2.95, 0.22, 20, '#cfc6b5', this.root);
+    const baseT = flatCyl(s, 'tileBase', 2.95, BASE_H, 20, '#cfc6b5', this.root);
     const topT = MeshBuilder.CreateCylinder('tileTop', { diameterTop: 2.08, diameterBottom: 2.2, height: 0.12, tessellation: 20 }, s.scene);
     topT.convertToFlatShadedMesh();
     topT.parent = this.root;
@@ -199,7 +214,7 @@ export class BoardView {
       const y = this.fy(f.id);
       Matrix.TranslationToRef(f.x, y - 0.03, f.z, tmp);
       rim.push(...tmp.asArray());
-      Matrix.TranslationToRef(f.x, y - 0.24, f.z, tmp);
+      Matrix.TranslationToRef(f.x, y + BASE_TOP - BASE_H / 2, f.z, tmp);
       base.push(...tmp.asArray());
       Matrix.TranslationToRef(f.x, y + TILE_TOP - 0.06, f.z, tmp);
       top.push(...tmp.asArray());
@@ -229,7 +244,7 @@ export class BoardView {
       for (const f of list) {
         const t = this.tangent(f);
         const yaw = Math.atan2(t.x, t.z);
-        Matrix.ComposeToRef(new Vector3(1.25, 1.25, 1.25), Quaternion.FromEulerAngles(Math.PI / 2, yaw, 0), new Vector3(f.x, this.fy(f.id) + TILE_TOP + 0.012, f.z), tmp);
+        Matrix.ComposeToRef(new Vector3(1.25, 1.25, 1.25), Quaternion.FromEulerAngles(Math.PI / 2, yaw, 0), new Vector3(f.x, this.fy(f.id) + TILE_TOP + ICON_LIFT, f.z), tmp);
         mats.push(...tmp.asArray());
       }
       q.thinInstanceSetBuffer('matrix', new Float32Array(mats), 16, true);
@@ -250,10 +265,11 @@ export class BoardView {
   private buildPaths() {
     const s = this.stage;
     const city = this.map.theme === 'city';
-    const pathC = Color3.FromHexString(this.terrain.def.colors.path);
+    const tr = this.terrain;
+    const pathC = Color3.FromHexString(tr.def.colors.path);
     const edgeC = pathC.scale(0.8);
-    const halfW = city ? 1.15 : 0.62;
-    const border = city ? 0.35 : 0.22;
+    const halfW = ribbonHalf(this.map) - (city ? RIBBON_BORDER_CITY : RIBBON_BORDER);
+    const border = city ? RIBBON_BORDER_CITY : RIBBON_BORDER;
     const pos: number[] = [];
     const col: number[] = [];
     const nrm: number[] = [];
@@ -261,56 +277,47 @@ export class BoardView {
     const idx: number[] = [];
     const dots: number[] = [];
     const tmp = Matrix.Identity();
-    for (const e of this.terrain.edges) {
-      if (e.kind === 'pier') continue;
-      const a = new Vector3(e.ax, 0, e.az);
-      const b = new Vector3(e.bx, 0, e.bz);
-      const dir = b.subtract(a);
-      const len = dir.length();
-      dir.normalize();
-      const side = new Vector3(-dir.z, 0, dir.x);
-      const from = 1.3;
-      const to = len - 1.3;
-      if (to <= from) continue;
-      const n = Math.max(2, Math.ceil((to - from) / 0.5));
-      const yAt = (d: number) => {
-        const p = a.add(dir.scale(d));
-        if (e.kind === 'bridge') {
-          const k = d / len;
-          const deck = e.ya + (e.yb - e.ya) * k - 0.05;
-          return Math.max(deck, this.terrain.height(p.x, p.z) + 0.05);
-        }
-        return this.terrain.height(p.x, p.z) + 0.05;
-      };
-      const offs = [-halfW - border, -halfW, halfW, halfW + border];
-      const base = pos.length / 3;
-      for (let k = 0; k <= n; k++) {
-        const d = from + ((to - from) * k) / n;
-        const c = a.add(dir.scale(d));
-        const y = yAt(d);
-        for (let o = 0; o < 4; o++) {
-          const p = c.add(side.scale(offs[o]));
-          pos.push(p.x, y + (o === 0 || o === 3 ? -0.02 : 0), p.z);
-          nrm.push(0, 1, 0);
-          const cc = o === 0 || o === 3 ? edgeC : pathC;
-          const j = 0.95 + noise2(p.x * 0.7, p.z * 0.7, 8) * 0.1;
-          col.push(cc.r * j, cc.g * j, cc.b * j, 1);
-          uv.push(p.x / 4, p.z / 4);
-        }
-        if (k > 0) {
-          const r0 = base + (k - 1) * 4;
-          const r1 = base + k * 4;
-          for (let o = 0; o < 3; o++) idx.push(r0 + o, r1 + o, r0 + o + 1, r0 + o + 1, r1 + o, r1 + o + 1);
-        }
-      }
-      // stepping dots, like on a printed board
-      if (!city) {
-        const count = Math.max(1, Math.floor((to - from) / 1.25));
-        for (let k = 1; k <= count; k++) {
-          const d = from + ((to - from) * k) / (count + 1);
-          const c = a.add(dir.scale(d));
-          Matrix.TranslationToRef(c.x, yAt(d) + 0.03, c.z, tmp);
-          dots.push(...tmp.asArray());
+    const offs = [-halfW - border, -halfW, 0, halfW, halfW + border];
+    // every vertex follows the terrain triangle under it; ribbons that meet or come close sit on different layers
+    for (const rb of planRibbons(this.map, this.layout)) {
+      const e = tr.edges[rb.edge];
+      const len = Math.hypot(e.bx - e.ax, e.bz - e.az);
+      const dx = (e.bx - e.ax) / len;
+      const dz = (e.bz - e.az) / len;
+      for (const run of rb.runs) {
+        const base = pos.length / 3;
+        run.forEach((d, k) => {
+          const cx = e.ax + dx * d;
+          const cz = e.az + dz * d;
+          for (let o = 0; o < offs.length; o++) {
+            const rim = o === 0 || o === offs.length - 1;
+            const x = cx - dz * offs[o];
+            const z = cz + dx * offs[o];
+            pos.push(x, tr.height(x, z) + ribbonLift(rb.layer, rim), z);
+            nrm.push(0, 1, 0);
+            const cc = rim ? edgeC : pathC;
+            const j = 0.95 + noise2(x * 0.7, z * 0.7, 8) * 0.1;
+            col.push(cc.r * j, cc.g * j, cc.b * j, 1);
+            uv.push(x / 4, z / 4);
+          }
+          if (k > 0) {
+            const r0 = base + (k - 1) * offs.length;
+            const r1 = base + k * offs.length;
+            for (let o = 0; o < offs.length - 1; o++) idx.push(r0 + o, r1 + o, r0 + o + 1, r0 + o + 1, r1 + o, r1 + o + 1);
+          }
+        });
+        // stepping dots, like on a printed board (sunk 1 cm into the ribbon, never on its plane)
+        if (!city) {
+          const from = run[0];
+          const to = run[run.length - 1];
+          const count = Math.max(1, Math.floor((to - from) / 1.25));
+          for (let k = 1; k <= count; k++) {
+            const d = from + ((to - from) * k) / (count + 1);
+            const cx = e.ax + dx * d;
+            const cz = e.az + dz * d;
+            Matrix.TranslationToRef(cx, tr.height(cx, cz) + ribbonLift(rb.layer, false) + 0.02, cz, tmp);
+            dots.push(...tmp.asArray());
+          }
         }
       }
     }
@@ -345,67 +352,31 @@ export class BoardView {
   private buildStructures() {
     const s = this.stage;
     const lib = s.assets;
-    let k = 0;
-    for (const e of this.terrain.edges) {
-      const a = new Vector3(e.ax, 0, e.az);
-      const b = new Vector3(e.bx, 0, e.bz);
-      const dir = b.subtract(a);
-      const len = dir.length();
-      dir.normalize();
-      const yaw = Math.atan2(dir.x, dir.z);
-      if (e.kind === 'pier') {
-        // deck from tile rim to tile rim, segments butting exactly: posts under a tile poked
-        // their caps through the tile top, and overlapping segments doubled the posts (both flickered)
-        const from = 1.25;
-        const span = len - 2 * from;
-        if (span <= 0) continue;
-        const segs = Math.max(1, Math.round(span / 3));
-        for (let i = 0; i < segs; i++) {
-          const p = a.add(dir.scale(from + (span * (i + 0.5)) / segs));
-          const deck = Math.min(e.ya, e.yb) - 0.04;
-          const node = lib.prop('pier', `pier${k++}`, this.root) ?? fallbackPier(s, `pier${k}`, this.root);
-          this.place(node, p.x, p.z, yaw, new Vector3(1, 1, span / segs / 3), deck - PIER_DECK);
-          this.keepOut.push({ x: p.x, z: p.z, r: 2 });
-        }
-      }
-    }
+    // deck from tile rim to tile rim, segments butting exactly: posts under a tile poked
+    // their caps through the tile top, and overlapping segments doubled the posts (both flickered)
+    this.layout.piers.forEach((p, k) => {
+      const node = lib.prop('pier', `pier${k}`, this.root) ?? fallbackPier(s, `pier${k}`, this.root);
+      this.place(node, p.x, p.z, p.yaw, new Vector3(1, 1, p.len / 3), p.y);
+    });
+    // the pier tiles themselves rest on four posts hidden under their base
+    this.layout.pierPosts.forEach((p, k) => {
+      const bottom = this.terrain.height(p.x, p.z) - 0.3;
+      const h = p.top - bottom;
+      if (h <= 0) return;
+      const post = cyl(s, `pierPost${k}`, { d: 0.26, h, tess: 7 }, '#7a5232', this.root);
+      post.position.set(p.x, bottom + h / 2, p.z);
+      post.freezeWorldMatrix();
+      post.isPickable = false;
+    });
   }
 
   /** One straight bridge per bridge field, spanning all the water along the walking line. */
   private buildBridges() {
     const s = this.stage;
-    const water = this.terrain.def.water.high;
     const bridgeId = this.map.theme === 'volcano' ? 'stonebridge' : this.map.theme === 'city' ? 'bridgestone' : 'bridge';
-    for (const f of this.map.fields) {
-      if (!f.tags?.includes('bridge')) continue;
-      const dir = this.tangent(f);
-      // never reach under the neighbouring tiles (at a river mouth the water goes on and on)
-      const near = (id: string | undefined) => (id ? Math.hypot(getField(this.map, id).x - f.x, getField(this.map, id).z - f.z) - 1.3 : 9);
-      const back = Math.min(9, near(predecessors(this.map, f.id)[0]));
-      const fwd = Math.min(9, near(f.next[0]));
-      let lo = 0;
-      let hi = 0;
-      for (let t = -back; t <= fwd; t += 0.25) {
-        const x = f.x + dir.x * t;
-        const z = f.z + dir.z * t;
-        if (this.terrain.height(x, z) < water + 0.3) {
-          lo = Math.min(lo, t);
-          hi = Math.max(hi, t);
-        }
-      }
-      // a little bank on either side, at least 4 long, within the tile rims
-      let a = Math.max(-back, lo - 1.2);
-      let b = Math.min(fwd, hi + 1.2);
-      const short = Math.max(0, 4 - (b - a)) / 2;
-      a = Math.max(-back, a - short);
-      b = Math.min(fwd, b + short);
-      const mid = (a + b) / 2;
-      const span = b - a;
-      const node = s.assets.prop(bridgeId, `bridge_${f.id}`, this.root) ?? fallbackBridge(s, `bridge_${f.id}`, this.root);
-      const x = f.x + dir.x * mid;
-      const z = f.z + dir.z * mid;
-      this.place(node, x, z, Math.atan2(dir.x, dir.z), new Vector3(1, 1, span / 7), this.fy(f.id) - 0.06 - BRIDGE_DECK);
-      this.keepOut.push({ x, z, r: span / 2 });
+    for (const b of this.layout.bridges) {
+      const node = s.assets.prop(bridgeId, `bridge_${b.field}`, this.root) ?? fallbackBridge(s, `bridge_${b.field}`, this.root);
+      this.place(node, b.x, b.z, b.yaw, new Vector3(1, 1, b.span / 7), b.y);
     }
   }
 
@@ -413,58 +384,18 @@ export class BoardView {
 
   private buildFieldBuildings() {
     const s = this.stage;
-    const theme = this.map.theme;
     const accent = this.map.palette.accent;
-    for (const f of this.map.fields) {
-      const t = this.tangent(f);
-      const side = new Vector3(-t.z, 0, t.x);
-      const yaw = Math.atan2(t.x, t.z);
-      /** spot left/right of the path with the most room */
-      const beside = (dist: number, r: number, along = 0): { x: number; z: number; face: number } | null => {
-        for (const sgn of sideOrder(f, side)) {
-          const x = f.x + side.x * dist * sgn + t.x * along;
-          const z = f.z + side.z * dist * sgn + t.z * along;
-          if (this.isFree(x, z, r, f.id)) return { x, z, face: Math.atan2(f.x - x, f.z - z) + Math.PI };
-        }
-        return null;
-      };
-      const put = (id: string, spot: { x: number; z: number; face: number } | null, r: number, scale = 1, tint?: string) => {
-        if (!spot) return;
-        const node = s.assets.prop(id, `${id}_${f.id}`, this.root, tint);
-        if (!node) return;
-        this.place(node, spot.x, spot.z, spot.face, scale);
-        this.keepOut.push({ x: spot.x, z: spot.z, r });
-      };
-      switch (f.type) {
-        case 'shop': {
-          const main = theme === 'volcano' ? 'camp' : theme === 'city' ? 'cityshop' : 'stall';
-          const shop = beside(4.4, 2.2);
-          if (shop && !s.assets.hasProp(main)) {
-            const h = hut(s, `shop_${f.id}`, accent, this.root);
-            this.place(h, shop.x, shop.z, shop.face, 0.7);
-            this.keepOut.push({ x: shop.x, z: shop.z, r: 2.2 });
-          } else put(main, shop, 2.2, 1, accent);
-          put('itemshop', beside(4.6, 2, shop ? 4.2 : 0), 2, 1, theme === 'city' ? '#6f9de6' : '#e8767a');
-          break;
-        }
-        case 'item':
-          put('chest', beside(2.3, 0.7), 0.8);
-          break;
-        case 'lucky':
-          put('luckysign', beside(2.2, 0.6), 0.7);
-          break;
-        case 'duel':
-          put('duelring', beside(2.2, 0.6), 0.7);
-          break;
-        case 'start': {
-          const gate = s.assets.prop('startgate', `startgate`, this.root, accent);
-          if (gate) this.place(gate, f.x, f.z, yaw, 1, this.fy(f.id) - 0.05);
-          break;
-        }
-        case 'station':
-          if (f.label) put('station', beside(5, 3), 3);
-          break;
+    for (const b of this.layout.buildings) {
+      if (b.prop === 'startgate') {
+        const gate = s.assets.prop('startgate', 'startgate', this.root, accent);
+        // its feet stand beside the tile on the level pad (fy - 0.22), sunk in a little
+        if (gate) this.place(gate, b.x, b.z, b.yaw, 1, this.fy(b.field) - 0.26);
+        continue;
       }
+      const tint = b.prop === 'itemshop' ? (this.map.theme === 'city' ? '#6f9de6' : '#e8767a') : accent;
+      const node = s.assets.prop(b.prop, `${b.prop}_${b.field}`, this.root, tint) ?? (['stall', 'camp', 'cityshop'].includes(b.prop) ? hut(s, `shop_${b.field}`, accent, this.root) : null);
+      if (!node) continue;
+      this.place(node, b.x, b.z, b.yaw, s.assets.hasProp(b.prop) ? 1 : 0.7);
     }
   }
 
@@ -474,7 +405,12 @@ export class BoardView {
     const s = this.stage;
     const lib = s.assets;
     const water = this.terrain.def.water;
-    for (const [i, d] of (this.map.decor ?? []).entries()) {
+    for (const { index: i, def: d, ok, why } of this.layout.decor) {
+      // decor that would stand in a tile, a path or another building is left out (the map test lists it)
+      if (!ok) {
+        if (import.meta.env.DEV) console.warn(`[board] ${this.map.id}: ${d.kind}#${i} left out (${why})`);
+        continue;
+      }
       const yaw = d.r ?? 0;
       const sc = d.s ?? 1;
       switch (d.kind) {
@@ -486,7 +422,6 @@ export class BoardView {
           node.position.set(d.x, water.high, d.z);
           node.rotation.y = yaw;
           this.floaters.push(node);
-          this.keepOut.push({ x: d.x, z: d.z, r: 2 });
           continue;
         }
         case 'cablecar': {
@@ -495,11 +430,18 @@ export class BoardView {
         }
       }
       let node: TransformNode | null = lib.prop(d.kind, `${d.kind}${i}`, this.root, d.tint);
+      const origin = node ? (PROP_ORIGIN[d.kind] ?? 0) * sc : 0;
       if (!node) node = this.fallbackDecor(d.kind, `${d.kind}${i}`, d.tint);
       if (!node) continue;
-      this.place(node, d.x, d.z, yaw, sc);
-      this.keepOut.push({ x: d.x, z: d.z, r: decorRadius(d.kind) * sc });
+      this.place(node, d.x, d.z, yaw, sc, this.terrain.height(d.x, d.z) - 0.04 + (d.dy ?? 0) + origin);
     }
+  }
+
+  /** Crater of the volcano (eruption effects), if the map has one. */
+  craterTop(): Vector3 | null {
+    const d = this.map.decor?.find((k) => k.kind === 'volcano');
+    if (!d) return null;
+    return new Vector3(d.x, this.terrain.height(d.x, d.z) - 0.04 + (d.dy ?? 0) + 10.25 * (d.s ?? 1), d.z);
   }
 
   private fallbackDecor(kind: string, name: string, tint?: string): TransformNode | null {
@@ -612,41 +554,39 @@ export class BoardView {
       foam.push(f);
     }
     this.waterfall = { tex, foam };
-    this.keepOut.push({ x, z, r: 3 });
   }
 
   private buildCableCar(i: number) {
     const s = this.stage;
-    const from = this.map.fields.find((f) => f.type === 'cablecar');
-    const target = this.map.gimmickParams?.cableCarTarget;
-    if (!from || !target) return;
-    // a station next to each end; the cable runs between their anchors (bull wheel at y 4)
-    const anchors = [from.id, target].map((id) => {
-      const f = getField(this.map, id);
-      const out = this.tangent(f);
-      const side = new Vector3(-out.z, 0, out.x);
-      const sgn = side.x * f.x + side.z * f.z >= 0 ? 1 : -1;
-      const x = f.x + side.x * 3.2 * sgn;
-      const z = f.z + side.z * 3.2 * sgn;
-      const st = s.assets.prop('cablestation', `cablest${id}`, this.root, '#e8767a');
-      const ground = this.terrain.height(x, z);
-      if (st) this.place(st, x, z, Math.atan2(-side.x * sgn, -side.z * sgn), 1, ground - 0.05);
+    const plan = this.layout.cable;
+    if (!plan) return;
+    // a station beside each end (spots chosen by the layout plan); the cable runs between their bull wheels
+    for (const st of plan.stations) {
+      const node = s.assets.prop('cablestation', `cablest${st.field}`, this.root, '#e8767a');
+      if (node) this.place(node, st.x, st.z, st.yaw, 1, st.ground - 0.05);
       else {
-        const tower = cyl(s, `tower${id}`, { d: 0.4, h: 4, tess: 5 }, '#6c6a7a', this.root);
-        tower.position.set(x, ground + 2, z);
+        const tower = cyl(s, `tower${st.field}`, { d: 0.4, h: 4, tess: 5 }, '#6c6a7a', this.root);
+        tower.position.set(st.x, st.ground + 2, st.z);
       }
-      this.keepOut.push({ x, z, r: 2.6 });
-      return new Vector3(x, ground + 4, z);
-    });
-    const [a, b] = anchors;
-    const sag = (t: number) => Vector3.Lerp(a, b, t).add(new Vector3(0, -1.2 * 4 * t * (1 - t), 0));
-    const line = MeshBuilder.CreateTube(`cable${i}`, { path: Array.from({ length: 13 }, (_, k) => sag(k / 12)), radius: 0.05, tessellation: 5 }, s.scene);
+    }
+    const at = (t: number) => {
+      const p = cablePoint(plan, t);
+      return new Vector3(p.x, p.y, p.z);
+    };
+    const line = MeshBuilder.CreateTube(`cable${i}`, { path: Array.from({ length: 25 }, (_, k) => at(k / 24)), radius: 0.05, tessellation: 5 }, s.scene);
     line.material = s.mat('#3d3a55');
     line.parent = this.root;
     const g = s.assets.prop('gondola', `gondola${i}`, this.root, '#e8767a') ?? box(s, `gondola${i}`, 1, 0.8, 1, '#e8767a', this.root);
-    g.position = sag(0.35);
-    if (!s.assets.hasProp('gondola')) g.position.y -= 0.6;
-    g.rotation.y = Math.atan2(b.x - a.x, b.z - a.z);
+    const rest = 0.35;
+    g.position = this.gondolaPos(plan, rest, !s.assets.hasProp('gondola'));
+    g.rotation.y = Math.atan2(plan.b.x - plan.a.x, plan.b.z - plan.a.z);
+    this.cable = { ...plan, gondola: g, rest };
+  }
+
+  /** Gondola clamp position on the cable (the box fallback hangs a little lower). */
+  private gondolaPos(plan: CablePlan, t: number, fallback = false): Vector3 {
+    const p = cablePoint(plan, t);
+    return new Vector3(p.x, p.y - (fallback ? 0.6 : 0), p.z);
   }
 
   // ------------------------------------------------------------------ vegetation
@@ -682,7 +622,7 @@ export class BoardView {
           const sc = lo + (hi - lo) * scR;
           const y = tr.height(px, pz) - 0.05;
           mats.push(Matrix.Compose(new Vector3(sc, sc, sc), Quaternion.FromEulerAngles(0, yawR * Math.PI * 2, 0), new Vector3(px, y, pz)));
-          if (big) this.keepOut.push({ x: px, z: pz, r: 0.9 * sc });
+          if (big) this.keepOut.push({ x: px, z: pz, r: 0.9 * sc, what: rule.kind });
         }
       }
       const small = /grass|shell|fern|flowers|rocksmall/.test(rule.kind);
@@ -697,10 +637,7 @@ export class BoardView {
     const routes = this.map.gimmickParams?.trainRoutes;
     if (routes) {
       routes.forEach((r, ri) => {
-        const pts = r.fields.map((id) => this.fieldPos(id));
-        const first = pts[0].subtract(pts[1].subtract(pts[0]).normalize().scale(6));
-        const last = pts[pts.length - 1].add(pts[pts.length - 1].subtract(pts[pts.length - 2]).normalize().scale(6));
-        const path = [first, ...pts, last].map((p) => new Vector3(p.x, this.terrain.height(p.x, p.z) + 0.08, p.z));
+        const path = this.trainLine(ri).map((p) => new Vector3(p.x, this.terrain.height(p.x, p.z) + 0.08, p.z));
         for (const off of [-0.7, 0.7]) {
           const shifted = path.map((p, k) => {
             const a = path[Math.max(0, k - 1)];
@@ -715,6 +652,45 @@ export class BoardView {
         }
       });
     }
+  }
+
+  private grow(node: TransformNode, from: number, to: number, seconds: number): Promise<void> {
+    return new Promise((resolve) => {
+      let k = 0;
+      node.scaling.setAll(from);
+      const stop = this.stage.onUpdate((dt) => {
+        k = Math.min(1, k + dt / seconds);
+        node.scaling.setAll(from + (to - from) * k);
+        if (k >= 1) {
+          stop();
+          resolve();
+        }
+      });
+    });
+  }
+
+  /** Track of a train route: its fields plus a run-out at both ends that stays on dry land. */
+  private trainLine(route: number): Vector3[] {
+    const r = this.map.gimmickParams?.trainRoutes?.[route];
+    if (!r) return [];
+    const pts = r.fields.map((id) => this.fieldPos(id));
+    const runOut = (p: Vector3, q: Vector3) => {
+      const dir = p.subtract(q);
+      dir.y = 0;
+      dir.normalize();
+      let len = 6;
+      const dry = (l: number) => {
+        for (let d = 0.5; d <= l; d += 0.5) {
+          const x = p.x + dir.x * d;
+          const z = p.z + dir.z * d;
+          if (this.terrain.height(x, z) < this.terrain.def.water.high + 0.2 || this.layout.keepOut.some((k) => k.what !== 'pier' && !k.what.startsWith('bridge') && Math.hypot(k.x - x, k.z - z) < k.r * 0.8)) return false;
+        }
+        return true;
+      };
+      while (len > 1.5 && !dry(len)) len -= 0.5;
+      return p.add(dir.scale(len));
+    };
+    return [runOut(pts[0], pts[1]), ...pts, runOut(pts[pts.length - 1], pts[pts.length - 2])];
   }
 
   // ------------------------------------------------------------------ queries
@@ -845,7 +821,7 @@ export class BoardView {
       rig.root.scaling.setAll(1.5);
     } else if (kind === 'cable') {
       rig.setAnim('idle');
-      await this.tween(rig.root, target, 1.6, 4);
+      await this.rideCable(rig.root, from, target);
     } else if (kind === 'ride') {
       rig.setAnim('idle');
       await this.tween(rig.root, target, 1.4, 2);
@@ -856,6 +832,45 @@ export class BoardView {
     rig.setAnim('idle');
     rig.root.rotation.y = 0;
     this.layoutTokens();
+  }
+
+  /**
+   * Cable car ride: hop into the gondola at the start station, glide along the cable to the
+   * other station, hop out onto the target tile; the gondola then drifts back to its rest spot.
+   */
+  private async rideCable(node: TransformNode, from: string, target: Vector3): Promise<void> {
+    const c = this.cable;
+    if (!c) return this.tween(node, target, 1.6, 4);
+    const forward = c.stations[0].field === from || c.stations[1].field !== from;
+    const t0 = forward ? 0.06 : 0.94;
+    const t1 = forward ? 0.94 : 0.06;
+    const fallback = !this.stage.assets.hasProp('gondola');
+    // the rider stands in the cabin (cabin floor ~0.1 above its bottom)
+    const seat = (t: number) => this.gondolaPos(c, t, fallback).add(new Vector3(0, -GONDOLA_DROP + 0.12, 0));
+    await this.tween(c.gondola, this.gondolaPos(c, t0, fallback), 0.5);
+    const scale = node.scaling.x;
+    node.scaling.setAll(scale * 0.7);
+    await this.tween(node, seat(t0), 0.45, 1.2);
+    const span = Math.hypot(c.b.x - c.a.x, c.b.z - c.a.z);
+    const seconds = Math.max(1.4, span / 14);
+    await new Promise<void>((resolve) => {
+      let k = 0;
+      const stop = this.stage.onUpdate((dt) => {
+        k = Math.min(1, k + dt / seconds);
+        const e = k < 0.5 ? 2 * k * k : 1 - (-2 * k + 2) ** 2 / 2;
+        const t = t0 + (t1 - t0) * e;
+        c.gondola.position.copyFrom(this.gondolaPos(c, t, fallback));
+        node.position.copyFrom(seat(t));
+        if (k >= 1) {
+          stop();
+          resolve();
+        }
+      });
+    });
+    await this.tween(node, target, 0.45, 1.2);
+    node.scaling.setAll(scale);
+    // the empty gondola drifts back to its rest spot
+    void this.tween(c.gondola, this.gondolaPos(c, c.rest, fallback), 2.5);
   }
 
   // ------------------------------------------------------------------ star, bags, traps, arrows
@@ -949,9 +964,6 @@ export class BoardView {
   async runTrain(route: number): Promise<void> {
     const r = this.map.gimmickParams?.trainRoutes?.[route];
     if (!r) return;
-    const pts = r.fields.map((id) => this.fieldPos(id));
-    const start = pts[0].subtract(pts[1].subtract(pts[0]).normalize().scale(14));
-    const end = pts[pts.length - 1].add(pts[pts.length - 1].subtract(pts[pts.length - 2]).normalize().scale(14));
     const train = new TransformNode('train', this.stage.scene);
     train.parent = this.root;
     const model = this.stage.assets.prop('loco', 'locoModel', train, '#e8767a');
@@ -965,14 +977,19 @@ export class BoardView {
     if (wagon) wagon.position.z = 4.2;
     for (const m of train.getChildMeshes()) this.stage.castShadow(m, false);
     this.trainMesh = train;
-    const path = [start, ...pts, end];
-    train.position.copyFrom(start);
+    // the train runs on the rails: from their start to their end, never off into the canal
+    const path = this.trainLine(route).map((p) => new Vector3(p.x, this.terrain.height(p.x, p.z) + 0.05, p.z));
+    train.position.copyFrom(path[0]);
+    train.rotation.y = Math.atan2(path[1].x - path[0].x, path[1].z - path[0].z) + Math.PI;
+    // it pops up at the start of the rails and shrinks away at their end
+    await this.grow(train, 0.01, 1, 0.35);
     for (let k = 1; k < path.length; k++) {
       const a = path[k - 1];
       const b = path[k];
       train.rotation.y = Math.atan2(b.x - a.x, b.z - a.z) + Math.PI;
       await this.tween(train, new Vector3(b.x, this.terrain.height(b.x, b.z) + 0.05, b.z), Vector3.Distance(a, b) / 18);
     }
+    await this.grow(train, 1, 0.01, 0.35);
     train.dispose(false, false);
     this.trainMesh = null;
   }
@@ -1069,20 +1086,6 @@ function iconQuad(stage: Stage, name: string, text: string, color: string): Mesh
   plane.material = mat;
   plane.isPickable = false;
   return plane;
-}
-
-/** Left side first if there is more open land there (away from other fields). */
-function sideOrder(f: FieldDef, side: Vector3): number[] {
-  // prefer the side facing away from the map center: buildings sit on the outside of loops
-  const out = side.x * f.x + side.z * f.z;
-  return out >= 0 ? [1, -1] : [-1, 1];
-}
-
-function decorRadius(kind: string): number {
-  return (
-    { lighthouse: 3, cliff: 4.5, volcano: 14, temple: 4, station: 4, stilthut: 2.6, hut: 2.2, house: 2.4, house2: 2, house3: 2.4, tower: 2, ruin: 1.6, cannon: 1.4, fountain: 2, crab: 1 }[kind] ??
-    1.2
-  );
 }
 
 function fallbackBridge(stage: Stage, name: string, parent: TransformNode): TransformNode {

@@ -60,22 +60,21 @@ b.path('sa', 'BLBI', [{ x: -34, z: 4, y: -0.3 }, { x: -34.5, z: -7, y: -0.3 }], 
 // Boat jetty in the south (always open).
 b.path('j', 'BIEBL', [{ x: 7, z: -31, y: 0.7 }, { x: 14, z: -33, y: 0.7 }, { x: 20, z: -29, y: 0.7 }], { from: at(4, -24), to: at(20, -20), tags: ['pier'] });
 
-// Lighthouse cliff in the north-east.
-b.path('l', 'BLDB', [{ x: 39, z: 15, y: 2.2 }, { x: 37, z: 23, y: 2.6 }, { x: 30, z: 26, y: 1.6 }], { from: at(33, 8), to: at(19, 22), tags: ['cliff'] });
+// Lighthouse cliff in the north-east (the cliff hill gives the height).
+b.path('l', 'BLDBB', [{ x: 38.5, z: 14 }, { x: 38, z: 21.5 }, { x: 31.5, z: 25.5 }], { from: at(33, 8), to: at(19, 22), tags: ['cliff'] });
 
 // Jungle path from the south-west to the junction in the middle of the island.
-const jungle = b.path('d', 'BRL', [{ x: -16, z: -14 }, { x: -11, z: -7 }], { from: at(-24, -19) });
 b.add('jx', 'event', -5.5, 0.5);
-b.link(jungle[2], 'jx');
+b.path('d', 'BRBL', [{ x: -16, z: -14 }, { x: -11, z: -7 }], { from: at(-24, -19), to: 'jx' });
 
 // a) Ford through the river (low tide only) and on to the east coast.
 const ford = b.path('f', 'BBIBBRBL', [{ x: 1, z: 2 }, { x: 5.4, z: 4.2 }, { x: 8.6, z: 5.6 }, { x: 13, z: 7 }, { x: 19, z: 8 }, { x: 25, z: 7 }], { from: 'jx', to: at(34, 3) });
 // b) Up the waterfall hill and to the north village.
-b.path('h', 'BLBE', [{ x: -9, z: 6 }, { x: -11, z: 12 }, { x: -9, z: 18 }], { from: 'jx', to: at(-11, 25), tags: ['hill'] });
+b.path('h', 'BLBE', [{ x: -9.5, z: 6 }, { x: -12, z: 11.5 }, { x: -12.5, z: 17.5 }], { from: 'jx', to: at(-14, 24.5), tags: ['hill'] });
 
 // Fields standing in the river become ford stones (flooded at high tide); fields of the
 // main loop over the river are bridge fields.
-tagCrossings(b, KOKOS_RIVER, 2.6, 1.1, ford);
+tagCrossings(b, KOKOS_RIVER, 2.6, ford);
 for (const f of b.fields.values()) {
   if (f.tags?.includes('sandbank')) f.y = -0.3;
   if (f.tags?.includes('pier')) f.y = 0.7;
@@ -105,7 +104,8 @@ export const KOKOSNUSS: MapDef = {
     water: { high: 0.05, low: -0.75, kind: 'sea' },
     land: [
       { x: 2, z: 1, rx: 33, rz: 25 },
-      { x: 30, z: 18, rx: 11, rz: 9 },
+      { x: -2, z: 22, rx: 16, rz: 5.5 },
+      { x: 31, z: 16, rx: 12, rz: 11 },
       { x: -22, z: 16, rx: 12, rz: 10 },
       { x: 0, z: -18, rx: 22, rz: 9 },
       { x: -22, z: -14, rx: 10, rz: 8 },
@@ -114,13 +114,13 @@ export const KOKOSNUSS: MapDef = {
     cuts: [{ x: -36, z: -2, rx: 9, rz: 10 }],
     // turquoise lagoon off the north beach for the stilt huts, and a wider sand strip
     shallows: [
-      { x: -2, z: 31, rx: 24, rz: 6.5, y: -1.05 },
+      { x: -2, z: 32, rx: 24, rz: 6, y: -1.05 },
       { x: 12, z: -31, rx: 16, rz: 5, y: -1.2 },
     ],
     beach: 5.5,
     hills: [
       { x: -5, z: 20, r: 7, h: 4.6 },
-      { x: -13, z: 16, r: 6, h: 2.2 },
+      { x: -12, z: 15, r: 6.5, h: 1.0 },
       { x: 37, z: 21, r: 6, h: 2.8 },
       { x: 12, z: 15, r: 7, h: 0.8 },
       { x: -14, z: -2, r: 6, h: 0.6 },
@@ -143,30 +143,32 @@ export const KOKOSNUSS: MapDef = {
   decor: [
     // everything stands on land (or in the shallow lagoon) – decor is placed on the ground height
     { kind: 'lighthouse', x: 41.5, z: 22.5, r: -0.6 },
-    { kind: 'cliff', x: -2, z: 24.5, s: 0.9, r: 0.2 },
+    // rock formation rising from the lagoon at the north-west edge (north of the ring it
+    // never hides a tile from the TV camera)
+    { kind: 'cliff', x: -21, z: 29.5, s: 0.9, r: 0.3 },
     { kind: 'waterfall', x: -4, z: 18 },
     { kind: 'cannon', x: -9, z: 0, r: 0.7 },
     { kind: 'crab', x: 16.6, z: -18.4, r: 0.3 },
     { kind: 'boat', x: 3, z: -33, r: 1.1 },
     { kind: 'boat', x: 24, z: -33, r: -0.4 },
-    { kind: 'boat', x: -8.5, z: 33, r: 1.4 },
+    { kind: 'boat', x: -8.5, z: 35, r: 1.4 },
     // stilt village in the north lagoon, ladders towards the beach
-    { kind: 'stilthut', x: -13, z: 31, r: 0.15, tint: '#6f9de6' },
-    { kind: 'stilthut', x: -4.5, z: 32, r: -0.1, tint: '#e8767a' },
-    { kind: 'stilthut', x: 3.5, z: 31.5, r: 0.1, tint: '#f4a259' },
-    { kind: 'stilthut', x: 11, z: 31, r: -0.2, tint: '#56c08e' },
+    { kind: 'stilthut', x: -13, z: 32.5, r: 0.15, tint: '#6f9de6' },
+    { kind: 'stilthut', x: -4.5, z: 33.5, r: -0.1, tint: '#e8767a' },
+    { kind: 'stilthut', x: 3.5, z: 33, r: 0.1, tint: '#f4a259' },
+    { kind: 'stilthut', x: 11, z: 32.5, r: -0.2, tint: '#56c08e' },
     // beach huts
     { kind: 'hut', x: -25, z: 8, r: 0.95, tint: '#f4a259' },
     { kind: 'hut', x: 12, z: -19, r: -0.2, tint: '#e8767a' },
     { kind: 'hut', x: 27, z: 11, r: 3.94, tint: '#6f9de6' },
     { kind: 'barrel', x: 5.9, z: -20 },
     { kind: 'crate', x: 4.2, z: -20.3, r: 0.4 },
-    { kind: 'ruin', x: -15, z: -9, r: 0.4 },
+    { kind: 'ruin', x: -17, z: -9, r: 0.4 },
     { kind: 'ruin', x: 6, z: -8, r: 2.1 },
     { kind: 'torch', x: -3, z: -2 },
-    { kind: 'torch', x: -8, z: 3 },
-    { kind: 'driftwood', x: -31.3, z: 16.7, r: 0.6 },
-    { kind: 'driftwood', x: 3, z: -25.7, r: 2.2 },
+    { kind: 'torch', x: -10, z: 2 },
+    { kind: 'driftwood', x: -27, z: 21.5, r: 0.6 },
+    { kind: 'driftwood', x: -3, z: -25.5, r: 2.2 },
   ],
   musicKey: 'island',
 };

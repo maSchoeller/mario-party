@@ -1,45 +1,29 @@
 import { Color3, DynamicTexture, Mesh, MeshBuilder, StandardMaterial, Texture, TransformNode, VertexData, type Scene } from '@babylonjs/core';
-import type { FieldDef, MapDef, TerrainDef } from '@wb/shared/maps/index';
-import { distToSegment, fbm, noise2, smoothstep, tileFbm } from './noise';
+import type { MapDef, TerrainDef } from '@wb/shared/maps/index';
+import { cellDiagonal, GROUNDS, TERRAIN_RES, TerrainModel, type Ground, type TerrainEdge } from '@wb/shared/maps/terrainModel';
+import { fbm, noise2, smoothstep, tileFbm } from './noise';
 import type { Stage } from './stage';
 
 /**
- * Landscape around the field graph (v0.3): a height field built from the map's terrain
- * description (land blobs, bays, hills, river/lava channels). Paths are flattened into
- * it, channels carved out, and the result is drawn as a faceted low-poly mesh with
- * per-face vertex colors on top of a tiling detail texture. Water (or lava) is a
- * separate animated plane whose level follows the tide.
+ * Landscape around the field graph (v0.3): the height field of the shared TerrainModel
+ * (land blobs, bays, hills, volcano, river/lava channels, paths and tile pads flattened
+ * in) drawn as a faceted low-poly mesh with per-face vertex colors on top of a tiling
+ * detail texture. Water (or lava) is a separate animated plane whose level follows the
+ * tide; lava streams get a flowing ribbon of their own.
  */
-export type Ground = 'grass' | 'sand' | 'rock' | 'water' | 'path' | 'channel';
+export type { Ground };
 
-interface Edge {
-  ax: number;
-  az: number;
-  bx: number;
-  bz: number;
-  ya: number;
-  yb: number;
-  kind: 'normal' | 'bridge' | 'pier' | 'shallow';
-}
-
-const RES = 1.0;
-/** clearance values beyond this are irrelevant (scatter / buildings only care about the near range) */
-const CLEAR_CAP = 6;
+/** Sea floor plane far below the deepest terrain (never coplanar with its flat bottom). */
+const SEA_FLOOR = -7.6;
+/** Lava ribbon above its groove. */
+const FLOW_LIFT = 0.07;
 
 export class Terrain {
-  readonly fieldY = new Map<string, number>();
-  readonly edges: Edge[] = [];
-  readonly def: TerrainDef;
+  readonly model: TerrainModel;
   readonly water: Mesh;
   private mesh: Mesh;
-  private minX: number;
-  private minZ: number;
-  private nx: number;
-  private nz: number;
-  private h: Float32Array;
-  private cls: Uint8Array;
-  /** distance to the nearest path edge per grid vertex (capped), for fast scatter queries */
-  private clear: Float32Array;
+  private flows: Mesh[] = [];
+  private flowTex: Texture | null = null;
   private waterTarget: number;
   private waterTex: Texture | null = null;
   private t = 0;
@@ -49,226 +33,54 @@ export class Terrain {
     readonly map: MapDef,
     parent: TransformNode,
   ) {
-    this.def = map.terrain;
-    const xs = map.fields.map((f) => f.x).concat((map.decor ?? []).map((d) => d.x));
-    const zs = map.fields.map((f) => f.z).concat((map.decor ?? []).map((d) => d.z));
-    const M = 22;
-    this.minX = Math.floor(Math.min(...xs) - M);
-    this.minZ = Math.floor(Math.min(...zs) - M);
-    this.nx = Math.ceil((Math.max(...xs) + M - this.minX) / RES) + 1;
-    this.nz = Math.ceil((Math.max(...zs) + M - this.minZ) / RES) + 1;
-    this.h = new Float32Array(this.nx * this.nz);
-    this.cls = new Uint8Array(this.nx * this.nz);
-    this.clear = new Float32Array(this.nx * this.nz);
-    this.layoutFields();
-    this.buildHeights();
+    this.model = new TerrainModel(map);
     this.mesh = this.buildMesh(parent);
     this.waterTarget = this.def.water.high;
     this.water = this.buildWater(parent);
+    this.buildLavaFlows(parent);
   }
 
-  // ------------------------------------------------------------------ height model
-
-  /** Signed land value in world units: > 0 on land, < 0 in the sea. */
-  private land(x: number, z: number): number {
-    const d = this.def;
-    let L = -Infinity;
-    for (const b of d.land) L = smax(L, ellipse(x, z, b), 4);
-    for (const c of d.cuts ?? []) L = smin(L, -ellipse(x, z, c), 3);
-    // ragged coastline
-    return L + (fbm(x * 0.07, z * 0.07, 3, 11) - 0.5) * 5;
+  get def(): TerrainDef {
+    return this.model.def;
   }
 
-  /** Natural height (land + hills), before paths and channels. */
-  natural(x: number, z: number): { y: number; L: number } {
-    const d = this.def;
-    const L = this.land(x, z);
-    const wl = d.water.low ?? d.water.high;
-    let y: number;
-    if (L < 0) {
-      y = wl - 0.2 + Math.max(-6, L * 0.45);
-      for (const s of d.shallows ?? []) y = Math.max(y, y + (s.y - y) * smoothstep(0, 3, ellipse(x, z, s)));
-    } else y = d.water.high - 0.25 + (d.base - d.water.high + 0.25) * smoothstep(0, 4.5, L);
-    const inland = smoothstep(1, 6, L);
-    y += (fbm(x * 0.05, z * 0.05, 4, 3) - 0.5) * 0.9 * inland;
-    for (const hl of d.hills ?? []) {
-      const rz = hl.rz ?? hl.r;
-      const q = ((x - hl.x) / hl.r) ** 2 + ((z - hl.z) / rz) ** 2;
-      y += hl.h * Math.exp(-q * 1.6) * (hl.h > 0 ? inland : 1);
-    }
-    return { y, L };
+  get fieldY(): Map<string, number> {
+    return this.model.fieldY;
   }
 
-  private channelDist(x: number, z: number): { d: number; w: number; kind: 'water' | 'lava' } | null {
-    let best: { d: number; w: number; kind: 'water' | 'lava' } | null = null;
-    let meander: number | null = null;
-    for (const c of this.def.channels ?? []) {
-      const reach = c.width / 2 + 3;
-      for (let i = 0; i < c.points.length - 1; i++) {
-        const [ax, az] = c.points[i];
-        const [bx, bz] = c.points[i + 1];
-        if (x < Math.min(ax, bx) - reach || x > Math.max(ax, bx) + reach || z < Math.min(az, bz) - reach || z > Math.max(az, bz) + reach) continue;
-        // meander the banks a little (one noise lookup per point)
-        meander ??= (noise2(x * 0.18, z * 0.18, 5) - 0.5) * 1.0;
-        const dd = distToSegment(x, z, ax, az, bx, bz).d + meander;
-        if (!best || dd - c.width / 2 < best.d - best.w / 2) best = { d: dd, w: c.width, kind: c.kind };
-      }
-    }
-    return best;
-  }
-
-  private layoutFields() {
-    const d = this.def;
-    for (const f of this.map.fields) {
-      const nat = this.natural(f.x, f.z).y;
-      this.fieldY.set(f.id, f.y ?? Math.max(nat, d.water.high + 0.4));
-    }
-    const has = (f: FieldDef, t: string) => !!f.tags?.includes(t);
-    const idx = new Map(this.map.fields.map((f) => [f.id, f]));
-    for (const f of this.map.fields) {
-      for (const n of f.next) {
-        const g = idx.get(n)!;
-        let kind: Edge['kind'] = 'normal';
-        if (has(f, 'pier') || has(g, 'pier')) kind = 'pier';
-        else if (has(f, 'bridge') || has(g, 'bridge')) kind = 'bridge';
-        else if (has(f, 'sandbank') || has(g, 'sandbank') || has(f, 'ford') || has(g, 'ford')) kind = 'shallow';
-        this.edges.push({ ax: f.x, az: f.z, bx: g.x, bz: g.z, ya: this.fieldY.get(f.id)!, yb: this.fieldY.get(g.id)!, kind });
-      }
-    }
-  }
-
-  private buildHeights() {
-    const d = this.def;
-    const tilted = this.map.fields.filter((f) => !f.tags?.some((t) => t === 'pier' || t === 'bridge'));
-    for (let j = 0; j < this.nz; j++) {
-      for (let i = 0; i < this.nx; i++) {
-        const x = this.minX + i * RES;
-        const z = this.minZ + j * RES;
-        const nat = this.natural(x, z);
-        let y = nat.y;
-        let cls: Ground = 'grass';
-        // 1) paths and tiles are flattened into the land
-        let w = 0;
-        let target = y;
-        let nearest = CLEAR_CAP;
-        for (const e of this.edges) {
-          // cheap bounding-box reject before the exact distance
-          if (x < Math.min(e.ax, e.bx) - CLEAR_CAP || x > Math.max(e.ax, e.bx) + CLEAR_CAP || z < Math.min(e.az, e.bz) - CLEAR_CAP || z > Math.max(e.az, e.bz) + CLEAR_CAP) continue;
-          const s = distToSegment(x, z, e.ax, e.az, e.bx, e.bz);
-          if (s.d < nearest) nearest = s.d;
-          if (e.kind === 'pier' || e.kind === 'shallow') continue;
-          const k = smoothstep(3.4, 1.3, s.d);
-          if (k > w) {
-            w = k;
-            target = e.ya + (e.yb - e.ya) * s.t - 0.18;
-          }
-        }
-        this.clear[j * this.nx + i] = nearest;
-        for (const f of tilted) {
-          if (Math.abs(x - f.x) > 2.6 || Math.abs(z - f.z) > 2.6) continue;
-          const k = smoothstep(2.6, 1.5, Math.hypot(x - f.x, z - f.z));
-          if (k > w) {
-            w = k;
-            target = this.fieldY.get(f.id)! - 0.18;
-          }
-        }
-        if (w > 0) {
-          y = y + (target - y) * w;
-          if (w > 0.55) cls = 'path';
-        }
-        // 2) channels (river / lava) are carved below the water
-        const ch = this.channelDist(x, z);
-        if (ch) {
-          const half = ch.w / 2;
-          const bed = (ch.kind === 'lava' ? d.water.high : (d.water.low ?? d.water.high)) - 0.7;
-          const k = smoothstep(half + 2.1, half - 0.4, ch.d);
-          if (k > 0) {
-            y = y + (Math.min(y, bed) - y) * k;
-            if (k > 0.5) cls = 'channel';
-          }
-        }
-        // 3) sandbank / ford bars rise from the water just below their fields
-        for (const e of this.edges) {
-          if (e.kind !== 'shallow' || nearest > 2.4) continue;
-          const s = distToSegment(x, z, e.ax, e.az, e.bx, e.bz);
-          const k = smoothstep(2.4, 1.0, s.d);
-          if (k > 0) {
-            const bar = Math.min(e.ya, e.yb) - 0.16 + (noise2(x * 0.8, z * 0.8, 9) - 0.5) * 0.1;
-            if (y < bar || cls === 'channel') y = y + (bar - y) * k;
-            if (k > 0.5) cls = 'sand';
-          }
-        }
-        if (cls === 'grass') cls = this.classify(x, z, y, nat.L);
-        this.h[j * this.nx + i] = y;
-        this.cls[j * this.nx + i] = GROUND_ID[cls];
-      }
-    }
-    // slope based rock after the heights exist
-    for (let j = 1; j < this.nz - 1; j++) {
-      for (let i = 1; i < this.nx - 1; i++) {
-        const k = j * this.nx + i;
-        if (this.cls[k] !== GROUND_ID.grass) continue;
-        const gx = (this.h[k + 1] - this.h[k - 1]) / (2 * RES);
-        const gz = (this.h[k + this.nx] - this.h[k - this.nx]) / (2 * RES);
-        if (Math.hypot(gx, gz) > 0.75) this.cls[k] = GROUND_ID.rock;
-      }
-    }
-  }
-
-  private classify(x: number, z: number, y: number, L: number): Ground {
-    const d = this.def;
-    if (y < d.water.high - 0.02) return 'water';
-    if (L < (d.beach ?? 3.2) + (noise2(x * 0.2, z * 0.2, 4) - 0.5) * 2 && y < d.base + 0.5) return 'sand';
-    return 'grass';
+  get edges(): TerrainEdge[] {
+    return this.model.edges;
   }
 
   // ------------------------------------------------------------------ queries
 
-  /** Bilinear height of the built terrain. */
+  natural(x: number, z: number): { y: number; L: number } {
+    return this.model.natural(x, z);
+  }
+
+  /** Height of the terrain mesh (the plane of the triangle under x/z). */
   height(x: number, z: number): number {
-    const fx = Math.max(0, Math.min(this.nx - 1.001, (x - this.minX) / RES));
-    const fz = Math.max(0, Math.min(this.nz - 1.001, (z - this.minZ) / RES));
-    const i = Math.floor(fx);
-    const j = Math.floor(fz);
-    const u = fx - i;
-    const v = fz - j;
-    const k = j * this.nx + i;
-    const a = this.h[k];
-    const b = this.h[k + 1];
-    const c = this.h[k + this.nx];
-    const e = this.h[k + this.nx + 1];
-    return a + (b - a) * u + (c - a) * v + (a - b - c + e) * u * v;
+    return this.model.height(x, z);
   }
 
   ground(x: number, z: number): Ground {
-    const i = Math.round((x - this.minX) / RES);
-    const j = Math.round((z - this.minZ) / RES);
-    if (i < 0 || j < 0 || i >= this.nx || j >= this.nz) return 'water';
-    return GROUNDS[this.cls[j * this.nx + i]];
+    return this.model.ground(x, z);
   }
 
-  /** Distance to the nearest path edge (for keeping scatter off the paths), capped at CLEAR_CAP. */
+  /** Distance to the nearest path edge (for keeping scatter off the paths), capped. */
   clearance(x: number, z: number): number {
-    const fx = Math.max(0, Math.min(this.nx - 1.001, (x - this.minX) / RES));
-    const fz = Math.max(0, Math.min(this.nz - 1.001, (z - this.minZ) / RES));
-    const i = Math.floor(fx);
-    const j = Math.floor(fz);
-    const u = fx - i;
-    const v = fz - j;
-    const k = j * this.nx + i;
-    const c = this.clear;
-    // bilinear interpolation underestimates near the path, which is the safe side
-    return c[k] * (1 - u) * (1 - v) + c[k + 1] * u * (1 - v) + c[k + this.nx] * (1 - u) * v + c[k + this.nx + 1] * u * v;
+    return this.model.clearance(x, z);
   }
 
   get bounds() {
-    return { minX: this.minX, minZ: this.minZ, maxX: this.minX + (this.nx - 1) * RES, maxZ: this.minZ + (this.nz - 1) * RES };
+    return this.model.bounds;
   }
 
   // ------------------------------------------------------------------ mesh
 
   private buildMesh(parent: TransformNode): Mesh {
     const d = this.def;
+    const M = this.model;
     const C = {
       grass: Color3.FromHexString(d.colors.grass),
       grass2: Color3.FromHexString(d.colors.grass2),
@@ -278,16 +90,20 @@ export class Terrain {
       seabed: Color3.FromHexString(d.colors.seabed),
     };
     const tmp = new Color3();
-    const nx = this.nx;
+    const nx = M.nx;
+    const nz = M.nz;
+    const H = M.h;
+    const X = (k: number) => M.minX + (k % nx) * TERRAIN_RES;
+    const Z = (k: number) => M.minZ + Math.floor(k / nx) * TERRAIN_RES;
     // colors per grid vertex (smooth transitions) – lighting stays faceted
-    const n = nx * this.nz;
+    const n = nx * nz;
     let vc = new Float32Array(n * 3);
     for (let k = 0; k < n; k++) {
-      const x = this.minX + (k % nx) * RES;
-      const z = this.minZ + Math.floor(k / nx) * RES;
-      const cy = this.h[k];
+      const x = X(k);
+      const z = Z(k);
+      const cy = H[k];
       const n1 = fbm(x * 0.09, z * 0.09, 3, 21);
-      switch (GROUNDS[this.cls[k]]) {
+      switch (GROUNDS[M.cls[k]]) {
         case 'grass':
           Color3.LerpToRef(C.grass, C.grass2, smoothstep(0.35, 0.7, n1), tmp);
           // hills get a little darker
@@ -313,17 +129,19 @@ export class Terrain {
       vc[k * 3 + 1] = tmp.g;
       vc[k * 3 + 2] = tmp.b;
     }
-    // one blur pass softens the class borders
-    const blur = new Float32Array(vc);
-    for (let j = 1; j < this.nz - 1; j++) {
-      for (let i = 1; i < nx - 1; i++) {
-        const k = j * nx + i;
-        for (let c = 0; c < 3; c++) blur[k * 3 + c] = (vc[k * 3 + c] * 4 + vc[(k - 1) * 3 + c] + vc[(k + 1) * 3 + c] + vc[(k - nx) * 3 + c] + vc[(k + nx) * 3 + c]) / 8;
+    // two blur passes soften the class borders (the grid is 0.5 m fine)
+    for (let pass = 0; pass < 2; pass++) {
+      const blur = new Float32Array(vc);
+      for (let j = 1; j < nz - 1; j++) {
+        for (let i = 1; i < nx - 1; i++) {
+          const k = j * nx + i;
+          for (let c = 0; c < 3; c++) blur[k * 3 + c] = (vc[k * 3 + c] * 4 + vc[(k - 1) * 3 + c] + vc[(k + 1) * 3 + c] + vc[(k - nx) * 3 + c] + vc[(k + nx) * 3 + c]) / 8;
+        }
       }
+      vc = blur;
     }
-    vc = blur;
     // flat-shaded: 3 own vertices per triangle, written straight into typed arrays
-    const tris = (nx - 1) * (this.nz - 1) * 2;
+    const tris = (nx - 1) * (nz - 1) * 2;
     const pos = new Float32Array(tris * 9);
     const nrm = new Float32Array(tris * 9);
     const col = new Float32Array(tris * 12);
@@ -331,10 +149,10 @@ export class Terrain {
     const idx = new Uint32Array(tris * 3);
     let v = 0;
     const emit = (k: number, fx: number, fy: number, fz: number, jitter: number) => {
-      const x = this.minX + (k % nx) * RES;
-      const z = this.minZ + Math.floor(k / nx) * RES;
+      const x = X(k);
+      const z = Z(k);
       pos[v * 3] = x;
-      pos[v * 3 + 1] = this.h[k];
+      pos[v * 3 + 1] = H[k];
       pos[v * 3 + 2] = z;
       nrm[v * 3] = fx;
       nrm[v * 3 + 1] = fy;
@@ -349,21 +167,21 @@ export class Terrain {
       v++;
     };
     const tri = (a: number, b: number, c: number) => {
-      const ax = this.minX + (a % nx) * RES;
-      const az = this.minZ + Math.floor(a / nx) * RES;
-      const ux = this.minX + (b % nx) * RES - ax;
-      const uz = this.minZ + Math.floor(b / nx) * RES - az;
-      const wx = this.minX + (c % nx) * RES - ax;
-      const wz = this.minZ + Math.floor(c / nx) * RES - az;
+      const ax = X(a);
+      const az = Z(a);
+      const ux = X(b) - ax;
+      const uz = Z(b) - az;
+      const wx = X(c) - ax;
+      const wz = Z(c) - az;
       // Babylon culls clockwise faces: order the corners so the triangle faces up
       if (ux * wz - uz * wx < 0) [b, c] = [c, b];
       // face normal from the (possibly swapped) edges a→b and a→c, always pointing up
-      const uy = this.h[b] - this.h[a];
-      const wy = this.h[c] - this.h[a];
-      const bx = this.minX + (b % nx) * RES - ax;
-      const bz = this.minZ + Math.floor(b / nx) * RES - az;
-      const cx = this.minX + (c % nx) * RES - ax;
-      const cz = this.minZ + Math.floor(c / nx) * RES - az;
+      const uy = H[b] - H[a];
+      const wy = H[c] - H[a];
+      const bx = X(b) - ax;
+      const bz = Z(b) - az;
+      const cx = X(c) - ax;
+      const cz = Z(c) - az;
       let fx = uy * cz - bz * wy;
       let fy = bz * cx - bx * cz;
       let fz = bx * wy - uy * cx;
@@ -378,13 +196,14 @@ export class Terrain {
       emit(b, fx, fy, fz, jitter);
       emit(c, fx, fy, fz, jitter);
     };
-    for (let j = 0; j < this.nz - 1; j++) {
+    for (let j = 0; j < nz - 1; j++) {
       for (let i = 0; i < nx - 1; i++) {
         const k00 = j * nx + i;
         const k10 = k00 + 1;
         const k01 = k00 + nx;
         const k11 = k01 + 1;
-        if ((i + j) % 2 === 0) {
+        // same split as TerrainModel.height() samples
+        if (cellDiagonal(i, j) === 0) {
           tri(k00, k01, k11);
           tri(k00, k11, k10);
         } else {
@@ -446,7 +265,7 @@ export class Terrain {
     w.receiveShadows = true;
     // dark floor far below so the horizon never shows the void
     const floor = MeshBuilder.CreateGround('seaFloor', { width: 900, height: 900 }, s.scene);
-    floor.position.set(w.position.x, -7, w.position.z);
+    floor.position.set(w.position.x, SEA_FLOOR, w.position.z);
     floor.parent = parent;
     // same look as the deep terrain so the edge of the height field disappears
     const fm = new StandardMaterial('seaFloorMat', s.scene);
@@ -457,6 +276,82 @@ export class Terrain {
     floor.receiveShadows = true;
     floor.isPickable = false;
     return w;
+  }
+
+  /**
+   * Lava streams: a glowing ribbon lining their groove from the crater down to where it
+   * pours into the lava sea (the flat plane takes over there).
+   */
+  private buildLavaFlows(parent: TransformNode) {
+    const lavaLevel = this.def.water.high;
+    for (const [ci, ch] of (this.def.channels ?? []).entries()) {
+      if (ch.kind !== 'lava') continue;
+      const pos: number[] = [];
+      const uvs: number[] = [];
+      const ind: number[] = [];
+      const hw = ch.width / 2 - 0.25;
+      const ACROSS = 7;
+      let arc = 0;
+      let open = false;
+      let prev: [number, number] | null = null;
+      const pts = ch.points;
+      for (let i = 0; i < pts.length - 1; i++) {
+        const [ax, az] = pts[i];
+        const [bx, bz] = pts[i + 1];
+        const len = Math.hypot(bx - ax, bz - az);
+        const dx = (bx - ax) / len;
+        const dz = (bz - az) / len;
+        for (let dd = 0; dd < len; dd += 0.4) {
+          const cx = ax + dx * dd;
+          const cz = az + dz * dd;
+          if (prev) arc += Math.hypot(cx - prev[0], cz - prev[1]);
+          prev = [cx, cz];
+          const active = this.height(cx, cz) > lavaLevel + 0.06;
+          // one row past the last active one lets the ribbon dive under the lava sea
+          if (!active && !open) continue;
+          const row = pos.length / 3;
+          for (let a = 0; a < ACROSS; a++) {
+            const o = -hw + (2 * hw * a) / (ACROSS - 1);
+            const x = cx - dz * o;
+            const z = cz + dx * o;
+            pos.push(x, this.height(x, z) + FLOW_LIFT, z);
+            uvs.push(a / (ACROSS - 1), arc / 3);
+          }
+          if (open) {
+            const r0 = row - ACROSS;
+            for (let a = 0; a < ACROSS - 1; a++) ind.push(r0 + a, row + a, r0 + a + 1, r0 + a + 1, row + a, row + a + 1);
+          }
+          open = active;
+        }
+      }
+      if (!ind.length) continue;
+      // Babylon culls clockwise faces: orient every triangle upwards
+      for (let t = 0; t < ind.length; t += 3) {
+        const [a, b, c] = [ind[t] * 3, ind[t + 1] * 3, ind[t + 2] * 3];
+        const cross = (pos[b] - pos[a]) * (pos[c + 2] - pos[a + 2]) - (pos[b + 2] - pos[a + 2]) * (pos[c] - pos[a]);
+        if (cross < 0) [ind[t + 1], ind[t + 2]] = [ind[t + 2], ind[t + 1]];
+      }
+      const m = new Mesh(`lavaFlow${ci}`, this.stage.scene);
+      const nrm: number[] = [];
+      VertexData.ComputeNormals(pos, ind, nrm);
+      const vd = new VertexData();
+      Object.assign(vd, { positions: pos, indices: ind, uvs, normals: nrm });
+      vd.applyToMesh(m);
+      m.parent = parent;
+      m.isPickable = false;
+      if (!this.flowTex) {
+        this.flowTex = copyTexture(this.stage.scene, lavaTexture(this.stage.scene, true), 'lavaFlowTex');
+        this.flowTex.uScale = 0.6;
+        this.flowTex.vScale = 0.6;
+      }
+      const mat = new StandardMaterial(`lavaFlowMat${ci}`, this.stage.scene);
+      mat.emissiveTexture = this.flowTex;
+      mat.diffuseColor = new Color3(0.12, 0.04, 0.03);
+      mat.specularColor = Color3.Black();
+      m.material = mat;
+      m.freezeWorldMatrix();
+      this.flows.push(m);
+    }
   }
 
   // ------------------------------------------------------------------ runtime
@@ -479,36 +374,14 @@ export class Terrain {
         this.waterTex.vOffset = Math.sin(this.t * 0.2) * 0.02 + this.t * 0.004;
       }
     }
+    // the stream flows downhill (v grows along the channel)
+    if (this.flowTex) this.flowTex.vOffset = -this.t * 0.05;
   }
 
   dispose(): void {
     this.mesh.dispose(false, true);
+    for (const f of this.flows) f.dispose(false, true);
   }
-}
-
-const GROUNDS: Ground[] = ['grass', 'sand', 'rock', 'water', 'path', 'channel'];
-const GROUND_ID = Object.fromEntries(GROUNDS.map((g, i) => [g, i])) as Record<Ground, number>;
-
-function ellipse(x: number, z: number, e: { x: number; z: number; rx: number; rz: number; rot?: number }): number {
-  let dx = x - e.x;
-  let dz = z - e.z;
-  if (e.rot) {
-    const c = Math.cos(e.rot);
-    const s = Math.sin(e.rot);
-    [dx, dz] = [dx * c - dz * s, dx * s + dz * c];
-  }
-  const q = Math.hypot(dx / e.rx, dz / e.rz);
-  return (1 - q) * Math.min(e.rx, e.rz);
-}
-
-function smax(a: number, b: number, k: number): number {
-  if (!Number.isFinite(a)) return b;
-  const h = Math.max(0, Math.min(1, 0.5 + (0.5 * (b - a)) / k));
-  return a + (b - a) * h + k * h * (1 - h);
-}
-
-function smin(a: number, b: number, k: number): number {
-  return -smax(-a, -b, k);
 }
 
 // ------------------------------------------------------------------ procedural textures
