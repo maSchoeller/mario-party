@@ -1,7 +1,8 @@
 import type { BotLevel } from '../../config';
 import type { Rng } from '../../rng';
 import type { ControllerLayout, MgEntity, MgInput, MgPlayer, MinigameDef } from '../types';
-import { TEAM_COLORS, ageFx, clamp, emitFx, faceAngle, teamRanks, viewFx, type FxState } from '../util';
+import { TEAM_COLORS, ageFx, chance, clamp, emitFx, faceAngle, refOf, teamRanks, viewFx, type FxState } from '../util';
+import { BOT_LIVE_LAG, SHAKE_MIN_GAP } from './botLag';
 
 /**
  * #13 Schatz-Tauziehen (2v2, Schütteln): tug of war over a treasure chest. Every shake
@@ -14,7 +15,22 @@ const DURATION = 40;
 const WIN = 4.5;
 const GAIN = 0.55; // energy per full-power shake
 const DECAY = 2.2;
-const E_MAX = 2.6; // cap per player
+/**
+ * cap per player: a little above what steady firm shaking (or the tap fallback at its limit)
+ * reaches, so the power wave still helps but nobody can store up energy (v0.5)
+ */
+const E_MAX = 1.6;
+/**
+ * one impulse per player per SHAKE_MIN_GAP counts (real shaking or tapping alike); the host
+ * accepts a little less to absorb network jitter, the phone and the bots keep the full gap
+ */
+const SHAKE_GATE = SHAKE_MIN_GAP * 0.8;
+/** bots: impulses per second and power per impulse (human reference: firm shaking ≈ 5–6.5/s) */
+const BOT_SHAKE = { easy: { rate: 4.2, power: 0.65 }, medium: { rate: 5, power: 0.75 }, hard: { rate: 5.6, power: 0.85 } };
+/** plank bridge over the water pit: half length, height, ramp length (view only) */
+const BRIDGE_X = 1.65;
+const BRIDGE_H = 0.3;
+const RAMP = 0.7;
 const PULL = 0.25; // rope speed per energy difference
 const WAVE_EVERY = 9;
 const WAVE_LEN = 2.5;
@@ -35,8 +51,16 @@ export interface SchatzTauziehenState extends FxState {
   winner: number | null;
   overAt: number | null;
   wins: number[];
+  /** last counted shake impulse per player */
+  lastShake: number[];
   botAcc: number[];
   botBurst: number[];
+}
+
+/** walking height at x: on the bridge over the pit, down the ramps, else the beach */
+function groundY(x: number): number {
+  const d = Math.abs(x);
+  return d <= BRIDGE_X ? BRIDGE_H : d >= BRIDGE_X + RAMP ? 0 : BRIDGE_H * (1 - (d - BRIDGE_X) / RAMP);
 }
 
 const sideOf = (s: SchatzTauziehenState, i: number) => (s.players[i].team === s.sides[0] ? 0 : 1);
@@ -65,6 +89,7 @@ export const schatzTauziehen: MinigameDef<SchatzTauziehenState> = {
       winner: null,
       overAt: null,
       wins: [0, 0],
+      lastShake: players.map(() => -1),
       botAcc: players.map(() => 0),
       botBurst: players.map(() => 1),
       fx: [],
@@ -74,6 +99,8 @@ export const schatzTauziehen: MinigameDef<SchatzTauziehenState> = {
   layout: (): ControllerLayout => ({ kind: 'shake', labelKey: 'ctrl.shake' }),
   input(s, i, input: MgInput) {
     if (input.type !== 'shake' || s.winner !== null) return;
+    if (s.t - s.lastShake[i] < SHAKE_GATE) return;
+    s.lastShake[i] = s.t;
     const power = clamp(Number.isFinite(input.power) ? input.power : 0, 0, 1);
     s.energy[i] = Math.min(E_MAX, s.energy[i] + power * GAIN * (inWave(s) ? 2 : 1));
     s.shakeVis[i] = 0.25;
@@ -139,17 +166,19 @@ export const schatzTauziehen: MinigameDef<SchatzTauziehenState> = {
   },
   bot(s, i, level: BotLevel, rng: Rng, dt) {
     if (s.winner !== null) return [];
-    const cfg = { easy: { rate: 3.6, pmin: 0.4, pmax: 0.75 }, medium: { rate: 4.8, pmin: 0.55, pmax: 0.9 }, hard: { rate: 6, pmin: 0.7, pmax: 1 } }[level];
-    // bursts: bots shake in waves like people do, a bit harder during a power wave
-    if (rng.chance(dt * 0.8)) s.botBurst[i] = 0.7 + rng.next() * 0.6;
-    const boost = inWave(s) ? 1.2 : 1;
-    s.botAcc[i] += cfg.rate * s.botBurst[i] * boost * dt;
-    const out: MgInput[] = [];
-    while (s.botAcc[i] >= 1) {
-      s.botAcc[i] -= 1;
-      out.push({ type: 'shake', power: rng.range(cfg.pmin, cfg.pmax) });
-    }
-    return out;
+    const cfg = BOT_SHAKE[level];
+    const form = s.players[i].form ?? 1;
+    const ref = refOf(s.players, i, level);
+    // bursts: bots shake in waves like people do (a new "breath" every ~2 s), a bit harder
+    // during a power wave (seen on the TV a moment late), and they tire after 15 s
+    if (rng.chance(chance(0.4, dt))) s.botBurst[i] = 0.6 + rng.next() * 0.8;
+    const boost = inWave(s) && s.t - s.waveAt > BOT_LIVE_LAG ? 1.15 : 1;
+    const tired = 1 - ref.fatigue * clamp((s.t - 15) / 25, 0, 1);
+    const rate = cfg.rate * form * s.botBurst[i] * boost * tired;
+    s.botAcc[i] += dt;
+    if (s.botAcc[i] < Math.max(SHAKE_MIN_GAP, 1 / rate)) return [];
+    s.botAcc[i] = 0;
+    return [{ type: 'shake', power: clamp(cfg.power * form + rng.noise() * 0.08, 0.2, 1) }];
   },
   view(s) {
     const r = s.rope;
@@ -163,12 +192,28 @@ export const schatzTauziehen: MinigameDef<SchatzTauziehenState> = {
       { id: 'pitR', kind: 'box', x: 1.42, y: 0.14, z: 0, sx: 0.24, sy: 0.24, sz: 5.08, color: '#a8743f', mat: 'wood' },
       { id: 'pitF', kind: 'box', x: 0, y: 0.14, z: -2.42, sx: 2.6, sy: 0.24, sz: 0.24, color: '#b98350', mat: 'wood' },
       { id: 'pitB', kind: 'box', x: 0, y: 0.14, z: 2.42, sx: 2.6, sy: 0.24, sz: 0.24, color: '#b98350', mat: 'wood' },
+      // plank bridge over the pit along the rope line, with a ramp at each end – chest and
+      // players walk over it instead of through the frame and the water
+      { id: 'bridge', kind: 'box', x: 0, y: BRIDGE_H - 0.04, z: 0, sx: BRIDGE_X * 2, sy: 0.08, sz: 1.5, color: '#b98350', mat: 'planks' },
+      ...[-1, 1].map((sg): MgEntity => ({
+        id: `ramp${sg}`,
+        kind: 'box',
+        x: sg * (BRIDGE_X + RAMP / 2 - 0.02),
+        y: BRIDGE_H / 2 - 0.03,
+        z: 0,
+        rz: -sg * Math.atan2(BRIDGE_H, RAMP),
+        sx: Math.hypot(RAMP, BRIDGE_H) + 0.04,
+        sy: 0.06,
+        sz: 1.5,
+        color: '#a8743f',
+        mat: 'planks',
+      })),
       { id: 'center', kind: 'box', x: 0, y: 0.03, z: 3.1, sx: 0.25, sy: 0.1, sz: 1, color: '#ffffff' },
-      { id: 'rope', kind: 'cylinder', x: r, y: 1, z: 0, rz: Math.PI / 2, sx: 0.16, sy: 17, sz: 0.16, color: '#d8b77a', mat: 'rope' },
-      { id: 'chest', kind: 'prop', prop: 'chest', x: r, y: 0, z: 0, sx: 1.35 },
-      { id: 'gem', kind: 'coin', x: r, y: 2.25, z: 0, sx: 0.7, sy: 0.7, sz: 0.7 },
+      { id: 'rope', kind: 'cylinder', x: r, y: 1 + groundY(r) * 0.5, z: 0, rz: Math.PI / 2, sx: 0.16, sy: 17, sz: 0.16, color: '#d8b77a', mat: 'rope' },
+      { id: 'chest', kind: 'prop', prop: 'chest', x: r, y: groundY(r), z: 0, sx: 1.35 },
+      { id: 'gem', kind: 'coin', x: r, y: 2.25 + groundY(r), z: 0, sx: 0.7, sy: 0.7, sz: 0.7 },
       // glowing ring around the chest during a power wave
-      { id: 'waveRing', kind: 'torus', x: r, y: wave ? 0.08 : -4, z: 0, sx: 2.6, sy: 1, sz: 2.6, color: '#f2c14e', glow: true },
+      { id: 'waveRing', kind: 'torus', x: r, y: wave ? 0.08 + groundY(r) : -4, z: 0, sx: 2.6, sy: 1, sz: 2.6, color: '#f2c14e', glow: true },
       // dressing: palms, festival bunting, a crab, beach gear
       { id: 'palm1', kind: 'palm', x: -11, y: 0, z: 6 },
       { id: 'palm2', kind: 'palm', x: 11, y: 0, z: 6.5, ry: 2.2 },
@@ -217,14 +262,14 @@ export const schatzTauziehen: MinigameDef<SchatzTauziehenState> = {
         kind: 'player',
         player: i,
         x,
-        y: 0,
+        y: groundY(x),
         z: n % 2 ? 0.35 : -0.35,
         ry: faceAngle(-sign, 0),
         anim: won ? 'cheer' : lost ? 'sad' : s.shakeVis[i] > 0 || s.energy[i] > 0.6 ? 'walk' : 'idle',
       });
-      entities.push({ id: `ring${i}`, kind: 'torus', x, y: 0.05, z: n % 2 ? 0.35 : -0.35, sx: 1.4, sy: 1, sz: 1.4, color: TEAM_COLORS[s.players[i].team] ?? '#ffffff' });
+      entities.push({ id: `ring${i}`, kind: 'torus', x, y: 0.05 + groundY(x), z: n % 2 ? 0.35 : -0.35, sx: 1.4, sy: 1, sz: 1.4, color: TEAM_COLORS[s.players[i].team] ?? '#ffffff' });
     });
-    for (const e of entities) if (e.kind === 'prop' || e.kind === 'palm') e.y = -0.03;
+    for (const e of entities) if (e.kind === 'prop' || e.kind === 'palm') e.y -= 0.03;
     const pct = (side: number) => `${Math.round(clamp((side === 0 ? -r : r) / WIN, 0, 1) * 100)} %`;
     return {
       env: 'sand',

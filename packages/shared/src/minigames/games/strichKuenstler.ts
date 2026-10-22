@@ -1,12 +1,13 @@
 import { PLAYER_COLOR_HEX } from '../../config';
 import type { Rng } from '../../rng';
-import type { MgEntity, MgHud, MgPlayer, MinigameDef } from '../types';
+import { botRef, type MgEntity, type MgHud, type MgPlayer, type MinigameDef } from '../types';
 import { ageFx, clamp, emitFx, ranksFromScores, rowSpawn, viewFx, type FxState } from '../util';
 
 /**
  * #6 Strich-Künstler (FFA, Zeichnen): trace a given shape on the phone in one stroke.
  * Score per shape (max 100) = accuracy (mean distance of the drawn points to the shape)
- * + coverage (how much of the shape was traced), with a small bonus for being fast.
+ * + coverage (how much of the shape was traced), with a small bonus for being fast (only for
+ * the part of the shape actually traced, so a hasty half trace doesn't beat a careful one).
  * 3 shapes in a row, points are summed.
  *
  * Coordinates: shape and stroke points are 0..1 with y pointing DOWN (screen coordinates,
@@ -23,6 +24,10 @@ const SCORE = 3;
 const N = 64; // resample size for scoring
 const COVER_R = 0.07;
 const ACC_R = 0.12;
+/** bots: how early the finger tends to lift (share of the shape left out, sd) */
+const BOT_LIFT = { easy: 0.16, medium: 0.1, hard: 0.07 };
+/** bots: chance per shape that the stroke goes wrong halfway (finger slips off) */
+const BOT_SLIP = { easy: 0.25, medium: 0.18, hard: 0.12 };
 
 const r4 = (v: number) => Math.round(v * 1e4) / 1e4;
 
@@ -132,10 +137,10 @@ export function strokeQuality(shape: Pt[], stroke: Pt[]): { accuracy: number; co
   return { accuracy, coverage, quality: accuracy * 0.5 + coverage * 0.5 };
 }
 
-/** Points for one shape (0..100): quality, plus up to 25 % bonus for fast drawing. */
-export function strokePoints(quality: number, seconds: number): number {
+/** Points for one shape (0..100): quality, plus up to 25 % bonus for fast drawing, scaled by the coverage. */
+export function strokePoints(quality: number, seconds: number, coverage = 1): number {
   const speed = clamp(1 - (seconds - 2) / (DRAW - 2), 0, 1);
-  return Math.round(100 * quality * (0.75 + 0.25 * speed));
+  return Math.round(100 * quality * (0.75 + 0.25 * speed * coverage));
 }
 
 interface P {
@@ -157,6 +162,8 @@ export interface StrichKuenstlerState extends FxState {
   phase: 'show' | 'draw' | 'score' | 'done';
   phaseAt: number;
   ps: P[];
+  /** bot form per player (v0.5) */
+  form: number[];
 }
 
 const shapeOf = (s: StrichKuenstlerState) => s.order[(s.round - 1) % s.order.length];
@@ -185,7 +192,7 @@ function finishDraw(s: StrichKuenstlerState): void {
 function submit(s: StrichKuenstlerState, i: number, stroke: Pt[]): void {
   const p = s.ps[i];
   const q = strokeQuality(SHAPES[shapeOf(s)], stroke);
-  p.pts = strokePoints(q.quality, s.t - s.phaseAt);
+  p.pts = strokePoints(q.quality, s.t - s.phaseAt, q.coverage);
   p.stroke = resample(stroke, 20).map(([x, y]) => [r4(x), r4(y)]);
   emitFx(s, { kind: 'sparkle', sfx: 'scribble', x: sheetX(s.n, i), y: DESK_H + 0.8, z: SZ, color: s.colors[i] });
 }
@@ -207,6 +214,7 @@ export const strichKuenstler: MinigameDef<StrichKuenstlerState> = {
       phase: 'show',
       phaseAt: 0,
       ps: players.map(() => ({ total: 0, pts: null, stroke: null, botAt: null })),
+      form: players.map((p) => p.form ?? 1),
       fx: [],
       fxN: 0,
     };
@@ -259,14 +267,14 @@ export const strichKuenstler: MinigameDef<StrichKuenstlerState> = {
   bot(s, i, level, rng: Rng) {
     const p = s.ps[i];
     if (s.phase !== 'draw' || p.pts !== null) return [];
-    if (p.botAt === null) {
-      const time = { easy: 7.5, medium: 5.5, hard: 4 }[level];
-      p.botAt = s.phaseAt + time + rng.noise() * 0.8;
-    }
+    const ref = botRef(level, s.form[i]);
+    if (p.botAt === null) p.botAt = s.phaseAt + ref.traceTime * (1 + rng.noise() * 0.2);
     if (s.t < p.botAt) return [];
-    // trace the shape with a shaky hand; weak bots also stop early
-    const shake = { easy: 0.05, medium: 0.03, hard: 0.015 }[level];
-    const reach = { easy: 0.78, medium: 0.9, hard: 0.97 }[level] + rng.next() * 0.06;
+    // trace the shape with a shaky hand: some strokes go much better than others, and now and
+    // then the finger lifts before the end (weak bots more often)
+    const shake = ref.traceDev * Math.exp(rng.noise() * 0.6);
+    const slip = rng.next() < BOT_SLIP[level];
+    const reach = slip ? 0.45 + rng.next() * 0.35 : 1 - Math.abs(rng.noise()) * BOT_LIFT[level];
     const base = resample(SHAPES[shapeOf(s)], 48);
     const cut = Math.max(3, Math.round(base.length * Math.min(1, reach)));
     const ox = rng.noise() * shake;
@@ -324,16 +332,19 @@ export const strichKuenstler: MinigameDef<StrichKuenstlerState> = {
         entities.push({ id: `dr${i}_${k}`, kind: 'sphere', x: cx + (px - 0.5) * SW, y: DESK_H + 0.12, z: SZ + (0.5 - py) * SW, sx: 0.32, sy: 0.16, sz: 0.32, color: s.colors[i], player: i }),
       );
       const showPts = p.pts !== null && (s.phase === 'score' || s.phase === 'done' || p.stroke !== null);
+      // the artist stands behind the desk, facing the TV
+      const pz = SZ + SW / 2 + 1.1;
       entities.push({
         id: `p${i}`,
         kind: 'player',
         player: i,
         x: cx,
         y: 0,
-        z: SZ - SW / 2 - 1.3,
+        z: pz,
         anim: s.phase === 'score' && p.pts !== null && p.pts >= 70 ? 'cheer' : s.phase === 'draw' && p.pts === null ? 'walk' : 'idle',
-        label: showPts ? `+${p.pts}` : undefined,
       });
+      // the "+NN" floats well above the head (a label sits 1.1 over its entity: a tiny carrier box)
+      if (showPts) entities.push({ id: `pts${i}`, kind: 'box', x: cx, y: 2.9, z: pz, sx: 0.02, sy: 0.02, sz: 0.02, color: s.colors[i], label: `+${p.pts}` });
     });
     const hud: MgHud = { scores: s.ps.map((p, i) => ({ player: i, value: `✏️ ${p.total}` })) };
     if (s.phase === 'show') hud.message = { key: `mg.strichKuenstler.shape.${shape}` };

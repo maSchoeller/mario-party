@@ -32,6 +32,8 @@ const DECK = 0.3;
 const HAND_Y = 2.8;
 const HAND_X = [-1.5, 1.5];
 const PLAYER_X = [-3.2, 3.2];
+/** the beach set levels the sand inside the play area to −0.04 (props stand on it) */
+const SAND = -0.04;
 
 export interface SchnickSchnackState extends FxState {
   t: number;
@@ -251,17 +253,17 @@ export const schnickSchnack: MinigameDef<SchnickSchnackState> = {
       { id: 'torch2', kind: 'prop', prop: 'torch', x: 5.2, y: DECK, z: 1.6 },
       { id: 'torch3', kind: 'prop', prop: 'torch', x: -2, y: DECK, z: 3.2 },
       { id: 'torch4', kind: 'prop', prop: 'torch', x: 2, y: DECK, z: 3.2 },
-      { id: 'palm1', kind: 'prop', prop: 'palm', x: -7.6, y: -0.12, z: 4.2, ry: 0.4 },
-      { id: 'palm2', kind: 'prop', prop: 'palm2', x: 8.2, y: -0.15, z: 5.4, ry: 2.6 },
+      { id: 'palm1', kind: 'prop', prop: 'palm', x: -7.6, y: -0.08, z: 4.2, ry: 0.4 },
+      { id: 'palm2', kind: 'prop', prop: 'palm2', x: 8.2, y: 0.02, z: 5.4, ry: 2.6 },
       { id: 'bar', kind: 'prop', prop: 'stall', x: 7.7, y: -0.06, z: 3, ry: -0.9, color: '#5fb8d6' },
-      { id: 'pole', kind: 'cylinder', x: -7.3, y: 1.25, z: 0.6, sx: 0.12, sy: 2.4, sz: 0.12, color: '#e8e0d0', mat: 'wood' },
+      { id: 'pole', kind: 'cylinder', x: -7.3, y: 1.19, z: 0.6, sx: 0.12, sy: 2.5, sz: 0.12, color: '#e8e0d0', mat: 'wood' },
       { id: 'shade', kind: 'cone', x: -7.3, y: 2.15, z: 0.6, sx: 2.8, sy: 0.75, sz: 2.8, color: '#e8676b', mat: 'cloth' },
-      { id: 'lounger', kind: 'prop', prop: 'bench', x: -7.4, y: 0.1, z: -0.9, ry: 0.3 },
+      { id: 'lounger', kind: 'prop', prop: 'bench', x: -7.4, y: SAND, z: -0.9, ry: 0.3 },
       { id: 'barrel', kind: 'prop', prop: 'barrel', x: -4.6, y: DECK, z: 2.4, ry: 0.6 },
-      { id: 'crab', kind: 'prop', prop: 'crab', x: 7.2, y: 0.2, z: -3, ry: 3.4, sx: 0.6 },
-      { id: 'shell1', kind: 'prop', prop: 'shell', x: -5.2, y: 0.2, z: -4.2 },
-      { id: 'shell2', kind: 'prop', prop: 'shell', x: 4.6, y: 0.2, z: -4.3, ry: 2 },
-      { id: 'drift', kind: 'prop', prop: 'driftwood', x: -8.6, y: 0.21, z: -3.2, ry: 0.5 },
+      { id: 'crab', kind: 'prop', prop: 'crab', x: 7.2, y: SAND, z: -3, ry: 3.4, sx: 0.6 },
+      { id: 'shell1', kind: 'prop', prop: 'shell', x: -5.2, y: SAND - 0.01, z: -4.2 },
+      { id: 'shell2', kind: 'prop', prop: 'shell', x: 4.6, y: SAND - 0.01, z: -4.3, ry: 2 },
+      { id: 'drift', kind: 'prop', prop: 'driftwood', x: -7.1, y: SAND - 0.01, z: -3.7, ry: 0.5 },
     ];
     const rt = s.t - s.phaseStart;
     const revealing = s.phase === 'reveal' || s.phase === 'done';
@@ -301,7 +303,8 @@ export const schnickSchnack: MinigameDef<SchnickSchnackState> = {
       if (pick === 'rock') {
         entities.push({ id: `rock${i}`, kind: 'rock', x: hx, y: HAND_Y, z: 0, sx: 1.2 * big, sy: 1.2 * big, sz: 1.2 * big, color: HAND_COLOR.rock, glow, label: ICON.rock });
       } else if (pick === 'paper') {
-        entities.push({ id: `paper${i}`, kind: 'box', x: hx, y: HAND_Y, z: 0, sx: 0.12, sy: 1.5 * big, sz: 1.2 * big, color: HAND_COLOR.paper, mat: 'paper', glow, label: ICON.paper });
+        // a flat sheet facing the camera (turned a little towards the opponent)
+        entities.push({ id: `paper${i}`, kind: 'box', x: hx, y: HAND_Y, z: 0, ry: i === 0 ? -0.5 : 0.5, sx: 1.2 * big, sy: 1.5 * big, sz: 0.12, color: HAND_COLOR.paper, mat: 'paper', glow, label: ICON.paper });
       } else {
         for (const k of [0, 1]) {
           entities.push({
@@ -333,7 +336,7 @@ export const schnickSchnack: MinigameDef<SchnickSchnackState> = {
     else if (shown) hud.message = { key: s.roundWinner === null ? 'mg.schnickSchnack.tie' : 'mg.schnickSchnack.point' };
     return {
       env: 'sand',
-      // the beach slopes gently to the sea (+z); ground −0.45 puts the sand under the deck at ~0
+      // beach set without `ground`: the sand inside r = 8 is levelled to SAND (−0.04)
       scenery: { set: 'beach', clear: { r: 8 } },
       camera: { alpha: -Math.PI / 2, beta: 1.3, radius: 11.5, target: [0, 2.1, 0.2] },
       entities,

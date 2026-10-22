@@ -1,6 +1,7 @@
 import type { Rng } from '../../rng';
 import type { MgEntity, MgInput, MgPlayer, MinigameDef } from '../types';
-import { ageFx, clamp, dist2, emitFx, faceAngle, lerp, moveWithStick, skill, steerTo, teamRanks, viewFx, type FxState } from '../util';
+import { ageFx, clamp, dist2, emitFx, faceAngle, lerp, moveWithStick, refOf, seenAt, seenBuf, seenPush, steerTo, teamRanks, viewFx, type FxState, type SeenBuf } from '../util';
+import { BOT_LIVE_LAG } from './botLag';
 
 /**
  * #14 Kokos-Kanonier (1 vs 3, Neigen vs. Joystick): the solo player aims a coconut cannon
@@ -11,13 +12,19 @@ import { ageFx, clamp, dist2, emitFx, faceAngle, lerp, moveWithStick, skill, ste
 const AX = 7; // arena half width (x)
 const AZ = 4.5; // arena half depth (z)
 const SPEED = 5;
+/** stick deflection that already counts as full speed */
+const FULL_STICK = 0.85;
 const CROSS_SPEED = 9;
 /** fire interval at the start / at the end (the cannon gets faster) */
 const FIRE_START = 1.1;
 const FIRE_END = 0.55;
 const FIRST_SHOT = 2;
-const FLIGHT = 0.8;
-const HIT_R = 1.8;
+/**
+ * shell flight time and hit radius (v0.5, was 0.8 s / 1.8: a noticed shell was always dodged,
+ * only a near-aimbot could hit)
+ */
+const FLIGHT = 0.68;
+const HIT_R = 2;
 const LIVES = 2;
 const INVULN = 1.2;
 const CANNON = { x: 0, z: AZ + 3.2 };
@@ -26,17 +33,38 @@ const DURATION = 40;
 const HILL = 0.6;
 /** lagoon water level (visual) */
 const WATER = -0.5;
-/** trio bots: reaction to a new shell, chance to overlook it, running speed */
+/** where knocked-out trio members sit (in front of the rope, view only) */
+const OUT_Z = -AZ - 1.6;
+/** trio bots: time to react to a new shell (incl. perception lag) and chance to overlook it */
 const DODGER = {
-  easy: { delay: 0.4, miss: 0.44, speed: 0.92 },
-  medium: { delay: 0.35, miss: 0.4, speed: 0.96 },
-  hard: { delay: 0.31, miss: 0.37, speed: 1 },
+  easy: { delay: 0.37, miss: 0.24 },
+  medium: { delay: 0.35, miss: 0.22 },
+  hard: { delay: 0.33, miss: 0.2 },
 };
+/**
+ * solo bot: aim noise (world units, the hit circle has radius HIT_R) and how fast it moves
+ * the crosshair (a tilting hand is not a mouse)
+ */
+const GUNNER = {
+  easy: { noise: 1.4, speed: 0.8 },
+  medium: { noise: 0.9, speed: 0.9 },
+  hard: { noise: 0.5, speed: 1 },
+};
+/**
+ * solo bot: the trio's running direction is read from the TV this late (s) and led by only part of
+ * the flight time – a direction seen 0.3 s ago is often already outdated (dodgers turn)
+ */
+const LEAD = 0.5;
+const AIM_SEE = 0.3;
 
 interface Shell {
   id: number;
   x: number;
   z: number;
+  /** muzzle position when fired (start of the flight) */
+  ox: number;
+  oy: number;
+  oz: number;
   /** time until impact */
   eta: number;
 }
@@ -80,6 +108,10 @@ export interface KokosKanonierState extends FxState {
   botTarget: number;
   botThink: number;
   botAim: { x: number; z: number };
+  /** the tilt the bot's hand actually holds (follows the wanted tilt with a lag) */
+  botTilt: { x: number; y: number };
+  /** what the TV showed recently: x, z per trio member */
+  seen: SeenBuf;
 }
 
 /** cannon muzzle (visual): the barrel turns towards the crosshair */
@@ -145,6 +177,8 @@ export const kokosKanonier: MinigameDef<KokosKanonierState> = {
       botTarget: -1,
       botThink: 0,
       botAim: { x: 0, z: 0 },
+      botTilt: { x: 0, y: 0 },
+      seen: seenBuf(),
       fx: [],
       fxN: 0,
     };
@@ -172,9 +206,10 @@ export const kokosKanonier: MinigameDef<KokosKanonierState> = {
     s.fireIn -= dt;
     if (s.fireIn <= 0) {
       s.fireIn = lerp(FIRE_START, FIRE_END, clamp(s.t / s.duration, 0, 1));
-      s.shells.push({ id: s.nextId++, x: s.cross.x, z: s.cross.z, eta: FLIGHT });
-      // muzzle blast
+      // the coconut leaves the muzzle, not the middle of the cannon
       const m = muzzle(s);
+      s.shells.push({ id: s.nextId++, x: s.cross.x, z: s.cross.z, ox: m.x, oy: m.y, oz: m.z, eta: FLIGHT });
+      // muzzle blast
       emitFx(s, { kind: 'smoke', sfx: 'cannon', x: m.x, y: m.y, z: m.z, s: 0.8 });
     }
     // trio movement
@@ -190,11 +225,15 @@ export const kokosKanonier: MinigameDef<KokosKanonierState> = {
         continue;
       }
       p.inv = Math.max(0, p.inv - dt);
-      moveWithStick(p, p.stick, SPEED, dt);
+      // the outer ring of the stick is full speed (nobody pushes a phone stick to the very edge)
+      const m = Math.hypot(p.stick.x, p.stick.y);
+      const k = m > 1e-6 ? Math.min(1, m / FULL_STICK) / m : 0;
+      moveWithStick(p, { x: p.stick.x * k, y: p.stick.y * k }, SPEED, dt);
       p.x = clamp(p.x, -AX, AX);
       p.z = clamp(p.z, -AZ, AZ);
       if (Math.hypot(p.vx, p.vz) > 0.5) p.ry = faceAngle(p.vx, p.vz);
     }
+    seenPush(s.seen, s.t, s.trio.flatMap((k) => [s.ps[k].x, s.ps[k].z]));
     // impacts
     for (const sh of s.shells) {
       sh.eta -= dt;
@@ -227,47 +266,58 @@ export const kokosKanonier: MinigameDef<KokosKanonierState> = {
   isOver: (s) => !s.practice && (s.t >= s.duration || alive(s).length === 0),
   result: (s) => teamRanks(s.players, [alive(s).length > 0 ? 1 : 0]),
   bot(s, i, level, rng, dt) {
-    const sk = skill(level);
+    const ref = refOf(s.players, i, level);
+    const form = s.players[i].form ?? 1;
     if (i === s.solo) {
-      // pick the trio member closest to the crosshair, lead its movement a bit
+      // pick the trio member closest to the crosshair and lead its movement – judged from
+      // the TV picture: position a moment late, the running direction from earlier still
       s.botThink -= dt;
       const live = alive(s);
+      const g = GUNNER[level];
       if (!live.length) return [{ type: 'tilt', x: 0, y: 0 }];
       if (s.botThink <= 0) {
-        s.botThink = 0.12 + sk.reaction * 0.4 * (0.7 + rng.next() * 0.6);
+        s.botThink = 0.12 + ref.reaction * 0.4 * (0.7 + rng.next() * 0.6);
+        const now = seenAt(s.seen, s.t - BOT_LIVE_LAG);
+        const pos = (k: number) => {
+          const n = s.trio.indexOf(k);
+          return now ? { x: now[n * 2], z: now[n * 2 + 1] } : s.ps[k];
+        };
         if (!live.includes(s.botTarget) || rng.chance(0.15)) {
-          const sorted = [...live].sort((a, b) => dist2(s.ps[a].x, s.ps[a].z, s.cross.x, s.cross.z) - dist2(s.ps[b].x, s.ps[b].z, s.cross.x, s.cross.z));
+          const sorted = [...live].sort((a, b) => dist2(pos(a).x, pos(a).z, s.cross.x, s.cross.z) - dist2(pos(b).x, pos(b).z, s.cross.x, s.cross.z));
           // ignore players that are still blinking after a hit
           s.botTarget = sorted.find((k) => s.ps[k].inv <= 0) ?? sorted[0];
         }
-        const p = s.ps[s.botTarget];
-        const leadT = Math.min(FLIGHT + 0.3, s.fireIn + FLIGHT) * { easy: 0.5, medium: 0.75, hard: 0.9 }[level];
-        const err = (1 - sk.accuracy) * 2;
+        const n = s.trio.indexOf(s.botTarget);
+        const p = pos(s.botTarget);
+        const a = seenAt(s.seen, s.t - AIM_SEE);
+        const b = seenAt(s.seen, s.t - AIM_SEE - 0.2);
+        const vx = a && b ? (a[n * 2] - b[n * 2]) / 0.2 : 0;
+        const vz = a && b ? (a[n * 2 + 1] - b[n * 2 + 1]) / 0.2 : 0;
+        const leadT = Math.min(FLIGHT + 0.3, s.fireIn + FLIGHT) * LEAD;
+        const err = g.noise * (2 - form);
         s.botAim = {
-          x: clamp(p.x + p.vx * leadT + rng.noise() * err, -AX, AX),
-          z: clamp(p.z + p.vz * leadT + rng.noise() * err, -AZ, AZ),
+          x: clamp(p.x + vx * leadT + rng.noise() * err, -AX, AX),
+          z: clamp(p.z + vz * leadT + rng.noise() * err, -AZ, AZ),
         };
       }
+      // the hand follows the wanted tilt with the human tilt lag
       const gain = 0.9;
-      return [
-        {
-          type: 'tilt',
-          x: clamp((s.botAim.x - s.cross.x) * gain, -1, 1) * sk.speed,
-          y: clamp((s.botAim.z - s.cross.z) * gain, -1, 1) * sk.speed,
-        },
-      ];
+      const k = 1 - Math.exp(-dt / (ref.tiltLag / 2));
+      s.botTilt.x += (clamp((s.botAim.x - s.cross.x) * gain, -1, 1) * g.speed - s.botTilt.x) * k;
+      s.botTilt.y += (clamp((s.botAim.z - s.cross.z) * gain, -1, 1) * g.speed - s.botTilt.y) * k;
+      return [{ type: 'tilt', x: s.botTilt.x, y: s.botTilt.y }];
     }
     const p = s.ps[i];
     if (p.out) return [];
     p.think -= dt;
     if (p.think <= 0) {
       p.think = 0.1 + rng.next() * 0.1;
-      // shells are only noticed after a reaction delay – and sometimes not at all
+      // shells are only noticed after a reaction delay (incl. perception) – and sometimes not at all
       p.seen = p.seen.filter((e) => s.shells.some((sh) => sh.id === e.id));
       for (const sh of s.shells) {
         if (!p.seen.some((e) => e.id === sh.id)) {
           const d = DODGER[level];
-          p.seen.push({ id: sh.id, at: rng.chance(d.miss) ? 99 : Math.max(0.15, d.delay + rng.noise() * 0.08) });
+          p.seen.push({ id: sh.id, at: rng.chance(d.miss * (2 - form)) ? 99 : Math.max(0.2, d.delay * (2 - form) + rng.noise() * 0.06) });
         }
       }
       const danger = s.shells
@@ -308,8 +358,8 @@ export const kokosKanonier: MinigameDef<KokosKanonierState> = {
       }
     }
     if (!p.target) return [{ type: 'stick', x: 0, y: 0 }];
-    const st = steerTo(p.x, p.z, p.target.x, p.target.z, rng, sk.accuracy);
-    return [{ type: 'stick', x: st.x * DODGER[level].speed, y: st.y * DODGER[level].speed }];
+    const st = steerTo(p.x, p.z, p.target.x, p.target.z, rng, 1 - ref.headingNoise);
+    return [{ type: 'stick', x: st.x * ref.stickMag, y: st.y * ref.stickMag }];
   },
   view(s) {
     const aimDx = s.cross.x - CANNON.x;
@@ -322,8 +372,8 @@ export const kokosKanonier: MinigameDef<KokosKanonierState> = {
       // roped-off arena
       { id: 'ropeN', kind: 'box', x: 0, y: 0.32, z: AZ + 0.7, sx: AX * 2 + 1.4, sy: 0.07, sz: 0.07, color: '#d9bd86', mat: 'rope' },
       { id: 'ropeS', kind: 'box', x: 0, y: 0.32, z: -AZ - 0.7, sx: AX * 2 + 1.4, sy: 0.07, sz: 0.07, color: '#d9bd86', mat: 'rope' },
-      { id: 'ropeW', kind: 'box', x: -AX - 0.7, y: 0.32, z: 0, sx: 0.07, sy: 0.07, sz: AZ * 2 + 1.4, color: '#d9bd86', mat: 'rope' },
-      { id: 'ropeE', kind: 'box', x: AX + 0.7, y: 0.32, z: 0, sx: 0.07, sy: 0.07, sz: AZ * 2 + 1.4, color: '#d9bd86', mat: 'rope' },
+      { id: 'ropeW', kind: 'box', x: -AX - 0.7, y: 0.33, z: 0, sx: 0.07, sy: 0.07, sz: AZ * 2 + 1.4, color: '#d9bd86', mat: 'rope' },
+      { id: 'ropeE', kind: 'box', x: AX + 0.7, y: 0.33, z: 0, sx: 0.07, sy: 0.07, sz: AZ * 2 + 1.4, color: '#d9bd86', mat: 'rope' },
       // grassy mound with the coconut cannon
       { id: 'hill', kind: 'cylinder', x: CANNON.x + 0.6, y: HILL / 2, z: CANNON.z + 0.5, sx: 6.8, sy: HILL, sz: 4.4, color: '#8fcb6e', mat: 'grass', taper: 0.8 },
       { id: 'cannon', kind: 'prop', prop: 'cannon', x: CANNON.x, y: HILL, z: CANNON.z, ry: faceAngle(aimDx, aimDz), sx: 1.05 },
@@ -369,15 +419,16 @@ export const kokosKanonier: MinigameDef<KokosKanonierState> = {
       }
       // short protection after a hit: shown as a white ring (alpha toggles would rebuild the figure)
       if (p.inv > 0 && !p.out) entities.push({ id: `shield${i}`, kind: 'torus', x: p.x, y: 0.9, z: p.z, sx: 1.6, sy: 1, sz: 1.6, color: '#ffffff', glow: true });
+      // knocked out: sits on the beach in front of the rope, out of the target zone
+      const bench = (s.trio.indexOf(i) - 1) * 1.7;
       entities.push({
         id: `p${i}`,
         kind: 'player',
         player: i,
-        x: p.x,
+        x: p.out ? bench : p.x,
         y: 0,
-        z: p.z,
-        ry: p.ry,
-        alpha: p.out ? 0.35 : undefined,
+        z: p.out ? OUT_Z : p.z,
+        ry: p.out ? faceAngle(0, 1) : p.ry,
         anim: p.out ? 'sad' : p.inv > INVULN - 0.5 ? 'hit' : Math.hypot(p.vx, p.vz) > 0.6 ? 'walk' : 'idle',
         label: p.out ? '✖' : '♥'.repeat(p.lives),
       });
@@ -387,16 +438,18 @@ export const kokosKanonier: MinigameDef<KokosKanonierState> = {
       entities.push({
         id: `sh${sh.id}`,
         kind: 'coconut',
-        x: lerp(CANNON.x, sh.x, f),
-        y: lerp(2, 0.35, f) + Math.sin(f * Math.PI) * 5,
-        z: lerp(CANNON.z, sh.z, f),
+        x: lerp(sh.ox, sh.x, f),
+        y: lerp(sh.oy, 0.35, f) + Math.sin(f * Math.PI) * 5,
+        z: lerp(sh.oz, sh.z, f),
         ry: f * 8,
         sx: 1.3,
         sy: 1.3,
         sz: 1.3,
       });
       const r = (0.6 + f * 1.9) * HIT_R;
-      entities.push({ id: `sd${sh.id}`, kind: 'cylinder', x: sh.x, y: 0.03, z: sh.z, sx: r, sy: 0.02, sz: r, color: '#222222', alpha: 0.25 + f * 0.3 });
+      // shadows of shells in the air at the same time overlap: each on its own layer (tops
+      // 0.02 / 0.028 / 0.036, below the crosshair dot at 0.07)
+      entities.push({ id: `sd${sh.id}`, kind: 'cylinder', x: sh.x, y: 0.01 + (sh.id % 3) * 0.008, z: sh.z, sx: r, sy: 0.02, sz: r, color: '#222222', alpha: 0.25 + f * 0.3 });
     }
     for (const b of s.booms) {
       if (!b.hit) continue;

@@ -54,4 +54,5 @@ export const deMgFfa: Record<string, string> = {
   'mg.lavaSeil.desc': 'Ein heißer Lavabalken dreht sich im Kreis. Spring rechtzeitig drüber – er wird immer schneller!',
   'mg.lavaSeil.controls': 'Drücken zum Springen',
   'mg.lavaSeil.ready': 'Gleich dreht der Balken!',
+  'mg.lavaSeil.style': 'Mehrere halten durch – die saubersten Sprünge gewinnen!',
 };

@@ -238,3 +238,35 @@ describe('lavaSeil play time', () => {
     expect(secs[1]).toBeGreaterThanOrEqual(15);
   });
 });
+
+describe('tie-breaks (v0.5)', () => {
+  it('zaehlZoo: equal total error → more exact rounds, then the faster answers', () => {
+    const rng = Rng.fromSeed(21);
+    const s = zaehlZoo.setup(humans(), rng, { practice: false });
+    // errors per round: p0 0/2/0 (2 exact), p1 and p2 1/1/0 (p2 answers faster), p3 never answers
+    const off = [
+      [0, 2, 0],
+      [1, 1, 0],
+      [1, 1, 0],
+    ];
+    for (let round = 0; round < 3; round++) {
+      while (s.phase !== 'guess') zaehlZoo.tick(s, 1 / 60, rng);
+      zaehlZoo.input(s, 0, { type: 'number', value: s.count + off[0][round] });
+      zaehlZoo.input(s, 2, { type: 'number', value: s.count + off[2][round] });
+      for (let k = 0; k < 20; k++) zaehlZoo.tick(s, 1 / 60, rng);
+      zaehlZoo.input(s, 1, { type: 'number', value: s.count + off[1][round] });
+      while (s.phase === 'guess') zaehlZoo.tick(s, 1 / 60, rng);
+    }
+    while (!zaehlZoo.isOver(s)) zaehlZoo.tick(s, 1 / 60, rng);
+    expect(s.total.slice(0, 3)).toEqual([2, 2, 2]);
+    expect(zaehlZoo.result(s)).toEqual([0, 2, 1, 3]);
+  });
+  it('lavaSeil: several survivors are ranked by their cleanest jumps', () => {
+    const s = lavaSeil.setup(humans(), Rng.fromSeed(22), { practice: false });
+    Object.assign(s.ps[0], { cleared: 10, clean: 1.0 });
+    Object.assign(s.ps[1], { cleared: 10, clean: 2.0 });
+    Object.assign(s.ps[2], { out: 12 });
+    Object.assign(s.ps[3], { out: 9 });
+    expect(lavaSeil.result(s)).toEqual([1, 0, 2, 3]);
+  });
+});

@@ -1,5 +1,5 @@
-import type { MgEntity, MinigameDef } from '../types';
-import { ageFx, emitFx, skill, viewFx, type FxState } from '../util';
+import { botRef, type MgEntity, type MinigameDef } from '../types';
+import { ageFx, emitFx, reactTime, viewFx, type FxState } from '../util';
 import { BOT_DISPLAY_LAG } from './botLag';
 
 /**
@@ -17,6 +17,8 @@ const PAUSE = 2.5; // after a decided round
 /** decor: duelists' spots on the main street and the signal flag */
 const PX = [-3, 3];
 const FLAG_Z = 1.6;
+/** bots: chance per round to jump the gun (nervous twitch while waiting) */
+const FALSE_START = { easy: 0.08, medium: 0.04, hard: 0.02 };
 
 export interface SchnellzieherState extends FxState {
   t: number;
@@ -31,7 +33,13 @@ export interface SchnellzieherState extends FxState {
   roundWinner: number | null;
   falseStart: number | null;
   nextAt: number;
+  /** start of the current waiting phase */
+  waitFrom: number;
   botPlan: [number | null, number | null];
+  /** bots: planned false start this round (-1 = none, null = not rolled yet) */
+  botFalse: [number | null, number | null];
+  /** bot form per player (v0.5) */
+  form: number[];
 }
 
 export const schnellzieher: MinigameDef<SchnellzieherState> = {
@@ -40,7 +48,7 @@ export const schnellzieher: MinigameDef<SchnellzieherState> = {
   control: 'tap',
   theme: 'any',
   duration: 45,
-  setup(_players, rng, opts) {
+  setup(players, rng, opts) {
     return {
       t: 0,
       fx: [],
@@ -55,7 +63,10 @@ export const schnellzieher: MinigameDef<SchnellzieherState> = {
       roundWinner: null,
       falseStart: null,
       nextAt: 0,
+      waitFrom: 0,
       botPlan: [null, null],
+      botFalse: [null, null],
+      form: players.map((p) => p.form ?? 1),
     };
   },
   layout: (s) => ({ kind: 'button', labelKey: s.phase === 'signal' ? 'ctrl.now' : 'ctrl.wait' }),
@@ -121,6 +132,8 @@ export const schnellzieher: MinigameDef<SchnellzieherState> = {
       s.roundWinner = null;
       s.resolveAt = 0;
       s.botPlan = [null, null];
+      s.botFalse = [null, null];
+      s.waitFrom = s.t;
       s.signalAt = s.t + rng.range(2.5, 5.5);
       s.phase = 'wait';
     }
@@ -130,16 +143,18 @@ export const schnellzieher: MinigameDef<SchnellzieherState> = {
   bot(s, i, level, rng) {
     if (s.presses[i] !== null) return [];
     if (s.phase === 'wait') {
-      // rare false start for weak bots
-      if (level === 'easy' && s.signalAt - s.t < 0.3 && rng.chance(0.004)) return [{ type: 'press', t: s.t }];
+      // a false start is rolled once per round (8 / 4 / 2 %) – the twitch comes somewhere in
+      // the second half of the wait
+      if (s.botFalse[i] === null) s.botFalse[i] = rng.chance(FALSE_START[level]) ? s.waitFrom + (s.signalAt - s.waitFrom) * (0.45 + 0.5 * rng.next()) : -1;
+      if (s.botFalse[i]! >= 0 && s.t >= s.botFalse[i]!) return [{ type: 'press', t: s.botFalse[i]! }];
       return [];
     }
     if (s.phase !== 'signal') return [];
     if (s.botPlan[i] === null) {
-      // reaction plus the display lag a human has on top (TV picture + touch, see botLag.ts):
-      // effectively hard ≈ 0.34 s, medium ≈ 0.41 s, easy ≈ 0.52 s
-      const base = { easy: 0.42, medium: 0.31, hard: 0.24 }[level] + BOT_DISPLAY_LAG;
-      s.botPlan[i] = s.signalAt + base + rng.noise() * 0.05 * (1.2 - skill(level).accuracy);
+      // human reaction (mean / sd from the reference) plus the display lag a human has on top
+      // (TV picture + touch, see botLag.ts): hard ≈ 0.34 ± 0.035 s, medium ≈ 0.39 ± 0.05 s,
+      // easy ≈ 0.51 ± 0.08 s
+      s.botPlan[i] = s.signalAt + reactTime(botRef(level, s.form[i]), rng, BOT_DISPLAY_LAG);
     }
     if (s.t >= s.botPlan[i]!) return [{ type: 'press', t: s.botPlan[i]! }];
     return [];
@@ -154,12 +169,18 @@ export const schnellzieher: MinigameDef<SchnellzieherState> = {
       { id: 'flagBase', kind: 'cylinder', x: -0.7, y: 0.15, z: FLAG_Z, sx: 0.9, sy: 0.3, sz: 0.9, color: '#a89a8a', mat: 'stone', taper: 0.7 },
       ...building('saloon', -6.6, '#b97c48', '#7d4a2c'),
       ...building('sheriff', 6.6, '#9d7a5e', '#5d4636'),
-      { id: 'badge', kind: 'cylinder', x: 6.6, y: 4.75, z: 5.25, rx: -Math.PI / 2, sx: 0.8, sy: 0.1, sz: 0.8, color: '#f2c94c', mat: 'gold' },
+      // star badge on the false front (front face at z 5.525)
+      { id: 'badge', kind: 'cylinder', x: 6.6, y: 4.75, z: 5.48, rx: -Math.PI / 2, sx: 0.8, sy: 0.1, sz: 0.8, color: '#f2c94c', mat: 'gold' },
       // dressing
       { id: 'barrel1', kind: 'prop', prop: 'barrel', x: -4.1, y: 0.24, z: 4.4, sx: 1 },
       { id: 'barrel2', kind: 'prop', prop: 'barrel', x: -3.2, y: 0, z: 4.6, sx: 0.9, ry: 1 },
-      { id: 'trough', kind: 'box', x: 2.7, y: 0.35, z: 4.3, sx: 1.8, sy: 0.6, sz: 0.7, color: '#8a5a3c', mat: 'planks' },
-      { id: 'troughW', kind: 'box', x: 2.7, y: 0.6, z: 4.3, sx: 1.6, sy: 0.08, sz: 0.5, color: '#6fb6d6' },
+      // open water trough standing on the sand (ground −0.04): floor, four boards, water inside
+      { id: 'trough', kind: 'box', x: 2.7, y: 0.075, z: 4.3, sx: 1.8, sy: 0.25, sz: 0.7, color: '#8a5a3c', mat: 'planks' },
+      { id: 'troughF', kind: 'box', x: 2.7, y: 0.3, z: 3.99, sx: 1.8, sy: 0.7, sz: 0.08, color: '#8a5a3c', mat: 'planks' },
+      { id: 'troughB', kind: 'box', x: 2.7, y: 0.3, z: 4.61, sx: 1.8, sy: 0.7, sz: 0.08, color: '#8a5a3c', mat: 'planks' },
+      { id: 'troughL', kind: 'box', x: 1.84, y: 0.29, z: 4.3, sx: 0.08, sy: 0.68, sz: 0.54, color: '#7a4e34', mat: 'planks' },
+      { id: 'troughR', kind: 'box', x: 3.56, y: 0.29, z: 4.3, sx: 0.08, sy: 0.68, sz: 0.54, color: '#7a4e34', mat: 'planks' },
+      { id: 'troughW', kind: 'box', x: 2.7, y: 0.53, z: 4.3, sx: 1.64, sy: 0.06, sz: 0.54, color: '#6fb6d6' },
       { id: 'hay1', kind: 'prop', prop: 'haybale', x: 9.6, y: 0, z: 2.6, ry: 1.2 },
       { id: 'hay2', kind: 'prop', prop: 'haybale', x: -10.2, y: 0, z: 3.2, ry: 0.3 },
       { id: 'crate1', kind: 'prop', prop: 'crate', x: -9.6, y: 0, z: 1.4, ry: 0.4 },

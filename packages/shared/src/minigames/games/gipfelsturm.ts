@@ -1,13 +1,14 @@
 import type { Rng } from '../../rng';
-import type { ControllerLayout, MgEntity, MgHud, MinigameDef } from '../types';
+import { botRef, type ControllerLayout, type MgEntity, type MgHud, type MinigameDef } from '../types';
 import { PLAYER_COLOR_HEX } from '../../config';
-import { ageFx, clamp, emitFx, ranksFromScores, rowSpawn, skill, viewFx, type FxState } from '../util';
-import { BOT_DISPLAY_LAG } from './botLag';
+import { ageFx, clamp, emitFx, ranksFromScores, rowSpawn, tapCounts, viewFx, type FxState } from '../util';
+import { BOT_DISPLAY_LAG, BOT_LIVE_LAG, TAP_MIN_GAP } from './botLag';
+import { nextMashTap } from './gipfelSprint';
 
 /**
  * Final minigame Gipfelsturm (FFA, mixed controls, never drawn randomly): a three-stage
  * climb, every player on their own lane at their own pace:
- *  1. Hang  – mash to sprint up the slope (layout `mash`)
+ *  1. Hang  – mash to sprint up the slope (layout `mash`, max. 10 counted taps/s)
  *  2. Lava  – auto-run, press at the right moment to jump the lava gaps (layout `button`,
  *             evaluated with the phone timestamp `press.t`)
  *  3. Pfade – a sign on the TV shows a color/symbol, choose it on the phone (layout `choice`,
@@ -66,7 +67,6 @@ interface P {
   // stage 1
   taps: number;
   speedVis: number;
-  tapAcc: number;
   // stage 2
   jx: number;
   gap: number;
@@ -88,6 +88,9 @@ interface P {
   // bots
   botX: number | null;
   botAt: number | null;
+  /** bot mashing: next tap time and per-run grip */
+  botTap: number | null;
+  botGrip: number;
 }
 
 export interface GipfelsturmState extends FxState {
@@ -98,6 +101,10 @@ export interface GipfelsturmState extends FxState {
   ps: P[];
   /** player colors (view only) */
   colors: string[];
+  /** time of each player's last counted tap (tap gate) */
+  lastTap: number[];
+  /** bot form per player (v0.5) */
+  form: number[];
 }
 
 const LANE = 4;
@@ -111,7 +118,6 @@ function newP(rng: Rng): P {
     stage: 1,
     taps: 0,
     speedVis: 0,
-    tapAcc: 0,
     jx: 0,
     gap: 0,
     jump: null,
@@ -128,6 +134,8 @@ function newP(rng: Rng): P {
     finishedAt: null,
     botX: null,
     botAt: null,
+    botTap: null,
+    botGrip: 1,
   };
 }
 
@@ -179,6 +187,8 @@ export const gipfelsturm: MinigameDef<GipfelsturmState> = {
       n: players.length,
       ps: players.map(() => newP(rng)),
       colors: players.map((p) => PLAYER_COLOR_HEX[p.color]),
+      lastTap: players.map(() => -1),
+      form: players.map((p) => p.form ?? 1),
       fx: [],
       fxN: 0,
     };
@@ -198,7 +208,7 @@ export const gipfelsturm: MinigameDef<GipfelsturmState> = {
   input(s, i, input) {
     const p = s.ps[i];
     if (p.stage === 1) {
-      if (input.type !== 'tap') return;
+      if (input.type !== 'tap' || !tapCounts(s.lastTap, i, s.t, TAP_MIN_GAP)) return;
       p.taps++;
       p.speedVis = Math.min(1, p.speedVis + 0.18);
       if (p.taps >= TAPS) {
@@ -307,18 +317,18 @@ export const gipfelsturm: MinigameDef<GipfelsturmState> = {
   result(s) {
     return ranksFromScores(s.ps.map((p) => (p.finishedAt !== null ? 1000 - p.finishedAt : progress(p))));
   },
-  bot(s, i, level, rng, dt) {
+  bot(s, i, level, rng) {
     const p = s.ps[i];
-    const sk = skill(level);
+    const ref = botRef(level, s.form[i]);
     if (p.stage === 1) {
-      const rate = { easy: 5.2, medium: 6.6, hard: 8 }[level] * (0.85 + rng.next() * 0.3);
-      p.tapAcc += rate * dt;
-      const out: { type: 'tap' }[] = [];
-      while (p.tapAcc >= 1) {
-        p.tapAcc -= 1;
-        out.push({ type: 'tap' });
+      // human-like mashing: reference rate × form × grip, tap gate, fatigue (see gipfelSprint)
+      if (p.botTap === null) {
+        p.botGrip = clamp(1 + rng.noise() * 0.09, 0.8, 1.2);
+        p.botTap = s.t + 0.15 + rng.next() * 0.25;
       }
-      return out;
+      if (s.t < p.botTap) return [];
+      p.botTap = nextMashTap(p.botTap, s.t, ref, p.botGrip, rng);
+      return [{ type: 'tap' }];
     }
     if (p.stage === 2) {
       if (p.jump || p.fallUntil !== null || p.gap >= GAPS.length) return [];
@@ -326,7 +336,7 @@ export const gipfelsturm: MinigameDef<GipfelsturmState> = {
       if (p.botX === null) {
         // aim for the middle of the takeoff window, timing noise depends on skill; plus the
         // display lag a human has (sees the runner a bit late, see botLag.ts)
-        const sigma = { easy: 0.15, medium: 0.085, hard: 0.05 }[level];
+        const sigma = { easy: 0.15, medium: 0.085, hard: 0.05 }[level] * (2 - (s.form[i] ?? 1));
         p.botX = g - (JUMP_LEN - GAP_W) / 2 + (BOT_DISPLAY_LAG + rng.noise() * sigma) * RUN_SPEED;
       }
       if (p.jx >= p.botX) {
@@ -337,10 +347,12 @@ export const gipfelsturm: MinigameDef<GipfelsturmState> = {
     }
     if (p.stage === 3) {
       if (s.t < p.walkUntil || s.t < p.penaltyUntil || p.reshuffle) return [];
-      if (p.botAt === null) p.botAt = s.t + { easy: 1.3, medium: 0.9, hard: 0.6 }[level] * (0.8 + rng.next() * 0.4);
+      // read the sign on the TV (live input: perception lag) and pick like a person:
+      // choice time ≈ 0.85 / 0.65 / 0.52 s, wrong picks 8 / 4 / 2 %
+      if (p.botAt === null) p.botAt = s.t + BOT_LIVE_LAG + ref.choice * (0.8 + rng.next() * 0.4);
       if (s.t < p.botAt) return [];
       p.botAt = null;
-      const correct = rng.chance({ easy: 0.72, medium: 0.87, hard: 0.96 }[level] * (0.9 + 0.1 * sk.accuracy));
+      const correct = !rng.chance(ref.choiceError);
       const id = correct ? p.target : rng.pick(COLORS.filter((c) => c !== p.target));
       return [{ type: 'choice', id }];
     }
@@ -474,7 +486,8 @@ export const gipfelsturm: MinigameDef<GipfelsturmState> = {
     const hud: MgHud = {
       timer: s.practice ? undefined : Math.max(0, s.duration - s.t),
       bars: s.ps.map((p, i) => ({ player: i, value: progress(p) })),
-      scores: s.ps.map((p, i) => ({ player: i, value: p.stage === 4 ? `${place[i] + 1}.` : `${p.stage}/3` })),
+      // stage number + what it is (a plain "3/3" would read as finished)
+      scores: s.ps.map((p, i) => ({ player: i, value: p.stage === 4 ? `🏁 ${place[i] + 1}.` : p.stage === 3 ? `③ 🪧 ${p.fork}/${FORKS}` : p.stage === 2 ? '② 🔥' : '① 👟' })),
     };
     if (s.t < 2.5) hud.message = { key: 'mg.gipfelsturm.start' };
     return {

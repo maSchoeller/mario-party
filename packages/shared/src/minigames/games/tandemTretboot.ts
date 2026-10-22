@@ -1,7 +1,8 @@
 import type { BotLevel } from '../../config';
 import type { Rng } from '../../rng';
-import type { ControllerLayout, MgEntity, MgInput, MgPlayer, MinigameDef } from '../types';
-import { TEAM_COLORS, ageFx, clamp, emitFx, faceAngle, teamRanks, viewFx, type FxState } from '../util';
+import { botRef, type ControllerLayout, type MgEntity, type MgInput, type MgPlayer, type MinigameDef } from '../types';
+import { TEAM_COLORS, ageFx, clamp, emitFx, faceAngle, reactTime, teamRanks, viewFx, type FxState } from '../util';
+import { BOT_DISPLAY_LAG } from './botLag';
 
 /**
  * #10 Tandem-Tretboot (2v2, Rhythmus-Tippen): each team pedals one boat. The two team
@@ -10,16 +11,23 @@ import { TEAM_COLORS, ageFx, clamp, emitFx, faceAngle, teamRanks, viewFx, type F
  * Press times come from the phone clock (NET-05), so the rhythm is judged fairly.
  */
 const DURATION = 45;
-const COURSE = 140;
+export const COURSE = 105;
 const BOOST = 1.0;
 const DRAG = 0.8;
 const VMAX = 7;
 const STALL = 0.6;
 /** after this pause the rhythm starts over and either player may begin */
 const RESET_AFTER = 1.5;
+/** rhythm differences below this (s) don't count against the evenness */
+const EVEN_SLACK = 0.03;
 const LANE_Z = [2.4, -2.4];
 /** lagoon water level (visual) */
 const WATER = 0.25;
+/** bots by level: own pedal tempo (s between the team's strokes), chance of a double tap per stroke */
+const BOT_TEMPO = { easy: 0.38, medium: 0.32, hard: 0.31 };
+const BOT_OOPS = { easy: 0.025, medium: 0.014, hard: 0.01 };
+/** bots follow a slower partner's tempo down to this interval */
+const BOT_SLOWEST = 0.6;
 
 interface Boat {
   team: number;
@@ -51,6 +59,8 @@ export interface TandemTretbootState extends FxState {
   botOops: (number | null)[];
   /** good strokes per boat (only for throttling the paddle splashes) */
   strokeFx: number[];
+  /** bot form per player (v0.5) */
+  form: number[];
 }
 
 function stroke(s: TandemTretbootState, i: number, t: number): void {
@@ -65,7 +75,9 @@ function stroke(s: TandemTretbootState, i: number, t: number): void {
       let tempo = 1;
       if (interval < 0.22) tempo = clamp(0.25 + ((interval - 0.12) / 0.1) * 0.75, 0.25, 1); // too hectic
       else if (interval > 0.7) tempo = clamp(1 - (interval - 0.7), 0.2, 1); // too slow
-      const even = b.lastInterval === null ? 0.7 : 1 - Math.min(1, Math.abs(interval - b.lastInterval) / Math.max(b.lastInterval, 0.15));
+      // evenness: nobody hears a difference of a few hundredths, so small wobbles are free
+      const wobble = b.lastInterval === null ? 0 : Math.max(0, Math.abs(interval - b.lastInterval) - EVEN_SLACK);
+      const even = b.lastInterval === null ? 0.7 : 1 - Math.min(1, wobble / Math.max(b.lastInterval, 0.15));
       q = (0.45 + 0.55 * even) * tempo;
       b.lastInterval = interval;
     }
@@ -122,6 +134,7 @@ export const tandemTretboot: MinigameDef<TandemTretbootState> = {
       botPlan: players.map(() => null),
       botOops: players.map(() => null),
       strokeFx: boats.map(() => 0),
+      form: players.map((p) => p.form ?? 1),
       fx: [],
       fxN: 0,
     };
@@ -185,7 +198,7 @@ export const tandemTretboot: MinigameDef<TandemTretbootState> = {
     const role = s.roleOf[i];
     if (b.finishedAt !== null) return [];
     const out: MgInput[] = [];
-    const cfg = { easy: { iv: 0.42, jit: 0.1, oops: 0.07 }, medium: { iv: 0.33, jit: 0.05, oops: 0.03 }, hard: { iv: 0.27, jit: 0.025, oops: 0.008 } }[level];
+    const ref = botRef(level, s.form[i]);
     // occasional mistake: tapping twice in a row
     const oops = s.botOops[i];
     if (oops !== null && s.t >= oops) {
@@ -209,14 +222,25 @@ export const tandemTretboot: MinigameDef<TandemTretbootState> = {
       return out;
     }
     if (s.botPlan[i] === null) {
-      const base = b.lastT ?? s.t;
-      s.botPlan[i] = base + cfg.iv * (1 + rng.noise() * cfg.jit * 2);
+      if (b.lastT === null) {
+        // (re)start: one reaction after the boat came to rest / the start signal
+        s.botPlan[i] = s.t + reactTime(ref, rng, BOT_DISPLAY_LAG);
+      } else {
+        // the partner's stroke shows up on the phone a moment late; then keep the team's rhythm:
+        // the own tempo, or the partner's if that is clearly slower (a bit of slack, so two
+        // bots don't talk each other into an ever slower beat)
+        if (s.t < b.lastT + BOT_DISPLAY_LAG) return out;
+        const own = BOT_TEMPO[level] / s.form[i];
+        const partner = b.lastInterval !== null && b.members.length > 1 ? b.lastInterval - 2 * ref.rhythmSd : own;
+        const iv = clamp(partner, own, BOT_SLOWEST);
+        s.botPlan[i] = b.lastT + Math.max(BOT_DISPLAY_LAG, iv + rng.noise() * ref.rhythmSd);
+      }
     }
     if (s.t >= s.botPlan[i]!) {
       const t = Math.max(s.botPlan[i]!, s.t - 1 / 30);
       s.botPlan[i] = null;
       out.push({ type: 'press', t });
-      if (rng.chance(cfg.oops)) s.botOops[i] = s.t + 0.12;
+      if (rng.next() < BOT_OOPS[level]) s.botOops[i] = s.t + 0.12;
     }
     return out;
   },
@@ -246,7 +270,7 @@ export const tandemTretboot: MinigameDef<TandemTretbootState> = {
     entities.push({ id: 'pierLamp', kind: 'prop', prop: 'torch', x: -2.4, y: WATER + 0.47, z: 5.2 });
     entities.push({ id: 'pierLamp2', kind: 'prop', prop: 'torch', x: -2.4, y: WATER + 0.47, z: -5.2 });
     // finish gate: two posts with a glowing banner, the big goal buoys behind it
-    entities.push({ id: 'finishLine', kind: 'plane', x: COURSE, y: WATER + 0.04, z: 0, sx: 0.8, sz: 11, color: '#ffffff', glow: true });
+    entities.push({ id: 'finishLine', kind: 'plane', x: COURSE, y: WATER + 0.08, z: 0, sx: 0.8, sz: 11, color: '#ffffff', glow: true });
     for (const side of [1, -1]) {
       entities.push({ id: `goalPost${side}`, kind: 'cylinder', x: COURSE, y: WATER + 1.8, z: side * 5.6, sx: 0.4, sy: 4.4, sz: 0.4, color: '#f4efe6', mat: 'wood' });
       entities.push({ id: `goalFlag${side}`, kind: 'prop', prop: 'flag', x: COURSE, y: WATER + 4, z: side * 5.6, ry: Math.PI / 2, sx: 0.5, color: '#f2c14e' });

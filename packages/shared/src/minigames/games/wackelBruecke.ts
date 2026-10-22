@@ -1,7 +1,7 @@
 import { PLAYER_COLOR_HEX } from '../../config';
 import type { Rng } from '../../rng';
-import type { MgEntity, MgInput, MgPlayer, MinigameDef } from '../types';
-import { ageFx, clamp, emitFx, ranksFromScores, rowSpawn, skill, viewFx, type FxState } from '../util';
+import { botRef, type MgEntity, type MgInput, type MgPlayer, type MinigameDef } from '../types';
+import { ageFx, clamp, emitFx, ranksFromScores, rowSpawn, seenAt, seenBuf, seenPush, viewFx, type FxState, type SeenBuf } from '../util';
 
 /**
  * #4 Wackel-Brücke (FFA, Gyro): every player balances a marble on their own swaying
@@ -20,6 +20,20 @@ const FWD = 5; // forward acceleration at full tilt
 const MAX_VZ = 4.2;
 const FALL = 1.1; // seconds of falling before the respawn
 const PLANK = 10;
+/** how fast the wind follows a new gust (1/s) */
+const WIND_RATE = 0.7;
+/** planks per bridge: they end exactly at the goal island */
+const PLANKS = Math.ceil(L / PLANK);
+const PLANK_LEN = L / PLANKS;
+const PLANK_H = 0.3;
+const MARBLE_R = 0.45;
+/** the walker's distance behind its marble */
+const WALK_BACK = 2.6;
+/** bots: balance controller gains (accel per unit of seen offset / speed / summed offset) and forward pace by level */
+const BOT_KP = 2.6;
+const BOT_KD = 2;
+const BOT_KI = 0.8;
+const BOT_PACE = { easy: 0.68, medium: 0.78, hard: 0.8 };
 
 interface P {
   x: number;
@@ -34,8 +48,10 @@ interface P {
   fallT: number | null;
   falls: number;
   finishedAt: number | null;
-  /** bot: time until the next control update */
+  /** bot: time until the hand's tilt error changes, the error, summed seen offset */
   think: number;
+  err: number;
+  integ: number;
 }
 
 export interface WackelBrueckeState extends FxState {
@@ -48,6 +64,10 @@ export interface WackelBrueckeState extends FxState {
   wind: number;
   windTarget: number;
   windIn: number;
+  /** bot form per player (v0.5) */
+  form: number[];
+  /** what the bots have seen: per player x, vx, on the bridge (1/0) */
+  seen: SeenBuf;
 }
 
 /** Sideways disturbance (in tilt units) for a marble at z with forward speed vz. */
@@ -70,10 +90,12 @@ export const wackelBruecke: MinigameDef<WackelBrueckeState> = {
       practice: opts.practice,
       n: players.length,
       colors: players.map((p) => PLAYER_COLOR_HEX[p.color]),
-      ps: players.map(() => ({ x: 0, z: 0, vx: 0, vz: 0, tiltX: 0, tiltY: 0, cp: 0, best: 0, fallT: null, falls: 0, finishedAt: null, think: 0 })),
+      ps: players.map(() => ({ x: 0, z: 0, vx: 0, vz: 0, tiltX: 0, tiltY: 0, cp: 0, best: 0, fallT: null, falls: 0, finishedAt: null, think: 0, err: 0, integ: 0 })),
       wind: 0,
       windTarget: rng.range(-0.15, 0.15),
       windIn: 2,
+      form: players.map((p) => p.form ?? 1),
+      seen: seenBuf(),
       fx: [],
       fxN: 0,
     };
@@ -90,19 +112,20 @@ export const wackelBruecke: MinigameDef<WackelBrueckeState> = {
   },
   tick(s, dt, rng) {
     s.t += dt;
-    // wind: the same for everybody, gets stronger over time
+    // wind: the same for everybody, gets stronger over time; gusts build up over about a
+    // second, so a player watching the marble (and the balloon) can lean against them
     s.windIn -= dt;
     if (s.windIn <= 0) {
-      const strength = 0.15 + Math.min(1, s.t / 40) * 0.25;
+      const strength = 0.1 + Math.min(1, s.t / 40) * 0.18;
       s.windTarget = rng.range(-strength, strength);
       s.windIn = rng.range(1.5, 3);
       // a strong gust makes the bridges creak
-      if (Math.abs(s.windTarget) > 0.27) {
+      if (Math.abs(s.windTarget) > 0.2) {
         const mid = s.ps.reduce((a, p) => a + p.z, 0) / s.ps.length;
         emitFx(s, { sfx: 'creak', x: s.windTarget * 20, y: 2, z: mid + 4 });
       }
     }
-    s.wind += (s.windTarget - s.wind) * clamp(dt * 3, 0, 1);
+    s.wind += (s.windTarget - s.wind) * clamp(dt * WIND_RATE, 0, 1);
     ageFx(s, dt);
     for (let i = 0; i < s.ps.length; i++) {
       const p = s.ps[i];
@@ -152,18 +175,32 @@ export const wackelBruecke: MinigameDef<WackelBrueckeState> = {
   result: (s) => ranksFromScores(s.ps.map((p) => (p.finishedAt !== null ? 1000 - p.finishedAt : Math.floor(p.best * 10) / 10))),
   bot(s, i, level, rng: Rng, dt) {
     const p = s.ps[i];
-    if (p.finishedAt !== null || p.fallT !== null) return [];
-    const sk = skill(level);
+    // what the bots see on the TV: every marble's sideways position and speed, read back late
+    if (s.seen.t[s.seen.t.length - 1] !== s.t) seenPush(s.seen, s.t, s.ps.flatMap((o) => [o.x, o.vx, o.fallT === null ? 1 : 0]), 1);
+    if (p.finishedAt !== null || p.fallT !== null) {
+      p.integ = 0;
+      return [];
+    }
+    const ref = botRef(level, s.form[i]);
+    // the hand adds its own response lag (tiltLag) on top of seeing the TV late
+    const seen = seenAt(s.seen, s.t - ref.tiltLag)!;
+    // still watching the marble fall / respawn: hold the phone level
+    if (!seen[i * 3 + 2]) return [{ type: 'tilt', x: 0, y: 0 }];
+    const x = seen[i * 3];
+    const vx = seen[i * 3 + 1];
     p.think -= dt;
-    if (p.think > 0) return [];
-    p.think = sk.reaction * 0.6 * (0.8 + rng.next() * 0.4);
-    // PD controller towards the middle of the bridge, compensating the disturbance
-    const comp = { easy: 0.35, medium: 0.7, hard: 0.95 }[level];
-    const want = -(3.2 * p.x + 1.8 * p.vx) - DIST * disturbance(s, p) * comp;
-    const x = clamp(want / CTRL + (1 - sk.accuracy) * 0.6 * rng.noise(), -1, 1);
-    const pace = { easy: 0.55, medium: 0.7, hard: 0.85 }[level];
-    const y = clamp(pace * (1 - clamp(Math.abs(p.x) / HALF_W, 0, 1) * 0.9) + 0.05 * rng.noise(), -1, 1);
-    return [{ type: 'tilt', x, y }];
+    if (p.think <= 0) {
+      // the hand drifts: a new steady tilt error every second or so
+      p.think = 0.7 + rng.next() * 0.8;
+      p.err = rng.noise() * ref.tiltError;
+    }
+    // PD on what was seen plus a slow integral (leaning against a steady push) – no hidden wind
+    p.integ = clamp(p.integ + x * dt, -0.6, 0.6);
+    const want = -(BOT_KP * x + BOT_KD * vx + BOT_KI * p.integ);
+    const tx = clamp(want / CTRL + p.err, -1, 1);
+    const pace = BOT_PACE[level] * s.form[i];
+    const ty = clamp(pace * (1 - clamp(Math.abs(x) / HALF_W, 0, 1) * 0.9), -1, 1);
+    return [{ type: 'tilt', x: tx, y: ty }];
   },
   view(s) {
     const entities: MgEntity[] = [];
@@ -174,8 +211,10 @@ export const wackelBruecke: MinigameDef<WackelBrueckeState> = {
       const lx = lanes[i];
       const tilt = p.finishedAt !== null ? 0 : (p.tiltX * CTRL + disturbance(s, p) * DIST) / (CTRL + DIST);
       const rz = -tilt * 0.35;
-      for (let k = 0; k < L / PLANK; k++) {
-        entities.push({ id: `pl${i}_${k}`, kind: 'box', x: lx, y: -0.15, z: k * PLANK + PLANK / 2, sx: HALF_W * 2, sy: 0.3, sz: PLANK - 0.3, rz, color: k % 2 ? '#c29262' : '#b48555', mat: 'planks' });
+      // deck height at sideways offset dx of the rolled planks (rotation about the plank centre)
+      const deck = (dx: number, z: number) => (z < 0 || z > L ? 0 : -PLANK_H / 2 + (PLANK_H / 2) * Math.cos(rz) + dx * Math.sin(rz));
+      for (let k = 0; k < PLANKS; k++) {
+        entities.push({ id: `pl${i}_${k}`, kind: 'box', x: lx, y: -PLANK_H / 2, z: k * PLANK_LEN + PLANK_LEN / 2, sx: HALF_W * 2, sy: PLANK_H, sz: PLANK_LEN - 0.3, rz, color: k % 2 ? '#c29262' : '#b48555', mat: 'planks' });
       }
       for (let c = 0; c <= L; c += CHECK) {
         const reached = p.best >= c;
@@ -187,14 +226,18 @@ export const wackelBruecke: MinigameDef<WackelBrueckeState> = {
         }
       }
       const fy = p.fallT !== null ? -p.fallT * p.fallT * 8 : 0;
-      entities.push({ id: `m${i}`, kind: 'sphere', x: lx + p.x, y: 0.45 + fy, z: p.z, sx: 0.9, sy: 0.9, sz: 0.9, player: i, color: s.colors[i], glow: true });
+      // the marble rests on the rolled deck; once it is over the edge it just drops
+      const my = (p.fallT !== null ? Math.max(-0.3, deck(clamp(p.x, -HALF_W, HALF_W), p.z)) : deck(p.x, p.z)) + MARBLE_R;
+      entities.push({ id: `m${i}`, kind: 'sphere', x: lx + p.x, y: my + fy, z: p.z, sx: MARBLE_R * 2, sy: MARBLE_R * 2, sz: MARBLE_R * 2, player: i, color: s.colors[i], glow: true });
+      // the walker follows a little further back, so its head doesn't hide the marble
+      const wz = Math.max(-2.5, p.z - WALK_BACK);
       entities.push({
         id: `p${i}`,
         kind: 'player',
         player: i,
         x: lx + p.x * 0.5,
-        y: 0,
-        z: Math.max(-2.5, p.z - 1.8),
+        y: deck(p.x * 0.5, wz),
+        z: wz,
         ry: p.finishedAt !== null ? 0 : Math.PI,
         anim: p.finishedAt !== null ? 'cheer' : p.fallT !== null ? 'sad' : Math.abs(p.vz) > 0.3 ? 'walk' : 'idle',
       });

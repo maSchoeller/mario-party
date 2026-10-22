@@ -1,4 +1,5 @@
-import type { ControllerLayout, MgInput } from '@wb/shared/minigames/types';
+import type { ControllerLayout, MgInput, MgRadar, SwipeDir } from '@wb/shared/minigames/types';
+import { SHAKE_MIN_GAP } from '@wb/shared/minigames/games/botLag';
 import { t } from '@wb/shared/i18n/index';
 import { h } from '../common/dom';
 import { motionAvailable, startShake, startTilt, vibrate } from './sensors';
@@ -30,7 +31,8 @@ export function layoutKey(l: ControllerLayout): string {
     case 'number':
       return `number:${l.min}:${l.max}`;
     case 'joystick':
-      return `joystick:${(l.buttons ?? []).map((b) => b.id).join(',')}`;
+      // radar moves are applied via update()
+      return `joystick:${(l.buttons ?? []).map((b) => b.id).join(',')}:${l.radar ? `radar${l.radar.marks?.length ?? 0}` : ''}`;
     case 'button':
     case 'mash':
       // label changes (e.g. "your turn"/"partner") are applied via update()
@@ -55,7 +57,7 @@ export function mountController(layout: ControllerLayout, ctx: ControllerCtx): M
     case 'draw':
       return draw(layout, ctx);
     case 'swipe':
-      return swipe(ctx, layout.labelKey);
+      return swipe(layout, ctx);
     case 'choice':
       return choice(layout, ctx);
     case 'number':
@@ -138,8 +140,46 @@ function joystick(layout: Extract<ControllerLayout, { kind: 'joystick' }>, ctx: 
     btn.addEventListener('pointercancel', up);
     return btn;
   });
-  const el = h('div', { class: `ctrl-joystick ${buttons.length ? 'with-buttons' : ''}` }, pad.el, buttons.length ? h('div', { class: 'ctrl-buttons' }, buttons) : null);
-  return { el, destroy: pad.destroy };
+  const map = layout.radar ? radar(layout.radar) : null;
+  const el = h('div', { class: `ctrl-joystick ${buttons.length ? 'with-buttons' : ''}` }, map?.el, pad.el, buttons.length ? h('div', { class: 'ctrl-buttons' }, buttons) : null);
+  return {
+    el,
+    update(l) {
+      if (l.kind === 'joystick' && l.radar) map?.update(l.radar);
+    },
+    destroy: pad.destroy,
+  };
+}
+
+/** Mini map next to the stick: own position and fixed landmarks (v0.5, e.g. hide and seek). */
+function radar(r: MgRadar): { el: HTMLElement; update(r: MgRadar): void } {
+  const SIZE = 132;
+  const px = (v: number) => ((v + 1) / 2) * SIZE;
+  const py = (v: number) => ((1 - v) / 2) * SIZE;
+  const disc = (x: number, y: number, d: number, style: string) =>
+    h('div', { style: `position:absolute;left:${px(x) - d / 2}px;top:${py(y) - d / 2}px;width:${d}px;height:${d}px;border-radius:50%;${style}` });
+  const marks = (r.marks ?? []).map(([x, y, rad]) => disc(x, y, Math.max(8, rad * SIZE), 'background:#2f6b45;opacity:0.9'));
+  const gate = r.gate ? disc(r.gate[0], r.gate[1], 14, 'background:#ffb347') : null;
+  const dot = disc(r.x, r.y, 18, '');
+  const el = h(
+    'div',
+    {
+      class: 'ctrl-radar',
+      style: `position:relative;flex:0 0 ${SIZE}px;width:${SIZE}px;height:${SIZE}px;border-radius:${r.shape === 'round' ? '50%' : '14px'};background:#173326;border:3px solid #5b4630;overflow:hidden;align-self:center`,
+    },
+    marks,
+    gate,
+    dot,
+  );
+  const update = (n: MgRadar) => {
+    dot.style.left = `${px(n.x) - 9}px`;
+    dot.style.top = `${py(n.y) - 9}px`;
+    // lit on the TV: the dot turns lantern yellow
+    dot.style.background = n.seen ? '#ffd23f' : '#9fe3ff';
+    dot.style.boxShadow = n.seen ? '0 0 10px 4px rgba(255,210,63,0.8)' : '0 0 6px 2px rgba(159,227,255,0.6)';
+  };
+  update(r);
+  return { el, update };
 }
 
 // ---------------------------------------------------------------- tap / timing
@@ -202,6 +242,9 @@ function tilt(ctx: ControllerCtx, labelKey?: string): MountedController {
   return { el: h('div', { class: 'ctrl-tilt fallback' }, pad.el, h('p', {}, labelKey ? `${t(labelKey)} – ` : '', t('ctrl.tiltFallback'))), destroy: pad.destroy };
 }
 
+/** shake power of one fallback tap */
+const FALLBACK_SHAKE = 0.75;
+
 function shake(ctx: ControllerCtx, labelKey?: string): MountedController {
   const meter = h('div', { class: 'shake-meter' });
   const bump = (p: number) => {
@@ -215,11 +258,18 @@ function shake(ctx: ControllerCtx, labelKey?: string): MountedController {
     });
     return { el: h('div', { class: 'ctrl-shake' }, meter, h('p', {}, t(labelKey ?? 'ctrl.shake'))), destroy: stop };
   }
+  // fallback taps count like real shaking (v0.5): the game takes one impulse per
+  // SHAKE_MIN_GAP from either source, a tap is worth a firm shake (~5 impulses/s at power
+  // 0.9 shaking ≈ 6.5 taps/s at 0.75)
   const btn = h('button', { class: 'ctrl-big mash' }, t('ctrl.shake'));
+  let lastTap = -1e9;
   btn.addEventListener('pointerdown', (e) => {
     e.preventDefault();
-    ctx.send({ type: 'shake', power: 0.6 });
-    bump(0.6);
+    const now = performance.now();
+    if (now - lastTap < SHAKE_MIN_GAP * 1000) return;
+    lastTap = now;
+    ctx.send({ type: 'shake', power: FALLBACK_SHAKE });
+    bump(FALLBACK_SHAKE);
     vibrate(8);
   });
   return { el: h('div', { class: 'ctrl-shake fallback' }, btn, h('p', {}, t('ctrl.shakeFallback'))), destroy() {} };
@@ -294,8 +344,23 @@ function draw(layout: Extract<ControllerLayout, { kind: 'draw' }>, ctx: Controll
   };
 }
 
-function swipe(ctx: ControllerCtx, labelKey?: string): MountedController {
-  const zone = h('div', { class: 'swipe-zone' }, h('span', {}, '⬆️'), h('p', {}, t(labelKey ?? 'ctrl.swipe')));
+function swipe(layout: Extract<ControllerLayout, { kind: 'swipe' }>, ctx: ControllerCtx): MountedController {
+  // optional item preview (e.g. the parcel in hand): a coloured box, framed by the target colours
+  const item = h('div', { style: 'width:92px;height:92px;border-radius:16px;border:4px solid rgba(0,0,0,0.25);box-sizing:border-box;display:none' });
+  const zone = h('div', { class: 'swipe-zone' }, layout.dirColors ? item : h('span', {}, '⬆️'), h('p', {}, t(layout.labelKey ?? 'ctrl.swipe')));
+  const paintDirs = (dc: Partial<Record<SwipeDir, string>> | undefined) => {
+    zone.style.borderLeft = dc?.left ? `14px solid ${dc.left}` : '';
+    zone.style.borderTop = dc?.up ? `14px solid ${dc.up}` : '';
+    zone.style.borderRight = dc?.right ? `14px solid ${dc.right}` : '';
+    zone.style.borderBottom = dc?.down ? `14px solid ${dc.down}` : '';
+  };
+  const paintItem = (color: string | null | undefined) => {
+    item.style.display = layout.dirColors ? '' : 'none';
+    item.style.background = color ?? 'transparent';
+    item.style.borderStyle = color ? 'solid' : 'dashed';
+  };
+  paintDirs(layout.dirColors);
+  paintItem(layout.color);
   let start: { x: number; y: number } | null = null;
   const fire = (dir: 'up' | 'down' | 'left' | 'right') => {
     ctx.send({ type: 'swipe', dir });
@@ -318,9 +383,17 @@ function swipe(ctx: ControllerCtx, labelKey?: string): MountedController {
   const arrows = h(
     'div',
     { class: 'swipe-arrows' },
-    (['left', 'up', 'down', 'right'] as const).map((d) => h('button', { onclick: () => fire(d), 'aria-label': d }, { left: '⬅️', up: '⬆️', down: '⬇️', right: '➡️' }[d])),
+    (['left', 'up', 'down', 'right'] as const).map((d) =>
+      h('button', { onclick: () => fire(d), 'aria-label': d, style: layout.dirColors?.[d] ? `box-shadow:inset 0 -6px 0 ${layout.dirColors[d]}` : undefined }, { left: '⬅️', up: '⬆️', down: '⬇️', right: '➡️' }[d]),
+    ),
   );
-  return { el: h('div', { class: 'ctrl-swipe' }, zone, arrows), destroy() {} };
+  return {
+    el: h('div', { class: 'ctrl-swipe' }, zone, arrows),
+    update(l) {
+      if (l.kind === 'swipe') paintItem(l.color);
+    },
+    destroy() {},
+  };
 }
 
 function choice(layout: Extract<ControllerLayout, { kind: 'choice' }>, ctx: ControllerCtx): MountedController {

@@ -1,7 +1,8 @@
 import { PLAYER_COLOR_HEX } from '../../config';
 import type { Rng } from '../../rng';
 import type { MgEntity, MgInput, MgPlayer, MinigameDef } from '../types';
-import { ageFx, clamp, emitFx, faceAngle, lerp, skill, teamRanks, viewFx, type FxState } from '../util';
+import { ageFx, clamp, emitFx, faceAngle, lerp, reactTime, refOf, teamRanks, viewFx, type FxState } from '../util';
+import { BOT_LIVE_LAG, SHAKE_MIN_GAP } from './botLag';
 
 /**
  * #17 Ballon-Bombardement (1 vs 3, Schütteln vs. Tippen): every trio member pumps up a
@@ -13,14 +14,22 @@ import { ageFx, clamp, emitFx, faceAngle, lerp, skill, teamRanks, viewFx, type F
 const DURATION = 45;
 const GOAL = 7;
 /** air per shake impulse = BASE + POWER * power */
-const PUMP_BASE = 0.016;
-const PUMP_POWER = 0.012;
-/** ignore shake impulses faster than this (no advantage from sensor spam) */
-const PUMP_MIN_GAP = 0.13;
-const DART_COOLDOWN = 1.6;
+const PUMP_BASE = 0.018;
+const PUMP_POWER = 0.02;
+/** full air per stroke needs this much time between two strokes (s) */
+const STROKE = 0.2;
+/**
+ * one shake impulse per SHAKE_MIN_GAP counts (real shaking or tapping alike, no advantage
+ * from sensor spam); the host accepts a little less to absorb network jitter
+ */
+const PUMP_MIN_GAP = SHAKE_MIN_GAP * 0.8;
+const DART_COOLDOWN = 1;
 const DART_FLIGHT = 0.5;
-/** hit chance of a dart = HIT_BASE + (1 - HIT_BASE) * fill */
-const HIT_BASE = 0.3;
+/** hit chance of a dart = HIT_BASE + HIT_FILL * fill (a full balloon is easier to hit) */
+const HIT_BASE = 0.42;
+const HIT_FILL = 0.3;
+/** trio bots: shake impulses per second and power */
+const BOT_PUMP = { easy: { rate: 5.8, power: 0.7 }, medium: { rate: 6.3, power: 0.8 }, hard: { rate: 6.8, power: 0.9 } };
 const POP_PAUSE = 0.7;
 const DONE_PAUSE = 0.6;
 const STATION_X = [-5, 0, 5];
@@ -74,10 +83,13 @@ const slotColor = (s: BallonBombardementState, slot: number) => PLAYER_COLOR_HEX
 
 function pump(s: BallonBombardementState, slot: number, power: number): void {
   const b = s.balloons[slot];
-  if (b.phase !== 'pump' || s.t - b.lastPump < PUMP_MIN_GAP) return;
+  const gap = s.t - b.lastPump;
+  if (b.phase !== 'pump' || gap < PUMP_MIN_GAP) return;
   b.lastPump = s.t;
   const before = b.fill;
-  b.fill += PUMP_BASE + PUMP_POWER * clamp(power, 0, 1);
+  // the pump has to draw air between two strokes: faster than one stroke per STROKE pushes
+  // less air each (a child shaking steadily keeps up with frantic adults, v0.5)
+  b.fill += (PUMP_BASE + PUMP_POWER * clamp(power, 0, 1)) * Math.min(1, gap / STROKE);
   b.wobble = 1;
   // a puff of air from the pump every quarter of a balloon (silent: pumping is constant)
   if (Math.floor(b.fill * 4) > Math.floor(before * 4) && b.fill < 1) emitFx(s, { kind: 'smoke', x: STATION_X[slot] + 1.1, y: 1.3, z: 1.4, s: 0.35 });
@@ -157,7 +169,7 @@ export const ballonBombardement: MinigameDef<BallonBombardementState> = {
       // only a balloon with some air in it can pop – a finished one already flew away.
       // Big balloons are easier to hit than small ones.
       if (b.phase !== 'pump') continue;
-      if (b.fill > 0.04 && rng.chance(HIT_BASE + (1 - HIT_BASE) * b.fill)) {
+      if (b.fill > 0.04 && rng.chance(HIT_BASE + HIT_FILL * b.fill)) {
         b.phase = 'popped';
         b.pause = POP_PAUSE;
         s.pops++;
@@ -186,46 +198,43 @@ export const ballonBombardement: MinigameDef<BallonBombardementState> = {
   isOver: (s) => !s.practice && (s.done >= GOAL || s.t >= s.duration),
   result: (s) => teamRanks(s.players, [s.done >= GOAL ? 1 : 0]),
   bot(s, i, level, rng, dt) {
-    const sk = skill(level);
+    const ref = refOf(s.players, i, level);
+    const form = s.players[i].form ?? 1;
     if (i === s.solo) {
       if (s.cooldown > 0) {
-        s.botWait = sk.reaction * (0.7 + rng.next() * 0.6);
+        // the dart in the hand (TV) / the pads light up again (phone): a simple reaction
+        s.botWait = reactTime(ref, rng, BOT_LIVE_LAG);
         s.botPick = null;
         return [];
       }
-      // reaction delay after the dart is ready again
       s.botWait -= dt;
       if (s.botWait > 0) return [];
       if (s.botPick === null) {
-        // aim for the fullest balloon that will not be finished before the dart lands
+        // throw at once at the biggest balloon (sizes are on the TV); now and then the wrong
+        // pad – balloon colour → pad colour under time pressure is where the solo's skill shows
         const ranked = [0, 1, 2]
           .filter((k) => s.balloons[k].phase === 'pump' && !s.darts.some((d) => d.slot === k))
           .sort((a, b) => s.balloons[b].fill - s.balloons[a].fill);
         if (!ranked.length) return [];
-        const best = s.balloons[ranked[0]].fill;
-        // patient bots wait a moment for a juicier target
-        const patience = { easy: 0.0, medium: 0.25, hard: 0.4 }[level];
-        if (best < patience && s.done < GOAL - 1) return [];
-        s.botPick = rng.chance(sk.accuracy) ? ranked[0] : rng.pick([0, 1, 2]);
+        s.botPick = rng.chance(ref.choiceError * 3) ? rng.pick([0, 1, 2]) : ranked[0];
       }
       return [{ type: 'pad', idx: s.botPick }];
     }
-    // trio: shake at a skill dependent rhythm
-    const rate = { easy: 5.4, medium: 6, hard: 6.6 }[level] * (0.85 + rng.next() * 0.3);
-    s.botAcc[i] += rate * dt;
-    const out: MgInput[] = [];
-    while (s.botAcc[i] >= 1) {
-      s.botAcc[i] -= 1;
-      out.push({ type: 'shake', power: clamp({ easy: 0.65, medium: 0.75, hard: 0.85 }[level] + rng.noise() * 0.1, 0.2, 1) });
-    }
-    return out;
+    // trio: shake at a skill dependent rhythm, never faster than one impulse per SHAKE_MIN_GAP
+    const cfg = BOT_PUMP[level];
+    const rate = cfg.rate * form * (0.85 + rng.next() * 0.3);
+    s.botAcc[i] += dt;
+    if (s.botAcc[i] < Math.max(SHAKE_MIN_GAP, 1 / rate)) return [];
+    s.botAcc[i] = 0;
+    return [{ type: 'shake', power: clamp(cfg.power * form + rng.noise() * 0.08, 0.2, 1) }];
   },
   view(s) {
     const entities: MgEntity[] = [
       // fairground on the meadow: a wooden fence, bunting, hay bales and the solo's throwing stage
       { id: 'soloMat', kind: 'cylinder', x: 0, y: 0.03, z: SOLO_Z, sx: 2.6, sy: 0.06, sz: 2.6, color: '#e8676b', mat: 'planks' },
-      { id: 'bunting1', kind: 'prop', prop: 'bunting', x: -3.05, y: 0, z: 5 },
-      { id: 'bunting2', kind: 'prop', prop: 'bunting', x: 3.05, y: 0, z: 5 },
+      // two garlands, posts at x ±3 of each: the inner posts stand apart, not inside each other
+      { id: 'bunting1', kind: 'prop', prop: 'bunting', x: -3.4, y: 0, z: 5 },
+      { id: 'bunting2', kind: 'prop', prop: 'bunting', x: 3.4, y: 0, z: 5 },
       { id: 'hay1', kind: 'prop', prop: 'haybale', x: -8.2, y: 0, z: 2.4, ry: 0.3 },
       { id: 'hay2', kind: 'prop', prop: 'haybale', x: -8.1, y: 0, z: 0.9, ry: -0.2 },
       { id: 'hay3', kind: 'prop', prop: 'haybale', x: 8.3, y: 0, z: 1.6, ry: 1.7 },

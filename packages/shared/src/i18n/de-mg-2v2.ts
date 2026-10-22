@@ -16,8 +16,8 @@ export const deMg2v2: Record<string, string> = {
   'mg.tandemTretboot.finished': 'Im Ziel! Schau auf den Fernseher!',
   // Paket-Kette
   'mg.paketKette.name': 'Paket-Kette',
-  'mg.paketKette.desc': 'Einer wirft die Pakete vom Band nach oben zum Partner, der sie in die Rutsche mit der richtigen Farbe wischt. Bei Gleichstand gewinnt, wer die Punktzahl zuerst hatte.',
-  'mg.paketKette.controls': 'Werfer: nach oben wischen · Sortierer: links, oben oder rechts wischen',
+  'mg.paketKette.desc': 'Einer wirft die Pakete vom Band nach oben zum Partner, der sie in die Rutsche mit der richtigen Farbe wischt. Hat der Partner schon volle Hände, fällt das Paket runter – das kostet einen Punkt. Bei Gleichstand gewinnt, wer die Punktzahl zuerst hatte.',
+  'mg.paketKette.controls': 'Werfer: nach oben wischen · Sortierer: in die Farbe wischen, die dein Handy zeigt (links, oben, rechts)',
   // Weichen-Chaos
   'mg.weichenChaos.name': 'Weichen-Chaos',
   'mg.weichenChaos.desc': 'Stell deine Weiche rechtzeitig um: Züge in eurer Farbe in euren Bahnhof, fremde Züge aufs Abstellgleis! Bei Gleichstand gewinnt, wer seine Weichen früher richtig gestellt hat.',

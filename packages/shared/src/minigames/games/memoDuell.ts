@@ -1,9 +1,8 @@
-import type { BotLevel } from '../../config';
 import type { Rng } from '../../rng';
 import { PLAYER_COLOR_HEX } from '../../config';
-import type { ControllerLayout, MgEntity, MgHud, MinigameDef } from '../types';
-import { ageFx, emitFx, viewFx, type FxState } from '../util';
-import { BOT_DISPLAY_LAG } from './botLag';
+import { botRef, type ControllerLayout, type MgEntity, type MgHud, type MinigameDef } from '../types';
+import { ageFx, emitFx, faceAngle, viewFx, type FxState } from '../util';
+import { BOT_LIVE_LAG } from './botLag';
 
 /**
  * #20 Memo-Duell (Duell, Tippen): the TV lights up a growing color sequence on 4 big pads,
@@ -74,6 +73,8 @@ export interface MemoDuellState extends FxState {
   winner: number | null;
   /** decided by the time limit */
   byTime: boolean;
+  /** bot form per player (v0.5) */
+  form: number[];
 }
 
 const newP = (): P => ({ lives: LIVES, pos: 0, failed: false, done: false, roundTime: 0, totalTime: 0, lastPress: -9, botNext: null });
@@ -151,9 +152,14 @@ function judge(s: MemoDuellState): void {
   s.litStep = null;
 }
 
-export function botErrorChance(level: BotLevel, len: number): number {
-  const base = { easy: 0.026, medium: 0.014, hard: 0.0075 }[level];
-  return Math.min(0.6, base * Math.pow(len / START_LEN, 2.2));
+/**
+ * Chance of a wrong pad per press for a bot with memory span `span` (the sequence length a
+ * person repeats correctly half of the time, `HumanRef.memorySpan`): rises steeply with the
+ * length, so that (1 − p)^span = 0.5.
+ */
+export function botErrorChance(span: number, len: number): number {
+  const atSpan = 1 - Math.pow(0.5, 1 / span);
+  return Math.min(0.6, atSpan * Math.pow(len / span, 2.2));
 }
 
 export const memoDuell: MinigameDef<MemoDuellState> = {
@@ -179,6 +185,7 @@ export const memoDuell: MinigameDef<MemoDuellState> = {
       outcome: null,
       winner: null,
       byTime: false,
+      form: players.map((p) => p.form ?? 1),
     };
     startShow(s);
     return s;
@@ -275,14 +282,15 @@ export const memoDuell: MinigameDef<MemoDuellState> = {
     const p = s.ps[i];
     if (s.phase !== 'input' || p.done || p.failed) return [];
     const len = s.seq.length;
+    const ref = botRef(level, s.form[i]);
     if (p.botNext === null) {
-      // think time before the first press, plus the display lag a human has (botLag.ts)
-      p.botNext = s.t + BOT_DISPLAY_LAG + { easy: 0.9, medium: 0.65, hard: 0.5 }[level] * (0.8 + rng.next() * 0.4);
+      // think time before the first press, plus the lag of a live input (TV + network, botLag.ts)
+      p.botNext = s.t + BOT_LIVE_LAG + { easy: 0.9, medium: 0.65, hard: 0.5 }[level] * (0.8 + rng.next() * 0.4);
     }
     if (s.t < p.botNext) return [];
     p.botNext = s.t + { easy: 0.7, medium: 0.5, hard: 0.38 }[level] * (0.8 + rng.next() * 0.4);
     const right = s.seq[p.pos];
-    if (rng.chance(botErrorChance(level, len))) {
+    if (rng.chance(botErrorChance(ref.memorySpan, len))) {
       const wrong = [0, 1, 2, 3].filter((x) => x !== right);
       return [{ type: 'pad', idx: rng.pick(wrong) }];
     }
@@ -297,12 +305,13 @@ export const memoDuell: MinigameDef<MemoDuellState> = {
       { id: 'wall', kind: 'box', x: 0, y: 3.5, z: 3.6, sx: 13, sy: 5.4, sz: 0.4, color: '#2a2540', mat: 'metal' },
       { id: 'frameT', kind: 'box', x: 0, y: 6.36, z: 3.45, sx: 13.6, sy: 0.32, sz: 0.5, color: '#f2c94c', mat: 'gold' },
       { id: 'frameB', kind: 'box', x: 0, y: 0.68, z: 3.45, sx: 13.6, sy: 0.32, sz: 0.5, color: '#f2c94c', mat: 'gold' },
-      { id: 'frameL', kind: 'box', x: -6.64, y: 3.52, z: 3.45, sx: 0.32, sy: 6, sz: 0.5, color: '#f2c94c', mat: 'gold' },
-      { id: 'frameR', kind: 'box', x: 6.64, y: 3.52, z: 3.45, sx: 0.32, sy: 6, sz: 0.5, color: '#f2c94c', mat: 'gold' },
+      // side bars end 2 cm below the top bar (equal tops would z-fight in the corners)
+      { id: 'frameL', kind: 'box', x: -6.64, y: 3.51, z: 3.45, sx: 0.32, sy: 5.98, sz: 0.5, color: '#f2c94c', mat: 'gold' },
+      { id: 'frameR', kind: 'box', x: 6.64, y: 3.51, z: 3.45, sx: 0.32, sy: 5.98, sz: 0.5, color: '#f2c94c', mat: 'gold' },
       { id: 'base', kind: 'box', x: 0, y: 0.26, z: 3.6, sx: 12.4, sy: 0.52, sz: 0.9, color: '#3b3560', mat: 'metal' },
       // stage lights and speakers at the sides
-      { id: 'spotL', kind: 'prop', prop: 'stagelight', x: -7.6, y: 0, z: -3.2, ry: 2.5, sx: 1.2 },
-      { id: 'spotR', kind: 'prop', prop: 'stagelight', x: 7.6, y: 0, z: -3.2, ry: -2.5, sx: 1.2 },
+      { id: 'spotL', kind: 'prop', prop: 'stagelight', x: -7.6, y: 0, z: -3.2, ry: faceAngle(7.6, 4), sx: 1.2 },
+      { id: 'spotR', kind: 'prop', prop: 'stagelight', x: 7.6, y: 0, z: -3.2, ry: faceAngle(-7.6, 4), sx: 1.2 },
       { id: 'boxL', kind: 'box', x: -7.6, y: 0.9, z: 2.2, sx: 1.2, sy: 1.8, sz: 1, color: '#25213a', mat: 'cloth' },
       { id: 'boxR', kind: 'box', x: 7.6, y: 0.9, z: 2.2, sx: 1.2, sy: 1.8, sz: 1, color: '#25213a', mat: 'cloth' },
       { id: 'coneL', kind: 'cylinder', x: -7.6, y: 1.2, z: 1.68, rx: -Math.PI / 2, sx: 0.8, sy: 0.06, sz: 0.8, color: '#4a4466', mat: 'metal' },

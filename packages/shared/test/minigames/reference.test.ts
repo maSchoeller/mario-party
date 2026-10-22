@@ -14,6 +14,19 @@ describe.each([kokosRegen, gipfelSprint, schnellzieher])('minigame $id', (def) =
   });
 });
 
+describe('kokosRegen tie-break', () => {
+  it('same coconuts: fewer stone hits first, then whoever got there earlier', () => {
+    const players = makeMgPlayers('ffa').map((p) => ({ ...p, isBot: false }));
+    const s = kokosRegen.setup(players, Rng.fromSeed(4), { practice: false });
+    const set = (i: number, score: number, hits: number, scoreAt: number) => Object.assign(s.ps[i], { score, hits, scoreAt });
+    set(0, 8, 1, 20);
+    set(1, 8, 0, 30);
+    set(2, 8, 0, 25);
+    set(3, 9, 3, 39);
+    expect(kokosRegen.result(s)).toEqual([3, 2, 1, 0]);
+  });
+});
+
 describe('schnellzieher timing', () => {
   it('uses phone timestamps, not arrival order', () => {
     const players = [0, 1].map((i) => ({ idx: i, gameIdx: i, team: i, character: 'rocco' as const, color: 'red' as const, isBot: false, botLevel: 'easy' as const }));
@@ -82,5 +95,50 @@ describe('schnellzieher rules', () => {
     expect(hard).toBeGreaterThanOrEqual(0.33);
     expect(avg('medium')).toBeGreaterThan(hard);
     expect(avg('easy')).toBeGreaterThan(avg('medium'));
+  });
+});
+
+describe('gipfelSprint tap gate (v0.5)', () => {
+  it('counts at most 10 taps per second – two-thumb drumming gives no edge', () => {
+    const players = makeMgPlayers('ffa').map((p) => ({ ...p, isBot: false }));
+    const rng = Rng.fromSeed(4);
+    const s = gipfelSprint.setup(players, rng, { practice: false });
+    for (let k = 0; k < 60; k++) {
+      gipfelSprint.tick(s, 1 / 60, rng);
+      // player 0 drums 120 taps/s, player 1 taps 6 times a second
+      gipfelSprint.input(s, 0, { type: 'tap' });
+      gipfelSprint.input(s, 0, { type: 'tap' });
+      if (k % 10 === 0) gipfelSprint.input(s, 1, { type: 'tap' });
+    }
+    expect(s.ps[0].progress).toBeLessThanOrEqual(10);
+    expect(s.ps[0].progress).toBeGreaterThanOrEqual(8);
+    expect(s.ps[1].progress).toBe(6);
+  });
+});
+
+describe('schnellzieher bot false starts (v0.5)', () => {
+  it('are rolled once per round, independent of the tick rate', () => {
+    const rate = (dt: number) => {
+      let fs = 0;
+      const n = 300;
+      for (let k = 0; k < n; k++) {
+        const rng = Rng.fromSeed(500 + k);
+        const s = schnellzieher.setup(makeMgPlayers('duel', undefined, 'easy'), rng, { practice: false });
+        let jumped = false;
+        while (s.phase === 'wait' && !jumped) {
+          for (const inp of schnellzieher.bot(s, 0, 'easy', rng, dt)) {
+            schnellzieher.input(s, 0, inp);
+            jumped = s.falseStart === 0;
+          }
+          schnellzieher.tick(s, dt, rng);
+        }
+        if (jumped) fs++;
+      }
+      return fs / n;
+    };
+    for (const dt of [1 / 60, 1 / 20]) {
+      expect(rate(dt)).toBeGreaterThan(0.03);
+      expect(rate(dt)).toBeLessThan(0.14);
+    }
   });
 });

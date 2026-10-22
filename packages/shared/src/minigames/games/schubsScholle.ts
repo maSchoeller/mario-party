@@ -1,7 +1,8 @@
 import { PLAYER_COLOR_HEX } from '../../config';
 import type { Rng } from '../../rng';
-import type { MgEntity, MgInput, MgPlayer, MinigameDef } from '../types';
-import { ageFx, clamp, emitFx, faceAngle, lerp, moveWithStick, ranksFromScores, ringSpawn, skill, steerTo, viewFx, type FxState } from '../util';
+import { botRef, type MgEntity, type MgInput, type MgPlayer, type MinigameDef } from '../types';
+import { ageFx, chance, clamp, emitFx, faceAngle, lerp, moveWithStick, ranksFromScores, reactTime, ringSpawn, seenAt, seenBuf, seenPush, viewFx, type FxState, type SeenBuf } from '../util';
+import { BOT_LIVE_LAG } from './botLag';
 
 /**
  * #2 Schubs-Scholle (FFA, Joystick + Button): sumo on a round ice floe that melts over
@@ -10,7 +11,7 @@ import { ageFx, clamp, emitFx, faceAngle, lerp, moveWithStick, ranksFromScores, 
  * bounces both, a dash hit throws the other player far.
  */
 const R0 = 8; // floe radius at start
-const R_END = 3.2; // floe radius at the end
+const R_END = 2.4; // floe radius at the end
 const PR = 0.65; // player radius
 const SPEED = 5.5;
 const ACCEL = 4; // low acceleration = slippery ice
@@ -22,6 +23,21 @@ const PRACTICE_RESPAWN = 1.4;
 const WATER_Y = -0.35;
 /** the melting floe cracks audibly every MELT_STEP of radius lost */
 const MELT_STEP = 0.6;
+/** top diameter of the floe relative to its bottom (sloped ice flank, 1.1 deep) */
+const SLOPE = 0.86;
+const FLOE_DEPTH = 1.1;
+/**
+ * Bot style by level: share of plans spent just sliding around, push attempts per second once a push would work, distance from the rim
+ * at which they turn back (planning / when sliding), how far they lead a moving opponent (× their perception delay),
+ * minimum outward angle of a push, hunting radius, penalty for opponents further in than
+ * themselves / with a push ready, and how far inside the opponent they line up.
+ */
+const BOT = {
+  easy: { wander: 0.25, dashRate: 1.2, margin: 0.6, rescue: 0.3, lead: 0, angle: 0.2, hunt: 99, inside: 0, ready: 0, inner: 1.2 },
+  medium: { wander: 0.1, dashRate: 3, margin: 1.2, rescue: 0.6, lead: 0.3, angle: 0.2, hunt: 99, inside: 1.5, ready: 0.5, inner: 1.5 },
+  hard: { wander: 0, dashRate: 6, margin: 1.2, rescue: 0.6, lead: 1, angle: 0.2, hunt: 4, inside: 1.5, ready: 1.5, inner: 1.2 },
+};
+const DASH_RANGE = 2.6;
 
 interface P {
   x: number;
@@ -42,8 +58,10 @@ interface P {
   fallT: number | null;
   /** minigame time of elimination (null = still in) */
   out: number | null;
-  /** bot state */
+  /** bot state: re-plan timer, perception delay (s) and heading error of the current plan */
   think: number;
+  lag: number;
+  hd: number;
   targetX: number;
   targetZ: number;
   aimAt: number;
@@ -63,6 +81,10 @@ export interface ScholleState extends FxState {
   /** throttles for frequent sounds */
   whooshAt: number;
   bumpAt: number;
+  /** bot form per player (v0.5) */
+  form: number[];
+  /** what the bots have seen: per player x, z, on the floe (1/0) */
+  seen: SeenBuf;
 }
 
 function floeRadius(s: ScholleState): number {
@@ -91,6 +113,8 @@ export const schubsScholle: MinigameDef<ScholleState> = {
       cracks: 0,
       whooshAt: 0,
       bumpAt: 0,
+      form: players.map((p) => p.form ?? 1),
+      seen: seenBuf(),
       fx: [],
       fxN: 0,
       ps: players.map((_, i) => {
@@ -112,6 +136,8 @@ export const schubsScholle: MinigameDef<ScholleState> = {
           fallT: null,
           out: null,
           think: 0,
+          lag: 0.4,
+          hd: 0,
           targetX: 0,
           targetZ: 0,
           aimAt: -1,
@@ -150,6 +176,14 @@ export const schubsScholle: MinigameDef<ScholleState> = {
         }
         p.x += p.vx * dt * 0.5;
         p.z += p.vz * dt * 0.5;
+        // slide down outside the sloped ice flank instead of dropping through it
+        const depth = clamp((p.fallT * p.fallT * 5) / FLOE_DEPTH, 0, 1);
+        const need = s.radius + (s.radius / SLOPE - s.radius) * depth + PR * 0.8;
+        const pr = Math.hypot(p.x, p.z);
+        if (pr > 1e-6 && pr < need) {
+          p.x *= need / pr;
+          p.z *= need / pr;
+        }
         if (s.practice && p.fallT >= PRACTICE_RESPAWN) {
           // practice: back onto the floe
           p.x = 0;
@@ -259,78 +293,121 @@ export const schubsScholle: MinigameDef<ScholleState> = {
   bot(s, i, level, rng: Rng, dt) {
     const p = s.ps[i];
     if (!onFloe(p)) return [];
-    const sk = skill(level);
-    const margin = { easy: 0.7, medium: 1.2, hard: 1.6 }[level];
+    const ref = botRef(level, s.form[i]);
+    const cfg = BOT[level];
+    // the TV picture as the bots see it: positions of everybody, read back late
+    if (s.seen.t[s.seen.t.length - 1] !== s.t) seenPush(s.seen, s.t, s.ps.flatMap((o) => [o.x, o.z, onFloe(o) ? 1 : 0, o.cd <= 0 ? 1 : 0]), 1.5);
+    const now = seenAt(s.seen, s.t - p.lag)!;
+    const before = seenAt(s.seen, s.t - p.lag - 0.1)!;
+    const me = seenAt(s.seen, s.t - BOT_LIVE_LAG)!;
+    const me0 = seenAt(s.seen, s.t - BOT_LIVE_LAG - 0.1)!;
+    // own position: seen late too, but you know where you are steering
+    const mx = me[i * 4] + (me[i * 4] - me0[i * 4]) * 10 * BOT_LIVE_LAG * cfg.lead;
+    const mz = me[i * 4 + 1] + (me[i * 4 + 1] - me0[i * 4 + 1]) * 10 * BOT_LIVE_LAG * cfg.lead;
+    // where an opponent will be: seen position, extrapolated along its seen motion
+    const lead = cfg.lead * p.lag;
+    const seenPos = (k: number) => ({
+      x: now[k * 4] + (now[k * 4] - before[k * 4]) * 10 * lead,
+      z: now[k * 4 + 1] + (now[k * 4 + 1] - before[k * 4 + 1]) * 10 * lead,
+      on: now[k * 4 + 2] > 0,
+      // the glowing ring under a player shows a push is ready
+      ready: now[k * 4 + 3] > 0,
+    });
     const out: MgInput[] = [];
+    const r = Math.hypot(mx, mz);
     p.think -= dt;
-    const r = Math.hypot(p.x, p.z);
     if (p.think <= 0) {
-      p.think = sk.reaction * (0.6 + rng.next() * 0.6);
+      // re-plan on what was seen one reaction time ago
+      p.think = 0.25 + rng.next() * 0.2;
+      p.lag = reactTime(ref, rng, BOT_LIVE_LAG);
+      p.hd = rng.noise() * ref.headingNoise;
       p.aimAt = -1;
-      if (r > s.radius - margin) {
-        p.targetX = 0;
-        p.targetZ = 0;
-      } else {
-        // hunt the opponent: prefer the nearest (hard bots: the one closest to the edge)
+      p.targetX = 0;
+      p.targetZ = 0;
+      if (rng.next() < cfg.wander) {
+        // distracted: just slide somewhere on the floe
+        const a = rng.next() * Math.PI * 2;
+        const d = Math.sqrt(rng.next()) * Math.max(0, s.radius - 1);
+        p.targetX = Math.cos(a) * d;
+        p.targetZ = Math.sin(a) * d;
+      } else if (r <= s.radius - cfg.margin) {
+        // hunt an opponent: the nearest one – better players skip those further in than themselves
         let best = -1;
         let bestScore = Infinity;
-        s.ps.forEach((o, k) => {
-          if (k === i || !onFloe(o)) return;
-          const d = Math.hypot(o.x - p.x, o.z - p.z);
-          const edge = s.radius - Math.hypot(o.x, o.z);
-          const score = d + (level === 'hard' ? edge * 1.5 : 0) + rng.next() * (1 - sk.accuracy) * 4;
+        s.ps.forEach((_, k) => {
+          const o = seenPos(k);
+          if (k === i || !o.on) return;
+          const d = Math.hypot(o.x - mx, o.z - mz);
+          const inside = Math.hypot(o.x, o.z) < r ? cfg.inside : 0;
+          // practised players hold the middle and only go for opponents close by
+          if (d > cfg.hunt) return;
+          const score = d + inside + (o.ready ? cfg.ready : 0) + rng.next() * ref.headingNoise * 12;
           if (score < bestScore) {
             bestScore = score;
             best = k;
           }
         });
         if (best >= 0) {
-          const o = s.ps[best];
+          const o = seenPos(best);
           const or = Math.hypot(o.x, o.z) || 1;
-          // get between the centre and the opponent, then push outwards
-          p.targetX = o.x - (o.x / or) * 1.5;
-          p.targetZ = o.z - (o.z / or) * 1.5;
+          // get between the centre and the opponent (never out on the rim), then push outwards
+          let tx = o.x - (o.x / or) * cfg.inner;
+          let tz = o.z - (o.z / or) * cfg.inner;
+          const tr = Math.hypot(tx, tz);
+          const lim = Math.max(0, s.radius - 2);
+          if (tr > lim) {
+            tx *= lim / tr;
+            tz *= lim / tr;
+          }
+          p.targetX = tx;
+          p.targetZ = tz;
           p.aimAt = best;
-        } else {
-          p.targetX = 0;
-          p.targetZ = 0;
         }
       }
     }
-    let stick = steerTo(p.x, p.z, p.targetX, p.targetZ, rng, sk.accuracy);
-    if (p.aimAt >= 0 && p.cd <= 0) {
-      const o = s.ps[p.aimAt];
-      if (onFloe(o)) {
-        const dx = o.x - p.x;
-        const dz = o.z - p.z;
-        const d = Math.hypot(dx, dz);
-        const or = Math.hypot(o.x, o.z) || 1;
-        const outward = (dx / (d || 1)) * (o.x / or) + (dz / (d || 1)) * (o.z / or);
-        // don't dash yourself off the floe
-        const after = Math.hypot(p.x + (dx / (d || 1)) * 3, p.z + (dz / (d || 1)) * 3);
-        if (d < 2.6 && outward > 0.2 && (after < s.radius || level === 'easy') && rng.chance(sk.accuracy * 0.25)) {
-          const noise = (1 - sk.accuracy) * 0.6 * rng.noise();
-          const a = Math.atan2(dz, dx) + noise;
-          stick = { x: Math.cos(a), y: Math.sin(a) };
-          out.push({ type: 'stick', ...stick });
-          out.push({ type: 'button', id: 'push', down: true });
-          return out;
-        }
+    // sliding towards the rim (e.g. after a hit): steer back to the middle, one reaction late
+    const sx = now[i * 4] + (now[i * 4] - before[i * 4]) * 3;
+    const sz = now[i * 4 + 1] + (now[i * 4 + 1] - before[i * 4 + 1]) * 3;
+    if (Math.hypot(sx, sz) > s.radius - cfg.rescue) {
+      const a = Math.atan2(-sz, -sx) + p.hd;
+      out.push({ type: 'stick', x: Math.cos(a) * ref.stickMag, y: Math.sin(a) * ref.stickMag });
+      return out;
+    }
+    const o = p.aimAt >= 0 ? seenPos(p.aimAt) : null;
+    if (o && o.on && p.cd <= 0) {
+      const dx = o.x - mx;
+      const dz = o.z - mz;
+      const d = Math.hypot(dx, dz) || 1;
+      const or = Math.hypot(o.x, o.z) || 1;
+      const outward = (dx / d) * (o.x / or) + (dz / d) * (o.z / or);
+      // don't dash yourself off the floe: the dash ends where it hits the opponent
+      const travel = Math.max(0, d - 2 * PR + 0.3);
+      const after = Math.hypot(mx + (dx / d) * travel, mz + (dz / d) * travel);
+      if (d < DASH_RANGE && outward > cfg.angle && (after < s.radius - 0.4 || level === 'easy') && rng.next() < chance(cfg.dashRate, dt)) {
+        const a = Math.atan2(dz, dx) + rng.noise() * ref.headingNoise;
+        out.push({ type: 'stick', x: Math.cos(a), y: Math.sin(a) });
+        out.push({ type: 'button', id: 'push', down: true });
+        return out;
       }
     }
-    stick.x *= sk.speed;
-    stick.y *= sk.speed;
-    out.push({ type: 'stick', ...stick });
+    const tx = p.targetX - mx;
+    const tz = p.targetZ - mz;
+    const len = Math.hypot(tx, tz);
+    if (len < 0.15) {
+      out.push({ type: 'stick', x: 0, y: 0 });
+      return out;
+    }
+    const a = Math.atan2(tz, tx) + p.hd;
+    const mag = ref.stickMag * clamp(len / 1.2, 0.3, 1);
+    out.push({ type: 'stick', x: Math.cos(a) * mag, y: Math.sin(a) * mag });
     return out;
   },
   view(s) {
     const r = s.radius;
-    const SLOPE = 0.86;
+    const buoyY = (k: number) => WATER_Y - 0.05 + Math.sin(s.t * 1.6 + k * 2) * 0.04;
     const entities: MgEntity[] = [
-      // slush showing the original size of the floe
-      { id: 'melt', kind: 'cylinder', x: 0, y: WATER_Y + 0.02, z: 0, sx: R0 * 2, sy: 0.06, sz: R0 * 2, color: '#d6f1fb', alpha: 0.3 },
       // the floe: clear ice with sloped flanks into the sea, a snow layer on top (rim = danger)
-      { id: 'floe', kind: 'cylinder', x: 0, y: -0.55, z: 0, sx: (r * 2) / SLOPE, sy: 1.1, sz: (r * 2) / SLOPE, color: '#cfeaf6', mat: 'ice', taper: SLOPE },
+      { id: 'floe', kind: 'cylinder', x: 0, y: -FLOE_DEPTH / 2, z: 0, sx: (r * 2) / SLOPE, sy: FLOE_DEPTH, sz: (r * 2) / SLOPE, color: '#cfeaf6', mat: 'ice', taper: SLOPE },
       { id: 'snowcap', kind: 'cylinder', x: 0, y: 0, z: 0, sx: Math.max(0.5, r * 2 - 0.7), sy: 0.08, sz: Math.max(0.5, r * 2 - 0.7), color: '#f8fbfd', mat: 'snow', taper: 0.98 },
       // icebergs, a small floe with a pine and a few buoys around the arena
       { id: 'berg1', kind: 'cone', x: -13.5, y: -1.4, z: 8, sx: 4.4, sy: 5.2, sz: 4, color: '#f4f9fc', mat: 'snow' },
@@ -339,9 +416,10 @@ export const schubsScholle: MinigameDef<ScholleState> = {
       { id: 'isle', kind: 'cylinder', x: -11, y: -0.45, z: 12, sx: 4.6, sy: 0.7, sz: 3.8, color: '#f2f8fc', mat: 'snow', taper: 0.85 },
       { id: 'islePine', kind: 'prop', prop: 'snowpine', x: -11.4, y: -0.1, z: 12.4, sx: 0.9 },
       { id: 'isleFlag', kind: 'prop', prop: 'flag', x: -9.8, y: -0.1, z: 11.6, color: '#5f8fe0', sx: 0.6 },
-      { id: 'buoy1', kind: 'prop', prop: 'buoy', x: -11, y: WATER_Y - 0.45, z: 2.5 },
-      { id: 'buoy2', kind: 'prop', prop: 'buoy', x: 11.2, y: WATER_Y - 0.45, z: -1.5, ry: 1 },
-      { id: 'buoy3', kind: 'prop', prop: 'buoy', x: 4, y: WATER_Y - 0.45, z: 12.4, ry: 2 },
+      // buoys float with their waterline (model y = 0) on the bobbing sea
+      { id: 'buoy1', kind: 'prop', prop: 'buoy', x: -11, y: buoyY(0), z: 2.5, rz: Math.sin(s.t * 1.2) * 0.07 },
+      { id: 'buoy2', kind: 'prop', prop: 'buoy', x: 11.2, y: buoyY(1), z: -1.5, ry: 1, rz: Math.sin(s.t * 1.1 + 2) * 0.07 },
+      { id: 'buoy3', kind: 'prop', prop: 'buoy', x: 4, y: buoyY(2), z: 12.4, ry: 2, rz: Math.sin(s.t * 1.3 + 1) * 0.07 },
     ];
     const over = s.endAt !== null && s.t >= s.endAt - 1.2;
     s.ps.forEach((p, i) => {

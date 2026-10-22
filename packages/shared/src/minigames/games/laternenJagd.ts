@@ -1,6 +1,7 @@
 import type { Rng } from '../../rng';
-import type { MgEntity, MgInput, MgPlayer, MinigameDef } from '../types';
-import { ageFx, clamp, dist, dist2, emitFx, faceAngle, moveWithStick, skill, steerTo, teamRanks, viewFx, type FxState } from '../util';
+import type { ControllerLayout, MgEntity, MgInput, MgPlayer, MinigameDef } from '../types';
+import { ageFx, clamp, dist, dist2, emitFx, faceAngle, moveWithStick, refOf, seenAt, seenBuf, seenPush, teamRanks, viewFx, type FxState, type SeenBuf } from '../util';
+import { BOT_LIVE_LAG } from './botLag';
 
 /**
  * #16 Laternen-Jagd (1 vs 3, Joystick, Nacht): the solo player hides in a dark garden,
@@ -31,8 +32,8 @@ const BUSH_GAP = 3.6;
 /** inside a bush the solo is only seen by a lantern closer than this */
 const BUSH_SEE = 2.4;
 /** seconds of light (one lantern) until caught: CATCH_TIME at the start, CATCH_LATE at the end */
-const CATCH_TIME = 2.0;
-const CATCH_LATE = 1.2;
+const CATCH_TIME = 1.25;
+const CATCH_LATE = 0.85;
 const CATCH_DECAY = 2.5;
 /** sparkle interval: from SPARK_EVERY at the start down to SPARK_LATE at the end (the hunt gets hotter) */
 const SPARK_EVERY = 4.5;
@@ -46,9 +47,26 @@ const STEP_LIFE = 1.8;
 const STEP_DELAY = 0.8;
 /** moving slower than this (half stick) leaves no footprints */
 const SNEAK_SPEED = 3.4;
-/** bot stick strength per level */
-const RUN = { easy: 0.85, medium: 0.92, hard: 1 };
+/** bots look at the TV picture on a steady rhythm (s), faster while in danger */
+const THINK = 0.3;
+const THINK_DANGER = 0.2;
+/** solo bot: how late it judges the seekers and their beams on the TV (s, perception + reaction) */
+const SOLO_SEE ={ easy: 0.27, medium: 0.25, hard: 0.23 };
+/** solo bot: chance to sneak (half stick) when calm – children forget it now and then */
+const SNEAK = { easy: 0.7, medium: 0.8, hard: 0.85 };
+/** solo bot: noise when judging hiding places */
+const HIDE_JUDGE = { easy: 0.85, medium: 0.75, hard: 0.65 };
+/** seekers: chance to notice a hint (lit solo, sparkle, fresh footprints) */
+const NOTICE = { easy: 0.65, medium: 0.65, hard: 0.65 };
+/** seekers: share of the reaction time until a new hint is taken in (the eyes are on the TV anyway) */
+const NEW_HINT = 0.3;
+/** seekers: how long a hint is followed (s) */
+const CLUE_MEMORY = 4.5;
+/** phone radar of the solo: position steps (fraction of the radius, fewer phone updates) */
+const RADAR_STEP = 0.08;
 const SIDE_W = 1.5;
+/** the outer ring of the stick is full speed (nobody pushes a phone stick to the very edge) */
+const FULL_STICK = 0.85;
 const FLEE_KEEP = 1.5;
 /** head start for the solo: the trio waits at the gate (not in practice) */
 const HIDE_TIME = 5;
@@ -69,6 +87,10 @@ interface P {
   target: { x: number; z: number } | null;
   clue: { x: number; z: number; t: number } | null;
   sneak: boolean;
+  /** heading error of the current decision (rad) */
+  err: number;
+  /** last sparkle this seeker looked at */
+  sparkSeen: number;
 }
 
 interface Step {
@@ -96,6 +118,10 @@ export interface LaternenJagdState extends FxState {
   litBy: number;
   sparkIn: number;
   spark: number;
+  /** number of sparkles so far */
+  sparkN: number;
+  /** what the TV showed recently, for the bots: [lit, solo x, z, then x, z, ry per seeker] */
+  seen: SeenBuf;
   steps: Step[];
   stepAcc: number;
   nextId: number;
@@ -112,8 +138,28 @@ function inBush(s: LaternenJagdState, x: number, z: number): boolean {
   return s.bushes.some((b) => dist2(b.x, b.z, x, z) < BUSH_R * BUSH_R);
 }
 
+/** Stick deflection → movement: linear up to FULL_STICK, full speed beyond. */
+function fullStick(st: { x: number; y: number }): { x: number; y: number } {
+  const m = Math.hypot(st.x, st.y);
+  if (m < 1e-6) return { x: 0, y: 0 };
+  const k = Math.min(1, m / FULL_STICK) / m;
+  return { x: st.x * k, y: st.y * k };
+}
+
+/** Stick towards a target with the heading error of the current decision. */
+function steer(p: P, tx: number, tz: number): { x: number; y: number } {
+  const dx = tx - p.x;
+  const dz = tz - p.z;
+  const len = Math.hypot(dx, dz);
+  if (len < 0.15) return { x: 0, y: 0 };
+  // the error shrinks on the last metres: you see your figure and correct
+  const ang = Math.atan2(dz, dx) + p.err * clamp(len / 4, 0, 1);
+  const mag = clamp(len / 1.2, 0.3, 1);
+  return { x: Math.cos(ang) * mag, y: Math.sin(ang) * mag };
+}
+
 /** Is point (x,z) lit by the lantern of seeker p? */
-function lights(p: P, x: number, z: number): boolean {
+function lights(p: { x: number; z: number; ry: number }, x: number, z: number): boolean {
   const dx = x - p.x;
   const dz = z - p.z;
   if (dx * dx + dz * dz < NEAR_R * NEAR_R) return true;
@@ -193,7 +239,7 @@ export const laternenJagd: MinigameDef<LaternenJagdState> = {
       const b = { x: Math.cos(a) * r, z: Math.sin(a) * r };
       if (bushes.every((o) => dist(o.x, o.z, b.x, b.z) > BUSH_GAP)) bushes.push(b);
     }
-    const ps: P[] = players.map(() => ({ x: 0, z: 0, vx: 0, vz: 0, ry: 0, stick: { x: 0, y: 0 }, think: 0, target: null, clue: null, sneak: false }));
+    const ps: P[] = players.map(() => ({ x: 0, z: 0, vx: 0, vz: 0, ry: 0, stick: { x: 0, y: 0 }, think: 0, target: null, clue: null, sneak: false, err: 0, sparkSeen: 0 }));
     // the trio starts together at the front gate (near the camera), the solo hides somewhere
     // far away – a real head start, nobody is caught within the first seconds (MINI-03)
     trio.forEach((i, k) => {
@@ -217,6 +263,8 @@ export const laternenJagd: MinigameDef<LaternenJagdState> = {
       litBy: 0,
       sparkIn: FIRST_SPARK,
       spark: 0,
+      sparkN: 0,
+      seen: seenBuf(),
       steps: [],
       stepAcc: 0,
       nextId: 1,
@@ -226,7 +274,25 @@ export const laternenJagd: MinigameDef<LaternenJagdState> = {
     placeSolo(s, rng);
     return s;
   },
-  layout: () => ({ kind: 'joystick' }),
+  layout(s, i): ControllerLayout {
+    if (i !== s.solo) return { kind: 'joystick' };
+    // the solo is invisible on the TV most of the time: a garden radar on the phone shows
+    // the own position, the bushes and the gate – never the seekers (v0.5)
+    const sp = s.ps[s.solo];
+    const q = (v: number) => Math.round(v / R / RADAR_STEP) * RADAR_STEP;
+    const r3 = (v: number) => Math.round(v * 1000) / 1000;
+    return {
+      kind: 'joystick',
+      radar: {
+        shape: 'round',
+        x: r3(q(sp.x)),
+        y: r3(q(sp.z)),
+        marks: s.bushes.map((b): [number, number, number] => [r3(b.x / R), r3(b.z / R), r3(BUSH_R / R)]),
+        gate: [0, -0.92],
+        seen: s.litBy > 0,
+      },
+    };
+  },
   input(s, i, input: MgInput) {
     if (input.type === 'stick') s.ps[i].stick = { x: clamp(input.x, -1, 1), y: clamp(input.y, -1, 1) };
   },
@@ -239,7 +305,7 @@ export const laternenJagd: MinigameDef<LaternenJagdState> = {
       const before = { x: p.x, z: p.z };
       // head start: the trio waits at the gate while the solo hides
       const frozen = i !== s.solo && !s.practice && s.t < HIDE_TIME;
-      moveWithStick(p, frozen ? { x: 0, y: 0 } : p.stick, i === s.solo ? SOLO_SPEED : seekSpeed(s), dt);
+      moveWithStick(p, frozen ? { x: 0, y: 0 } : fullStick(p.stick), i === s.solo ? SOLO_SPEED : seekSpeed(s), dt);
       keepInside(p);
       // the lantern keeps pointing where you last walked and turns with limited speed
       if (Math.hypot(p.vx, p.vz) > 0.6) {
@@ -268,6 +334,7 @@ export const laternenJagd: MinigameDef<LaternenJagdState> = {
     if (s.sparkIn <= 0) {
       s.sparkIn = s.practice ? SPARK_EVERY : SPARK_EVERY + (SPARK_LATE - SPARK_EVERY) * clamp(s.t / s.duration, 0, 1);
       s.spark = SPARK_TIME;
+      s.sparkN++;
       // the hint everybody sees anyway – now with a chime
       const sp = s.ps[s.solo];
       emitFx(s, { kind: 'sparkle', sfx: 'magic', x: sp.x, y: 2.2, z: sp.z, color: '#b8f0ff' }, 0.4);
@@ -279,6 +346,10 @@ export const laternenJagd: MinigameDef<LaternenJagdState> = {
       s.spotT = s.t;
       const sp = s.ps[s.solo];
       emitFx(s, { kind: 'hit', sfx: 'ding', x: sp.x, y: 2, z: sp.z, color: '#ffe9a0' });
+    }
+    {
+      const sp = s.ps[s.solo];
+      seenPush(s.seen, s.t, [s.litBy, sp.x, sp.z, ...s.trio.flatMap((k) => [s.ps[k].x, s.ps[k].z, s.ps[k].ry])]);
     }
     const catchTime = s.practice ? CATCH_TIME : CATCH_TIME + (CATCH_LATE - CATCH_TIME) * clamp(s.t / s.duration, 0, 1);
     if (s.litBy > 0) s.caught += (dt / catchTime) * Math.min(1.5, s.litBy);
@@ -301,15 +372,21 @@ export const laternenJagd: MinigameDef<LaternenJagdState> = {
   isOver: (s) => !s.practice && (s.won || s.t >= s.duration),
   result: (s) => teamRanks(s.players, [s.won ? 1 : 0]),
   bot(s, i, level, rng, dt) {
-    const sk = skill(level);
+    const ref = refOf(s.players, i, level);
+    const form = s.players[i].form ?? 1;
     const p = s.ps[i];
     p.think -= dt;
     if (i === s.solo) {
+      // the solo judges the lanterns on the TV: positions and beams a moment late
+      const v = seenAt(s.seen, s.t - SOLO_SEE[level] * (2 - form));
+      const seekers = s.trio.map((k, n) => (v ? { x: v[3 + n * 3], z: v[4 + n * 3], ry: v[5 + n * 3] } : s.ps[k]));
+      const lit = v ? v[0] > 0 : s.litBy > 0;
       if (p.think <= 0) {
-        p.think = sk.reaction * (0.7 + rng.next() * 0.6);
-        const seekers = s.trio.map((k) => s.ps[k]);
+        // looking at the TV on a steady rhythm – how late the picture is taken in is the skill
+        p.think = THINK * (0.8 + rng.next() * 0.4);
+        p.err = rng.noise() * ref.headingNoise;
         const threat = Math.min(...seekers.map((q) => dist(q.x, q.z, p.x, p.z)));
-        const danger = s.litBy > 0 || threat < BEAM_LEN + { easy: 1.1, medium: 1.3, hard: 1.6 }[level] || seekers.some((q) => lights(q, p.x, p.z));
+        const danger = lit || threat < BEAM_LEN + { easy: 1.3, medium: 1.3, hard: 1.4 }[level] || seekers.some((q) => lights(q, p.x, p.z));
         const score = (x: number, z: number) => {
           let v = Math.min(...seekers.map((q) => dist(q.x, q.z, x, z)));
           if (inBush(s, x, z)) v += 2.5;
@@ -323,11 +400,12 @@ export const laternenJagd: MinigameDef<LaternenJagdState> = {
         const here = score(p.x, p.z);
         // the sparkle just gave the hiding place away: sneak somewhere else
         const revealed = s.spark > 0 && !danger && (!p.target || dist2(p.x, p.z, p.target.x, p.target.z) < 1);
-        p.sneak = !danger;
+        // sneaking (half stick, no footprints) – children forget it now and then
+        p.sneak = !danger && rng.chance(SNEAK[level]);
         // once spooked, keep re-checking quickly
-        if (danger) p.think = 0.12 + sk.reaction * 0.5 * (0.7 + rng.next() * 0.6);
+        if (danger) p.think = THINK_DANGER * (0.8 + rng.next() * 0.4);
         if (danger) {
-          if (rng.chance(sk.accuracy + 0.3)) {
+          if (!rng.chance(ref.choiceError)) {
             // flee: pushed away from every seeker (closer = stronger), sideways out of beams,
             // and away from the fence
             let fx = 0;
@@ -352,7 +430,7 @@ export const laternenJagd: MinigameDef<LaternenJagdState> = {
               fx -= (p.x / r) * (r - (R - 3.5)) * 0.6;
               fz -= (p.z / r) * (r - (R - 3.5)) * 0.6;
             }
-            const ang = Math.atan2(fz, fx) + rng.noise() * (1 - sk.accuracy) * 0.8;
+            const ang = Math.atan2(fz, fx);
             // don't flee into the fence: turn along it (towards the side with more room);
             // keep running the way you already run (no dithering inside the beam)
             const prev = p.target ? Math.atan2(p.target.z - p.z, p.target.x - p.x) : null;
@@ -373,67 +451,76 @@ export const laternenJagd: MinigameDef<LaternenJagdState> = {
             p.target = { x: p.x + Math.cos(best) * 4, z: p.z + Math.sin(best) * 4 };
           }
         } else if (revealed || !p.target || dist2(p.x, p.z, p.target.x, p.target.z) < 0.3 || here < 5) {
-          if (rng.chance(sk.accuracy + 0.1)) {
-            // calm: sneak to a good hiding place (bushes preferred) or stay put
-            const cands = s.bushes.map((bb) => ({ x: bb.x, z: bb.z }));
-            for (let k = 0; k < 6; k++) {
-              const a = rng.next() * Math.PI * 2;
-              const r = rng.next() * 5;
-              cands.push({ x: p.x + Math.cos(a) * r, z: p.z + Math.sin(a) * r });
-            }
-            let best = { x: p.x, z: p.z };
-            let bestV = revealed ? -Infinity : here + 1.5;
-            for (const c of cands) {
-              if (Math.hypot(c.x, c.z) > R - 0.8) continue;
-              if (revealed && dist2(p.x, p.z, c.x, c.z) < 2.5 * 2.5) continue;
-              const v = score(c.x, c.z) - dist(p.x, p.z, c.x, c.z) * 0.15 + rng.noise() * (1 - sk.accuracy) * 3;
-              if (v > bestV) {
-                bestV = v;
-                best = c;
-              }
-            }
-            p.target = best;
+          // calm: sneak to a good hiding place (bushes preferred) or stay put
+          const cands = s.bushes.map((bb) => ({ x: bb.x, z: bb.z }));
+          for (let k = 0; k < 6; k++) {
+            const a = rng.next() * Math.PI * 2;
+            const r = rng.next() * 5;
+            cands.push({ x: p.x + Math.cos(a) * r, z: p.z + Math.sin(a) * r });
           }
+          let best = { x: p.x, z: p.z };
+          let bestV = revealed ? -Infinity : here + 1.5;
+          const judge = HIDE_JUDGE[level] * (2 - form);
+          for (const c of cands) {
+            if (Math.hypot(c.x, c.z) > R - 0.8) continue;
+            if (revealed && dist2(p.x, p.z, c.x, c.z) < 2.5 * 2.5) continue;
+            const val = score(c.x, c.z) - dist(p.x, p.z, c.x, c.z) * 0.15 + rng.noise() * judge;
+            if (val > bestV) {
+              bestV = val;
+              best = c;
+            }
+          }
+          p.target = best;
         }
       }
       if (!p.target) return [{ type: 'stick', x: 0, y: 0 }];
-      const st = steerTo(p.x, p.z, p.target.x, p.target.z, rng, sk.accuracy);
+      const st = steer(p, p.target.x, p.target.z);
       // sneaking (half stick) leaves no footprints
-      const f = p.sneak ? 0.5 : RUN[level];
+      const f = p.sneak ? 0.45 : ref.stickMag;
       return [{ type: 'stick', x: st.x * f, y: st.y * f }];
     }
-    // seekers: only use what everybody sees on the TV (light, footprints, sparkle)
+    // seekers: only what everybody sees on the TV (light, sparkle, footprints), a moment late
     if (p.think <= 0) {
-      p.think = sk.reaction * (0.7 + rng.next() * 0.6);
-      const sp = s.ps[s.solo];
-      const visible = s.litBy > 0 || s.spark > 0;
-      if (visible && rng.chance(sk.accuracy + 0.15)) p.clue = { x: sp.x, z: sp.z, t: s.t };
+      p.think = THINK * (0.8 + rng.next() * 0.4);
+      p.err = rng.noise() * ref.headingNoise;
+      // a new hint is taken in after perception lag and reaction time; a solo the seeker is
+      // already following is tracked with the perception lag only
+      const tracking = !!p.clue && s.t - p.clue.t < 0.6;
+      const v = seenAt(s.seen, s.t - BOT_LIVE_LAG - (tracking ? 0 : ref.reaction * NEW_HINT));
+      const sp = v ? { x: v[1], z: v[2] } : s.ps[s.solo];
+      const lit = v ? v[0] > 0 : s.litBy > 0;
+      const notice = NOTICE[level];
+      // a sparkle is noticed once (or not at all)
+      const sparkle = s.spark > 0 && SPARK_TIME - s.spark >= BOT_LIVE_LAG && p.sparkSeen !== s.sparkN;
+      if (sparkle) p.sparkSeen = s.sparkN;
+      if ((lit || sparkle) && rng.chance(notice)) p.clue = { x: sp.x, z: sp.z, t: s.t };
       else {
-        const fresh = s.steps.filter((st) => st.t <= STEP_LIFE).pop();
-        if (fresh && rng.chance(sk.accuracy) && (!p.clue || p.clue.t < s.t - (STEP_LIFE + STEP_DELAY - fresh.t))) {
+        const fresh = s.steps.filter((st) => st.t <= STEP_LIFE - BOT_LIVE_LAG).pop();
+        if (fresh && rng.chance(notice) && (!p.clue || p.clue.t < s.t - (STEP_LIFE + STEP_DELAY - fresh.t))) {
           // follow the trail a bit ahead in walking direction
           p.clue = { x: fresh.x - Math.sin(fresh.ry) * 1.5, z: fresh.z - Math.cos(fresh.ry) * 1.5, t: s.t - (STEP_LIFE + STEP_DELAY - fresh.t) };
         }
       }
       const clueAge = p.clue ? s.t - p.clue.t : 99;
-      if (p.clue && clueAge < { easy: 3, medium: 4.5, hard: 6 }[level] && dist2(p.x, p.z, p.clue.x, p.clue.z) > 1) {
+      if (p.clue && clueAge < CLUE_MEMORY && dist2(p.x, p.z, p.clue.x, p.clue.z) > 1) {
         // spread out a little around the clue so the trio doesn't walk in a line
         const k = s.trio.indexOf(i);
         const off = clueAge > 1 ? 1.6 : 0.3;
         const a = (k / 3) * Math.PI * 2;
         p.target = { x: p.clue.x + Math.cos(a) * off, z: p.clue.z + Math.sin(a) * off };
       } else if (!p.target || dist2(p.x, p.z, p.target.x, p.target.z) < 1.5 || rng.chance(0.04)) {
-        // patrol: check a bush that no teammate is heading for
+        // patrol: check a bush away from the teammates (where they walk is on the TV – what
+        // they have in mind is not)
         p.clue = clueAge < 1 ? p.clue : null;
-        const taken = s.trio.filter((k) => k !== i).map((k) => s.ps[k].target);
-        const free = s.bushes.filter((b) => dist2(b.x, b.z, p.x, p.z) > 4 && taken.every((t) => !t || dist2(t.x, t.z, b.x, b.z) > 4));
+        const mates = s.trio.filter((k) => k !== i).map((k) => s.ps[k]);
+        const free = s.bushes.filter((b) => dist2(b.x, b.z, p.x, p.z) > 4 && mates.every((m) => dist2(m.x, m.z, b.x, b.z) > 3.5 * 3.5));
         const b = free.length ? rng.pick(free) : rng.pick(s.bushes.length ? s.bushes : [{ x: 0, z: 0 }]);
         p.target = { x: b.x + rng.noise() * 0.8, z: b.z + rng.noise() * 0.8 };
       }
     }
     if (!p.target) return [{ type: 'stick', x: 0, y: 0 }];
-    const st = steerTo(p.x, p.z, p.target.x, p.target.z, rng, sk.accuracy);
-    return [{ type: 'stick', x: st.x * RUN[level], y: st.y * RUN[level] }];
+    const st = steer(p, p.target.x, p.target.z);
+    return [{ type: 'stick', x: st.x * ref.stickMag, y: st.y * ref.stickMag }];
   },
   view(s) {
     const entities: MgEntity[] = [
@@ -458,7 +545,9 @@ export const laternenJagd: MinigameDef<LaternenJagdState> = {
     s.bushes.forEach((b, k) =>
       entities.push({ id: `bush${k}`, kind: 'prop', prop: 'bushround', x: b.x, y: 0, z: b.z, ry: k * 2.3, sx: 2.3 }),
     );
-    for (const i of s.trio) {
+    // ground light layers, each at its own height (no z-fighting): lantern glows 0.035 / 0.04 /
+    // 0.045, stepping stones 0.05, the three beams 0.058 / 0.064 / 0.07, footprints 0.078
+    s.trio.forEach((i, k) => {
       const p = s.ps[i];
       const fx = -Math.sin(p.ry);
       const fz = -Math.cos(p.ry);
@@ -469,7 +558,7 @@ export const laternenJagd: MinigameDef<LaternenJagdState> = {
         id: `beam${i}`,
         kind: 'plane',
         x: p.x + fx * (BEAM_LEN / 2),
-        y: 0.04,
+        y: 0.058 + k * 0.006,
         z: p.z + fz * (BEAM_LEN / 2),
         sx: BEAM_W,
         sz: BEAM_LEN,
@@ -478,8 +567,8 @@ export const laternenJagd: MinigameDef<LaternenJagdState> = {
         alpha: 0.35,
         glow: true,
       });
-      entities.push({ id: `glow${i}`, kind: 'cylinder', x: p.x, y: 0.03, z: p.z, sx: NEAR_R * 2, sy: 0.02, sz: NEAR_R * 2, color: '#ffe9a0', alpha: 0.25, glow: true });
-    }
+      entities.push({ id: `glow${i}`, kind: 'cylinder', x: p.x, y: 0.025 + k * 0.005, z: p.z, sx: NEAR_R * 2, sy: 0.02, sz: NEAR_R * 2, color: '#ffe9a0', alpha: 0.25, glow: true });
+    });
     // solo: only shown while lit, while sparkling or after the game
     const sp = s.ps[s.solo];
     const shown = s.litBy > 0 || s.spark > 0 || s.won || (!s.practice && s.t >= s.duration);
@@ -498,7 +587,7 @@ export const laternenJagd: MinigameDef<LaternenJagdState> = {
     if (s.spark > 0) entities.push({ id: 'spark', kind: 'star', x: sp.x, y: 2.3, z: sp.z, sx: 0.9, sy: 0.9, sz: 0.9, color: '#b8f0ff', glow: true });
     for (const st of s.steps) {
       if (st.t > STEP_LIFE) continue;
-      entities.push({ id: `st${st.id}`, kind: 'cylinder', x: st.x, y: 0.03, z: st.z, sx: 0.45, sy: 0.02, sz: 0.6, ry: st.ry, color: '#9fe3ff', glow: true, alpha: (st.t / STEP_LIFE) * 0.8 });
+      entities.push({ id: `st${st.id}`, kind: 'cylinder', x: st.x, y: 0.068, z: st.z, sx: 0.45, sy: 0.02, sz: 0.6, ry: st.ry, color: '#9fe3ff', glow: true, alpha: (st.t / STEP_LIFE) * 0.8 });
     }
     // catch meter as a ring that fills over the solo when lit (visible to everybody)
     if (s.caught > 0.02 && shown) entities.push({ id: 'meter', kind: 'torus', x: sp.x, y: 2.6, z: sp.z, sx: 0.6 + s.caught * 1.2, sy: 1, sz: 0.6 + s.caught * 1.2, color: '#ffd23f', glow: true });
