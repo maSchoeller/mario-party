@@ -1,7 +1,8 @@
 import type { BotLevel } from '../../config';
 import type { Rng } from '../../rng';
-import type { ControllerLayout, MgEntity, MgInput, MgPlayer, MinigameDef } from '../types';
-import { TEAM_COLORS, ageFx, clamp, emitFx, skill, teamRanksFromScores, viewFx, type FxState } from '../util';
+import { botRef, type ControllerLayout, type MgEntity, type MgInput, type MgPlayer, type MinigameDef } from '../types';
+import { TEAM_COLORS, ageFx, clamp, emitFx, teamRanksFromScores, viewFx, type FxState } from '../util';
+import { BOT_DISPLAY_LAG } from './botLag';
 
 /**
  * #12 Weichen-Chaos (2v2, Timing): trains in both team colors roll down four tracks. Every
@@ -24,10 +25,18 @@ const SID_DZ = 3.5;
 const LEN_DIAG = Math.hypot(SID_DX, SID_DZ);
 const LEN_SIDING = LEN_DIAG + 2;
 const GRACE = 0.2;
+/** trains start inside the tunnel portal (whole loco hidden in it) */
+const S_SPAWN = -2.4;
+const PORTAL_DEPTH = 4;
 const TRAIN_SCALE = 0.75;
 const LEAD_CAP = 2;
-/** grassy hill (ellipsoid) the tunnels lead into */
-const HILL = { y: -0.6, z: 17.4, rx: 18, ry: 3.6, rz: 4.75 };
+/** spread of the bots' choice reaction (s) */
+const BOT_CHOICE_SD = 0.18;
+/** grassy hill (ellipsoid) the tunnels lead into: covers the back of the portals */
+const HILL = { y: -0.8, z: 19, rx: 22, ry: 5, rz: 6.5 };
+/** track pieces (entry, station, siding diagonal, siding end) sit a few mm apart in height, so
+ * gravel, sleepers and rails don't z-fight where two pieces meet */
+const PIECE_DY: Record<string, number> = { a: 0, st: 0.008, sd: 0.016, se: 0.024 };
 const hillY = (x: number, z: number) => HILL.y + HILL.ry * Math.sqrt(Math.max(0, 1 - (x / HILL.rx) ** 2 - ((z - HILL.z) / HILL.rz) ** 2)) - 0.08;
 
 type Way = 'station' | 'siding';
@@ -60,6 +69,7 @@ interface Train {
 
 interface BotMem {
   train: number;
+  /** when the bot has made up its mind about this train (null = not looked at yet) */
   seeAt: number | null;
   decision: Way;
 }
@@ -82,6 +92,8 @@ export interface WeichenChaosState extends FxState {
   /** next time the train horn may sound (throttle) */
   hornAt: number;
   botMem: (BotMem | null)[];
+  /** bot form per player (v0.5) */
+  form: number[];
 }
 
 const other = (w: Way): Way => (w === 'station' ? 'siding' : 'station');
@@ -109,7 +121,7 @@ function flip(s: WeichenChaosState, i: number, t: number): void {
     emitFx(s, { kind: 'dust', sfx: 'click', x: line.x0, y: 0.3, z: Z_SWITCH - 0.8, s: 0.45 });
     // the press happened before the train reached the switch: it still takes the new way
     for (const tr of s.trains) {
-      if (tr.line === li && tr.branch !== null && tr.decidedAt > tp && tr.s - LEN_A < 1.5) {
+      if (tr.line === li && tr.branch !== null && tr.decidedAt > tp && tr.s - LEN_A <= speedAt(s) * GRACE) {
         tr.branch = line.state;
         tr.lead = tr.decidedAt - tp;
       }
@@ -148,6 +160,7 @@ export const weichenChaos: MinigameDef<WeichenChaosState> = {
       marks: [],
       hornAt: 0,
       botMem: players.map(() => null),
+      form: players.map((p) => p.form ?? 1),
       fx: [],
       fxN: 0,
     };
@@ -172,7 +185,7 @@ export const weichenChaos: MinigameDef<WeichenChaosState> = {
       s.lines.forEach((line, li) => {
         if (line.slot !== slot) return;
         const color = own ? line.team : s.teamIds.find((t) => t !== line.team) ?? line.team;
-        s.trains.push({ id: s.nextId++, line: li, color, s: -1.5, branch: null, decidedAt: 0 });
+        s.trains.push({ id: s.nextId++, line: li, color, s: S_SPAWN, branch: null, decidedAt: 0 });
       });
       s.nextSpawn[slot] = s.t + rng.range(1.25, 3.1) * (1 - 0.25 * f);
     }
@@ -228,17 +241,17 @@ export const weichenChaos: MinigameDef<WeichenChaosState> = {
     const li = s.lines.findIndex((l) => l.owner === i);
     if (li < 0) return [];
     const line = s.lines[li];
-    const sk = skill(level);
+    const ref = botRef(level, s.form[i]);
     const next = s.trains.filter((tr) => tr.line === li && tr.branch === null).sort((a, b) => b.s - a.s)[0];
     if (!next) return [];
     let mem = s.botMem[i];
     if (!mem || mem.train !== next.id) {
+      // colour check own / foreign: a choice reaction that is sometimes wrong
       const desired: Way = next.color === line.team ? 'station' : 'siding';
-      mem = s.botMem[i] = { train: next.id, seeAt: null, decision: rng.chance(0.6 + 0.4 * sk.accuracy) ? desired : other(desired) };
+      mem = s.botMem[i] = { train: next.id, seeAt: null, decision: rng.next() < ref.choiceError ? other(desired) : desired };
     }
-    const timeToSwitch = (LEN_A - next.s) / speedAt(s);
-    const lookahead = { easy: 1.1, medium: 1.7, hard: 2.6 }[level];
-    if (mem.seeAt === null && timeToSwitch <= lookahead) mem.seeAt = s.t + sk.reaction * (0.8 + rng.next() * 0.4);
+    // looked at once the train is out of the tunnel and the one before it has passed the switch
+    if (mem.seeAt === null && next.s >= 0) mem.seeAt = s.t + BOT_DISPLAY_LAG + Math.max(ref.choice * 0.8, ref.choice + rng.noise() * BOT_CHOICE_SD);
     if (mem.seeAt !== null && s.t >= mem.seeAt && line.state !== mem.decision) return [{ type: 'press', t: s.t }];
     return [];
   },
@@ -270,44 +283,49 @@ export const weichenChaos: MinigameDef<WeichenChaosState> = {
     for (const side of [-1, 1]) {
       for (let k = 0; k < 6; k++) entities.push({ id: `fence${side}_${k}`, kind: 'prop', prop: 'fence', x: side * 13, y: 0, z: -3 + k * 2.1, ry: Math.PI / 2 });
     }
-    // track: gravel bed, wooden sleepers, two steel rails
-    const rail = (id: string, x: number, z: number, len: number, ry = 0) => {
+    // track: gravel bed, wooden sleepers (every other one a hair higher), two steel rails
+    const rail = (piece: string, li: number, x: number, z: number, len: number, ry = 0) => {
+      const id = `${piece}${li}`;
+      const dy = PIECE_DY[piece];
       const cs = Math.cos(ry);
       const sn = Math.sin(ry);
-      entities.push({ id: `${id}b`, kind: 'box', x, y: 0.05, z, sx: 1.7, sy: 0.1, sz: len, ry, color: '#a49a8b', mat: 'stone' });
+      entities.push({ id: `${id}b`, kind: 'box', x, y: 0.05 + dy, z, sx: 1.7, sy: 0.1, sz: len, ry, color: '#a49a8b', mat: 'stone' });
       const n = Math.max(1, Math.round(len / 0.85));
       for (let k = 0; k < n; k++) {
         const o = (k + 0.5) * (len / n) - len / 2;
-        entities.push({ id: `${id}s${k}`, kind: 'box', x: x + sn * o, y: 0.14, z: z + cs * o, sx: 1.3, sy: 0.08, sz: 0.28, ry, color: '#7a5a40', mat: 'wood' });
+        entities.push({ id: `${id}s${k}`, kind: 'box', x: x + sn * o, y: 0.14 + dy + (k % 2) * 0.004, z: z + cs * o, sx: 1.3, sy: 0.08, sz: 0.28, ry, color: '#7a5a40', mat: 'wood' });
       }
       for (const [r, o] of [
         [0, -0.38],
         [1, 0.38],
       ] as [number, number][]) {
-        entities.push({ id: `${id}r${r}`, kind: 'box', x: x + cs * o, y: 0.22, z: z - sn * o, sx: 0.1, sy: 0.08, sz: len, ry, color: '#8d939c', mat: 'metal' });
+        entities.push({ id: `${id}r${r}`, kind: 'box', x: x + cs * o, y: 0.22 + dy + r * 0.004, z: z - sn * o, sx: 0.1, sy: 0.08, sz: len, ry, color: '#8d939c', mat: 'metal' });
       }
     };
     s.teamIds.forEach((team, k) => {
       const cx = k === 0 ? -7.5 : 7.5;
       const color = TEAM_COLORS[team] ?? '#ffffff';
       const good = s.marks.some((e) => e.kind === 'good' && s.lines[e.line].team === team);
-      // station building (team tinted) with a platform in front and team flags
-      entities.push({ id: `platform${k}`, kind: 'box', x: cx, y: 0.15, z: -6.35, sx: 7.6, sy: 0.3, sz: 1.2, color: '#d9d1c4', mat: 'tiles', glow: good });
-      entities.push({ id: `station${k}`, kind: 'prop', prop: 'station', x: cx, y: 0, z: -8.2, sx: 0.72, color, labelKey: team === 0 ? 'team.red' : 'team.blue' });
+      // station building (team tinted) facing the track ends: its own platform at the front
+      // (model -z, turned towards +z) continues in a forecourt that lights up for a good train
+      entities.push({ id: `platform${k}`, kind: 'box', x: cx, y: 0.145, z: -6.5, sx: 7.6, sy: 0.29, sz: 1.6, color: '#d9d1c4', mat: 'tiles', glow: good });
+      entities.push({ id: `station${k}`, kind: 'prop', prop: 'station', x: cx, y: 0, z: -8.2, ry: Math.PI, sx: 0.72, color });
+      // team name above the roof (a label sits 1.1 over its entity: carried by a tiny box in the gable)
+      entities.push({ id: `stationName${k}`, kind: 'box', x: cx, y: 2.75, z: -8.85, sx: 0.02, sy: 0.02, sz: 0.02, color, labelKey: team === 0 ? 'team.red' : 'team.blue' });
       entities.push({ id: `flagA${k}`, kind: 'prop', prop: 'flag', x: cx - 3.6, y: 0, z: -6.6, color, sx: 0.8 });
       entities.push({ id: `flagB${k}`, kind: 'prop', prop: 'flag', x: cx + 3.6, y: 0, z: -6.6, color, sx: 0.8 });
     });
     s.lines.forEach((line, li) => {
       const x0 = line.x0;
       const xs = x0 + line.dsx;
-      // tunnel portal in the hill
-      entities.push({ id: `tunnel${li}`, kind: 'box', x: x0, y: 1.4, z: Z_START + 0.4, sx: 2.6, sy: 2.8, sz: 1.2, color: '#b3aca4', mat: 'stone' });
+      // tunnel portal in the hill, deep enough to hide a whole train
+      entities.push({ id: `tunnel${li}`, kind: 'box', x: x0, y: 1.4, z: Z_START - 0.2 + PORTAL_DEPTH / 2, sx: 2.6, sy: 2.8, sz: PORTAL_DEPTH, color: '#b3aca4', mat: 'stone' });
       entities.push({ id: `tunnelTop${li}`, kind: 'box', x: x0, y: 2.95, z: Z_START + 0.3, sx: 2.9, sy: 0.3, sz: 1.4, color: '#8f877f', mat: 'stone' });
       entities.push({ id: `tunnelHole${li}`, kind: 'box', x: x0, y: 1.05, z: Z_START - 0.22, sx: 1.7, sy: 2.1, sz: 0.06, color: '#1f2126' });
-      rail(`a${li}`, x0, (Z_START + Z_SWITCH) / 2, LEN_A);
-      rail(`st${li}`, x0, Z_SWITCH - LEN_STATION / 2, LEN_STATION);
-      rail(`sd${li}`, x0 + line.dsx / 2, Z_SWITCH - SID_DZ / 2, LEN_DIAG, Math.atan2(line.dsx, -SID_DZ));
-      rail(`se${li}`, xs, Z_SWITCH - SID_DZ - 1, 2);
+      rail('a', li, x0, (Z_START + Z_SWITCH) / 2, LEN_A);
+      rail('st', li, x0, Z_SWITCH - LEN_STATION / 2, LEN_STATION);
+      rail('sd', li, x0 + line.dsx / 2, Z_SWITCH - SID_DZ / 2, LEN_DIAG, Math.atan2(line.dsx, -SID_DZ));
+      rail('se', li, xs, Z_SWITCH - SID_DZ - 1, 2);
       // buffer stop at the end of the siding
       entities.push({ id: `bufferB${li}`, kind: 'box', x: xs, y: 0.3, z: Z_SWITCH - SID_DZ - 2.35, sx: 1.2, sy: 0.6, sz: 0.5, color: '#7a5a40', mat: 'planks' });
       entities.push({ id: `buffer${li}`, kind: 'box', x: xs, y: 0.72, z: Z_SWITCH - SID_DZ - 2.15, sx: 1.6, sy: 0.3, sz: 0.25, color: '#e05a5a', mat: 'metal' });
@@ -341,9 +359,9 @@ export const weichenChaos: MinigameDef<WeichenChaosState> = {
         sz: TRAIN_SCALE,
         color: TEAM_COLORS[tr.color] ?? '#ffffff',
       });
-      // cab roof in the train color too (readable from above)
+      // cab roof in the train color too (readable from above), resting on the cab
       const back = 0.72;
-      entities.push({ id: `trainRoof${tr.id}`, kind: 'box', x: p.x - p.dx * back, y: 2.27, z: p.z - p.dz * back, ry: Math.atan2(-p.dz, p.dx), sx: 1.3, sy: 0.12, sz: 1.5, color: TEAM_COLORS[tr.color] ?? '#ffffff' });
+      entities.push({ id: `trainRoof${tr.id}`, kind: 'box', x: p.x - p.dx * back, y: 2.13, z: p.z - p.dz * back, ry: Math.atan2(-p.dz, p.dx), sx: 1.3, sy: 0.12, sz: 1.5, color: TEAM_COLORS[tr.color] ?? '#ffffff' });
     }
     for (const e of s.marks) {
       const line = s.lines[e.line];
@@ -355,7 +373,7 @@ export const weichenChaos: MinigameDef<WeichenChaosState> = {
     }
     return {
       env: 'grass',
-      scenery: { set: 'meadow', clear: { w: 30, d: 28, z: 4 } },
+      scenery: { set: 'meadow', clear: { w: 30, d: 32, z: 6 } },
       camera: { alpha: -Math.PI / 2, beta: 0.78, radius: 31, target: [0, 0, 3] },
       entities,
       fx: viewFx(s),

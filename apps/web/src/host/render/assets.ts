@@ -57,6 +57,8 @@ export class AssetLibrary {
         onProgress?.(++done, MODEL_FILES.length);
       }),
     );
+    // loading is no slowness: restart the adaptive-quality probe
+    this.stage.settle();
   }
 
   private extract(c: AssetContainer): Map<string, Part[]> {

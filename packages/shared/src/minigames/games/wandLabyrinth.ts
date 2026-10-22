@@ -1,6 +1,7 @@
 import type { Rng } from '../../rng';
 import type { MgEntity, MgInput, MgPlayer, MinigameDef } from '../types';
-import { ageFx, clamp, emitFx, faceAngle, lerp, skill, teamRanks, viewFx, type FxState } from '../util';
+import { ageFx, clamp, emitFx, faceAngle, lerp, refOf, teamRanks, viewFx, type FxState } from '../util';
+import { BOT_LIVE_LAG } from './botLag';
 
 /**
  * #15 Wand-Labyrinth (1 vs 3, Wischen vs. Joystick): the trio walks through a grid maze
@@ -15,9 +16,19 @@ const CH = 7; // cells in z
 const TW = CW * 2 + 1; // tiles
 const TH = CH * 2 + 1;
 const TS = 1.1; // tile size (world units)
-// seconds per cell at full stick (not too fast: the solo needs time to react, MINI-03)
-const STEP_TIME = 0.44;
-const COOLDOWN = 0.8;
+// seconds per cell at full stick (not too fast: the solo needs time to react, MINI-03; v0.5:
+// 0.44 → 0.41, the trio no longer sees the whole maze at once)
+const STEP_TIME = 0.41;
+/** solo wall cooldown (v0.5: 0.8 → 0.6, more say for the solo) */
+const COOLDOWN = 0.6;
+/** trio bots: how many cells ahead they read the maze on the TV */
+const LOOK = { easy: 4, medium: 5, hard: 7 };
+/** trio bots: time to notice a moved wall and plan anew (s, plus BOT_LIVE_LAG) */
+const REPLAN = { easy: 0.6, medium: 0.45, hard: 0.35 };
+/** trio bots: chance to take a wrong turn at a junction */
+const JUNCTION_ERR = { easy: 0.25, medium: 0.15, hard: 0.08 };
+/** solo bot: noise (cells) when judging by eye how much a wall move stretches the trio's way */
+const SOLO_JUDGE = { easy: 2.2, medium: 1.4, hard: 0.9 };
 const SLIDE_TIME = 0.25;
 const DURATION = 40;
 const N_SLIDERS = 10; // per axis
@@ -53,6 +64,15 @@ interface P {
   /** bot memory */
   think: number;
   path: Cell[];
+  /** wall positions the bot has taken in (it notices a move a moment late) */
+  knownH: number;
+  knownV: number;
+  replanAt: number;
+  /** visits per cell (people remember roughly where they have been) */
+  visits: number[];
+  lastCell: number;
+  /** last junction where the bot rolled for a wrong turn */
+  junction: number;
 }
 
 export interface WandLabyrinthState extends FxState {
@@ -242,6 +262,65 @@ function trioDistance(s: WandLabyrinthState, hPos: number, vPos: number): number
   return Math.min(...s.trio.map((i) => d[cellOf(s.ps[i])[1] * CW + cellOf(s.ps[i])[0]]));
 }
 
+/**
+ * Trio bot route (v0.5): like a person reading the maze on the TV – only `look` cells ahead
+ * (walls as the bot has taken them in). Exit in sight → straight there; otherwise towards the
+ * open end that is closest to the exit, avoiding dead ends in sight and places already visited.
+ */
+function planAhead(s: WandLabyrinthState, p: P, from: Cell, look: number, rng: Rng): Cell[] {
+  const prev = new Map<number, number>();
+  const depth = new Map<number, number>();
+  const start = from[1] * CW + from[0];
+  depth.set(start, 0);
+  // visits summed along the way: a branch walked before (e.g. into a dead end) stays unattractive
+  const been = new Map<number, number>([[start, 0]]);
+  const q = [start];
+  const frontier: number[] = [];
+  for (let k = 0; k < q.length; k++) {
+    const c = q[k];
+    const d = depth.get(c)!;
+    const cx = c % CW;
+    const cy = (c - cx) / CW;
+    if (cx === s.exit[0] && cy === s.exit[1]) {
+      frontier.length = 0;
+      frontier.push(c);
+      break;
+    }
+    if (d >= look) {
+      frontier.push(c);
+      continue;
+    }
+    for (const [dx, dy] of DIRS) {
+      const nx = cx + dx;
+      const ny = cy + dy;
+      const n = ny * CW + nx;
+      if (nx < 0 || ny < 0 || nx >= CW || ny >= CH || depth.has(n)) continue;
+      if (blocked(s.walls, s.sliders, p.knownH, p.knownV, cx * 2 + 1 + dx, cy * 2 + 1 + dy)) continue;
+      depth.set(n, d + 1);
+      been.set(n, been.get(c)! + p.visits[n]);
+      prev.set(n, c);
+      q.push(n);
+    }
+  }
+  // nothing open beyond the view: the exit region is all in sight – take the least visited end
+  const cands = frontier.length ? frontier : q.filter((c) => c !== start);
+  let best = -1;
+  let bestV = Infinity;
+  for (const c of cands) {
+    const cx = c % CW;
+    const cy = (c - cx) / CW;
+    const isExit = cx === s.exit[0] && cy === s.exit[1];
+    const v = isExit ? -1e9 : Math.abs(cx - s.exit[0]) + Math.abs(cy - s.exit[1]) + been.get(c)! * 2 + rng.next() * 0.8;
+    if (v < bestV) {
+      bestV = v;
+      best = c;
+    }
+  }
+  const path: Cell[] = [];
+  for (let c = best; c >= 0 && c !== start; c = prev.get(c) ?? -1) path.unshift([c % CW, Math.floor(c / CW)]);
+  return path;
+}
+
 function applySwipe(s: WandLabyrinthState, dir: 'up' | 'down' | 'left' | 'right'): boolean {
   const h = dir === 'left' ? 0 : dir === 'right' ? 1 : s.hPos;
   const v = dir === 'down' ? 0 : dir === 'up' ? 1 : s.vPos;
@@ -282,7 +361,24 @@ export const wandLabyrinth: MinigameDef<WandLabyrinthState> = {
     const solo = Math.max(0, players.findIndex((p) => p.team === 0));
     const trio = players.map((_, i) => i).filter((i) => i !== solo);
     const g = generate(rng);
-    const ps: P[] = players.map(() => ({ cx: 0, cy: 0, tx: 0, ty: 0, prog: 0, stepTime: STEP_TIME, stick: { x: 0, y: 0 }, ry: faceAngle(1, 0), think: 0, path: [] }));
+    const ps: P[] = players.map(() => ({
+      cx: 0,
+      cy: 0,
+      tx: 0,
+      ty: 0,
+      prog: 0,
+      stepTime: STEP_TIME,
+      stick: { x: 0, y: 0 },
+      ry: faceAngle(1, 0),
+      think: 0,
+      path: [],
+      knownH: 0,
+      knownV: 0,
+      replanAt: -1,
+      visits: new Array<number>(CW * CH).fill(0),
+      lastCell: -1,
+      junction: -1,
+    }));
     trio.forEach((i, k) => {
       const [x, y] = g.starts[k];
       Object.assign(ps[i], { cx: x, cy: y, tx: x, ty: y });
@@ -349,7 +445,7 @@ export const wandLabyrinth: MinigameDef<WandLabyrinthState> = {
             }
             if (s.practice) {
               const [x, y] = s.starts[s.trio.indexOf(i)];
-              Object.assign(p, { cx: x, cy: y, tx: x, ty: y, path: [] });
+              Object.assign(p, { cx: x, cy: y, tx: x, ty: y, path: [], visits: p.visits.map(() => 0), lastCell: -1 });
             } else {
               s.won = i;
               return;
@@ -372,7 +468,8 @@ export const wandLabyrinth: MinigameDef<WandLabyrinthState> = {
         if (isBlocked(s, p.cx * 2 + 1 + dx, p.cy * 2 + 1 + dy)) continue;
         p.tx = p.cx + dx;
         p.ty = p.cy + dy;
-        p.stepTime = STEP_TIME / clamp(mag, 0.6, 1);
+        // the outer ring of the stick is full speed (nobody pushes a phone stick to the very edge)
+        p.stepTime = STEP_TIME / clamp(mag / 0.85, 0.6, 1);
         p.prog = 0.0001;
         p.ry = faceAngle(dx, dy);
         break;
@@ -382,53 +479,42 @@ export const wandLabyrinth: MinigameDef<WandLabyrinthState> = {
   isOver: (s) => !s.practice && (s.won !== null || s.t >= s.duration),
   result: (s) => teamRanks(s.players, [s.won !== null ? 1 : 0]),
   bot(s, i, level, rng, dt) {
-    const sk = skill(level);
+    const ref = refOf(s.players, i, level);
+    const form = s.players[i].form ?? 1;
     if (i === s.solo) {
-      if (s.cooldown > 0) return [];
+      if (s.cooldown > 0 || s.won !== null) {
+        // the gates are ready again (TV/phone): look, judge, swipe – a choice reaction
+        s.botThink = BOT_LIVE_LAG + ref.choice * (0.8 + rng.next() * 0.4);
+        return [];
+      }
       s.botThink -= dt;
       if (s.botThink > 0) return [];
-      s.botThink = sk.reaction * (0.7 + rng.next() * 0.6);
+      s.botThink = ref.choice * (0.6 + rng.next() * 0.4);
+      // judging by eye which wall move hurts the trio most: right more often for hard bots
+      const judge = SOLO_JUDGE[level] * (2 - form);
       const now = trioDistance(s, s.hPos, s.vPos);
       const opts: { dir: 'up' | 'down' | 'left' | 'right'; d: number }[] = [
-        { dir: s.hPos ? 'left' : 'right', d: trioDistance(s, 1 - s.hPos, s.vPos) },
-        { dir: s.vPos ? 'down' : 'up', d: trioDistance(s, s.hPos, 1 - s.vPos) },
-        { dir: s.hPos ? 'left' : 'right', d: trioDistance(s, 1 - s.hPos, 1 - s.vPos) },
+        { dir: s.hPos ? 'left' : 'right', d: trioDistance(s, 1 - s.hPos, s.vPos) + rng.noise() * judge },
+        { dir: s.vPos ? 'down' : 'up', d: trioDistance(s, s.hPos, 1 - s.vPos) + rng.noise() * judge },
       ];
-      // the diagonal option needs two swipes; only count the first one at half value
-      opts[2].d = now + (opts[2].d - now) * 0.5;
       opts.sort((a, b) => b.d - a.d);
-      if (rng.chance({ easy: 0.35, medium: 0.12, hard: 0.03 }[level])) {
+      if (rng.chance(ref.choiceError * 3)) {
         // sloppy: sometimes swipe at random
-        return rng.chance(0.3) ? [{ type: 'swipe', dir: rng.pick(['up', 'down', 'left', 'right'] as const) }] : [];
+        return [{ type: 'swipe', dir: rng.pick(['up', 'down', 'left', 'right'] as const) }];
       }
-      if (opts[0].d > now) return [{ type: 'swipe', dir: opts[0].dir }];
+      if (opts[0].d > now + 0.5) return [{ type: 'swipe', dir: opts[0].dir }];
       return [];
     }
     const p = s.ps[i];
     p.think -= dt;
-    const cur = cellOf(p);
-    if (p.think <= 0) {
-      p.think = sk.reaction * (0.7 + rng.next() * 0.6);
-      // plan the shortest way for the walls as they are now
-      const d = distances(s.walls, s.sliders, s.hPos, s.vPos, s.exit);
-      const path: Cell[] = [];
-      let [x, y] = cur;
-      for (let guard = 0; guard < CW * CH && d[y * CW + x] > 0; guard++) {
-        const nexts = DIRS.map(([dx, dy]) => [x + dx, y + dy] as Cell).filter(
-          ([nx, ny]) => nx >= 0 && ny >= 0 && nx < CW && ny < CH && d[ny * CW + nx] === d[y * CW + x] - 1 && !isBlocked(s, x + nx + 1, y + ny + 1),
-        );
-        if (!nexts.length) break;
-        [x, y] = rng.pick(nexts);
-        path.push([x, y]);
-      }
-      p.path = path;
-      // weaker bots sometimes take a wrong turn
-      if (rng.chance({ easy: 0.3, medium: 0.12, hard: 0.04 }[level])) {
-        const open = DIRS.filter(([dx, dy]) => !isBlocked(s, cur[0] * 2 + 1 + dx, cur[1] * 2 + 1 + dy));
-        if (open.length) {
-          const [dx, dy] = rng.pick(open);
-          p.path = [[cur[0] + dx, cur[1] + dy]];
-        }
+    // a moved wall is noticed a moment late; until then the bot walks on with the old plan
+    if (s.hPos !== p.knownH || s.vPos !== p.knownV) {
+      if (p.replanAt < 0) p.replanAt = s.t + BOT_LIVE_LAG + REPLAN[level] * (2 - form);
+      if (s.t >= p.replanAt) {
+        p.knownH = s.hPos;
+        p.knownV = s.vPos;
+        p.replanAt = -1;
+        p.think = 0;
       }
     }
     if (p.prog > 0) {
@@ -436,13 +522,37 @@ export const wandLabyrinth: MinigameDef<WandLabyrinthState> = {
       while (p.path.length && p.path[0][0] === p.tx && p.path[0][1] === p.ty) p.path.shift();
       return [];
     }
+    const cur: Cell = [p.cx, p.cy];
+    const k = cur[1] * CW + cur[0];
+    if (p.lastCell !== k) {
+      p.lastCell = k;
+      p.visits[k]++;
+      p.think = Math.min(p.think, 0);
+    }
     while (p.path.length && p.path[0][0] === p.cx && p.path[0][1] === p.cy) p.path.shift();
+    if (p.think <= 0 || !p.path.length) {
+      p.think = ref.reaction * (0.8 + rng.next() * 0.6);
+      p.path = planAhead(s, p, cur, LOOK[level], rng);
+      // at a junction, now and then the wrong way (once per arrival)
+      const open = DIRS.filter(([dx, dy]) => !blocked(s.walls, s.sliders, p.knownH, p.knownV, cur[0] * 2 + 1 + dx, cur[1] * 2 + 1 + dy));
+      if (p.junction !== k && open.length >= 3) {
+        p.junction = k;
+        if (rng.chance(JUNCTION_ERR[level] * (2 - form))) {
+          const next = p.path[0];
+          const wrong = open.filter(([dx, dy]) => !next || cur[0] + dx !== next[0] || cur[1] + dy !== next[1]);
+          if (wrong.length) {
+            const [dx, dy] = rng.pick(wrong);
+            p.path = [[cur[0] + dx, cur[1] + dy]];
+            p.think = ref.reaction;
+          }
+        }
+      }
+    }
     const next = p.path[0];
     if (!next) return [{ type: 'stick', x: 0, y: 0 }];
     const dx = clamp(next[0] - p.cx, -1, 1);
     const dy = clamp(next[1] - p.cy, -1, 1);
-    const f = { easy: 0.8, medium: 0.9, hard: 1 }[level];
-    return [{ type: 'stick', x: dx * f, y: dy * f }];
+    return [{ type: 'stick', x: dx * ref.stickMag, y: dy * ref.stickMag }];
   },
   view(s) {
     const ex = worldX(s.exit[0] * 2 + 1);

@@ -87,10 +87,33 @@ test('pause stops the game for everybody (SAVE-04)', async ({ browser }) => {
   await expect(host.locator('.pause')).toHaveCount(0);
 });
 
+test('minimap on the TV, inventory sheet on every phone, TV volume from the chief phone (v0.5)', async ({ browser }) => {
+  test.setTimeout(300_000);
+  const { host, code } = await openHost(browser);
+  const anna = await joinPhone(browser, code, 'Anna');
+  const ben = await joinPhone(browser, code, 'Ben');
+  // only the chief gets the volume controls; changes reach the TV (AUDIO-06)
+  await expect(ben.locator('.vol-btn')).toHaveCount(0);
+  await anna.click('.settings .vol-btn');
+  await anna.locator('.sheet .vol-row input').first().fill('15');
+  await expect.poll(() => host.evaluate(() => (window as any).__wb.audio.volumes().music)).toBeCloseTo(0.15);
+  await anna.click('.sheet .close');
+  await expect(anna.locator('.sheet')).toHaveCount(0);
+  await anna.click('text=Spiel starten');
+  await expect(host.locator('.minimap')).toBeVisible({ timeout: 60000 });
+  // own items, die and resources are reachable any time from the header
+  await ben.click('.inv-btn', { timeout: 60000 });
+  await expect(ben.locator('.sheet.s-inventory')).toContainText('Dein Würfel');
+  await ben.click('.sheet .close');
+  await expect(ben.locator('.sheet')).toHaveCount(0);
+});
+
 test('demo mode plays a minigame with bots only (BOT-03)', async ({ page }) => {
   const errors: string[] = [];
   page.on('pageerror', (e) => errors.push(e.message));
   await page.goto('/host?quality=0&demo=kokosnuss&mg=gipfelSprint');
   await expect.poll(() => page.evaluate(() => (window as any).__wb?.session.debugState().minigamePhase), { timeout: 60000 }).toBe('play');
+  // the board overview stays hidden during minigames
+  await expect(page.locator('.minimap')).toHaveCount(0);
   expect(errors).toEqual([]);
 });

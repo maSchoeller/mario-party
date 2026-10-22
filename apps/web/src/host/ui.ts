@@ -1,6 +1,7 @@
 import { PLAYER_COLOR_HEX, PLAYER_SHAPE, type CharacterId, type PlayerColor } from '@wb/shared/config';
 import { t, type Params } from '@wb/shared/i18n/index';
 import type { MgHud, MgPlayer } from '@wb/shared/minigames/types';
+import type { VolumeKind } from '@wb/shared/net/protocol';
 import QRCode from 'qrcode';
 import { CHAR_EMOJI, ITEM_EMOJI, WHEEL_EMOJI } from '../common/characters';
 import { clear, h } from '../common/dom';
@@ -17,6 +18,8 @@ export interface HudPlayer {
   stars: number;
   coins: number;
   items: string[];
+  /** train tickets, only on maps that have them */
+  tickets?: number;
   isBot: boolean;
   connected: boolean;
   chief: boolean;
@@ -32,7 +35,7 @@ export class HostUI {
 
   constructor(root: HTMLElement) {
     this.root = root;
-    for (const name of ['hud', 'gimmick', 'center', 'mg', 'subtitle', 'overlay', 'toast', 'transition', 'system']) {
+    for (const name of ['hud', 'minimap', 'gimmick', 'center', 'mg', 'subtitle', 'overlay', 'toast', 'transition', 'system']) {
       const el = h('div', { class: `layer layer-${name}` });
       this.layers[name] = el;
       root.append(el);
@@ -133,7 +136,7 @@ export class HostUI {
           p.chief ? h('span', { class: 'tag' }, '👑') : null,
         ),
         mode === 'board'
-          ? h('div', { class: 'pstats' }, h('span', { class: 'stars' }, '★ ', String(p.stars)), h('span', { class: 'coins' }, '● ', String(p.coins)), h('span', { class: 'items' }, p.items.map((it) => ITEM_EMOJI[it] ?? '').join('')))
+          ? h('div', { class: 'pstats' }, h('span', { class: 'stars' }, '★ ', String(p.stars)), h('span', { class: 'coins' }, '● ', String(p.coins)), itemIcons(p))
           : h('div', { class: 'pstats' }, h('span', { class: 'stars' }, `${p.points ?? 0} ${t('stats.points')}`)),
       );
       this.cards[p.slot] = card;
@@ -223,6 +226,14 @@ export class HostUI {
         r();
       }, ms);
     });
+  }
+
+  /** Board overview at the bottom centre; CSS hides it while an overlay is up. */
+  setMinimap(el: HTMLElement | null): void {
+    const layer = this.layers.minimap;
+    if (el ? layer.firstChild === el : !layer.firstChild) return;
+    clear(layer);
+    if (el) layer.append(el);
   }
 
   setGimmick(content: HTMLElement | null): void {
@@ -366,20 +377,42 @@ export class HostUI {
       );
   }
 
-  /** Gear button with separate volumes for music / effects / voice (AUDIO-06). */
-  volumeControls(get: () => Record<'music' | 'sfx' | 'voice', number>, set: (k: 'music' | 'sfx' | 'voice', v: number) => void): void {
+  /**
+   * Volumes for music / effects / voice (AUDIO-06). The couch uses the chief's phone for
+   * this; on the TV a small gear only shows up while the mouse moves over the page.
+   */
+  volumeControls(get: () => Record<VolumeKind, number>, set: (k: VolumeKind, v: number) => void): void {
     const panel = h('div', { class: 'volume card hidden' });
     const render = () => {
       clear(panel);
       const v = get();
-      for (const k of ['music', 'sfx', 'voice'] as const) {
+      for (const k of VOLUME_KINDS) {
         const input = h('input', { type: 'range', min: 0, max: 100, value: Math.round(v[k] * 100) });
         input.addEventListener('input', () => set(k, Number(input.value) / 100));
-        panel.append(h('label', {}, t(`host.volume${k === 'sfx' ? 'Sfx' : k[0].toUpperCase() + k.slice(1)}`), input));
+        panel.append(h('label', {}, t(VOLUME_LABEL[k]), input));
       }
     };
-    const gear = h('button', { class: 'gear', title: t('host.settings'), onclick: () => (render(), panel.classList.toggle('hidden')) }, '⚙️');
-    this.root.append(h('div', { class: 'settings-dock' }, panel, gear));
+    const gear = h('button', { class: 'gear', title: t('host.settings'), 'aria-label': t('host.settings'), onclick: () => (render(), panel.classList.toggle('hidden')) }, '⚙️');
+    const dock = h('div', { class: 'settings-dock' }, panel, gear);
+    let hover = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const hide = () => {
+      if (hover) return;
+      dock.classList.remove('show');
+      panel.classList.add('hidden');
+    };
+    dock.addEventListener('pointerenter', () => (hover = true));
+    dock.addEventListener('pointerleave', () => {
+      hover = false;
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(hide, 3000);
+    });
+    window.addEventListener('mousemove', () => {
+      dock.classList.add('show');
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(hide, 3000);
+    });
+    this.root.append(dock);
   }
 
   serverStatus(text: string | null): void {
@@ -387,6 +420,20 @@ export class HostUI {
     this.root.querySelector(`#${id}`)?.remove();
     if (text) this.root.append(h('div', { id, class: 'server-status card' }, text));
   }
+}
+
+export const VOLUME_KINDS: VolumeKind[] = ['music', 'sfx', 'voice'];
+export const VOLUME_LABEL: Record<VolumeKind, string> = { music: 'host.volumeMusic', sfx: 'host.volumeSfx', voice: 'host.volumeVoice' };
+
+/** Items (and train tickets) every player holds, visible to everybody on the TV. */
+function itemIcons(p: HudPlayer): HTMLElement | null {
+  if (!p.items.length && !p.tickets) return null;
+  return h(
+    'span',
+    { class: 'items' },
+    p.items.map((it) => h('span', { class: 'it', title: t(`item.${it}.name`) }, ITEM_EMOJI[it] ?? '❔')),
+    p.tickets ? h('span', { class: 'it tk', title: t('play.tickets', { count: p.tickets }) }, '🎟️', p.tickets > 1 ? h('small', {}, `×${p.tickets}`) : null) : null,
+  );
 }
 
 /** Controller pictograms per layout kind for the explanation screen (MINI-04). */

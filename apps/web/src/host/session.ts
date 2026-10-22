@@ -24,6 +24,7 @@ import type { LinkMode } from '../net/peerLink';
 import { HostNetwork } from '../net/hostNetwork';
 import type { HostAudio } from './audio';
 import { MinigameRunner } from './minigameRunner';
+import { Minimap } from './minimap';
 import { BoardView } from './render/board';
 import { CharacterRig } from './render/characters';
 import type { Stage } from './render/stage';
@@ -98,6 +99,10 @@ export class HostSession {
   private overInfo: { ranking: number[] } | null = null;
   private presenting = false;
   private botTimer: ReturnType<typeof setTimeout> | null = null;
+  private minimap: Minimap | null = null;
+  /** what the minimap shows: follows the presentation, not the (already advanced) engine state */
+  private mm = { pos: [] as string[], star: '', blocked: [] as string[], warn: [] as string[] };
+  private lastSfxPreview = 0;
 
   constructor(
     private readonly stage: Stage,
@@ -432,6 +437,17 @@ export class HostSession {
         this.ff = msg.on;
         this.stage.timeScale = this.speed();
         return;
+      case 'volume': {
+        // TV volumes from the chief's phone (AUDIO-06); persisted by HostAudio
+        if (!isChief || !['music', 'sfx', 'voice'].includes(msg.kind) || !Number.isFinite(msg.value)) return;
+        this.audio.setVolume(msg.kind, msg.value);
+        const now = performance.now();
+        if (msg.kind === 'sfx' && now - this.lastSfxPreview > 350) {
+          this.lastSfxPreview = now;
+          this.audio.sfx('ding');
+        }
+        return;
+      }
       case 'emoji':
         this.ui.emoji(s.slot, msg.emoji);
         this.audio.babble(s.character ?? 'rocco');
@@ -762,6 +778,12 @@ export class HostSession {
       if (g.lava) this.board.setLava(e.map.gimmickParams?.lavaGroups ?? [], g.lava.group);
       this.board.overview(true);
       this.audio.playMusic(e.map.musicKey as 'island', e.isFinale());
+      this.minimap = new Minimap(e.map);
+      this.mm.pos = e.state.players.map((p) => p.field);
+      this.mm.star = e.state.starField;
+      this.syncGimmickMarks();
+      // the new scene changes the GPU load: restart the auto-quality probe
+      this.stage.settle();
     } else {
       this.audio.playMusic('lobby');
     }
@@ -776,6 +798,39 @@ export class HostSession {
     this.ui.layer('transition').replaceChildren();
     this.board?.dispose();
     this.board = null;
+    this.minimap = null;
+    this.ui.setMinimap(null);
+  }
+
+  /** Closed fields (tide, lava) and the train's next route for the minimap. */
+  private syncGimmickMarks(nextRoute?: number) {
+    const e = this.engine;
+    if (!e) return;
+    this.mm.blocked = e.map.fields.filter((f) => !e.isOpen(f.id)).map((f) => f.id);
+    const routes = e.map.gimmickParams?.trainRoutes ?? [];
+    const next = nextRoute ?? (routes.length ? (e.state.gimmick.trainIdx ?? 0) % routes.length : -1);
+    this.mm.warn = routes[next]?.fields ?? [];
+  }
+
+  private updateMinimap() {
+    const e = this.engine;
+    if (!this.minimap || !e || this.runner) return;
+    // same rule as the highlighted player card
+    const active = (i: number) => this.awaiting?.player === i || e.state.turn?.player === i;
+    this.minimap.update({
+      players: e.state.players.map((p, i) => ({ field: this.mm.pos[i] ?? p.field, color: p.color, active: active(i) })),
+      star: this.mm.star || null,
+      blocked: this.mm.blocked,
+      warn: this.mm.warn,
+    });
+  }
+
+  /** Re-reads positions from the engine where no animation is pending (turn / round start). */
+  private resyncMinimap() {
+    const e = this.engine;
+    if (!e) return;
+    this.mm.pos = e.state.players.map((p) => p.field);
+    this.mm.star = e.state.starField;
   }
 
   // ================================================================== game loop
@@ -906,6 +961,7 @@ export class HostSession {
     this.board?.setEnabled(false);
     this.ui.setHud(null, [], 'none');
     this.ui.setGimmick(null);
+    this.ui.setMinimap(null);
     const formLevels: Record<number, ReturnType<typeof minigameBotLevel>> = {};
     const runner = new MinigameRunner(this.stage, this.ui, this.audio, p, e.rng.int(1, 2 ** 30), {
       isBot: (gi) => this.isBotSeat(gi),
@@ -917,6 +973,7 @@ export class HostSession {
       telemetry: (n, pr) => telemetry(n, pr),
     });
     this.runner = runner;
+    this.stage.settle();
     this.pushViews();
     const ranks = await runner.run();
     // results over the celebrating minigame scene
@@ -936,6 +993,7 @@ export class HostSession {
     this.runner = null;
     this.board?.setEnabled(true);
     this.board?.overview(true);
+    this.stage.settle();
     if (e.state.config.mode === 'board') this.audio.playMusic(e.map.musicKey as 'island', e.isFinale());
     else this.audio.playMusic('lobby');
     this.audio.musicShape(1, false, 0.9);
@@ -991,10 +1049,12 @@ export class HostSession {
           break;
         }
         case 'roundStart':
+          this.resyncMinimap();
           this.refreshHud();
           if (ev.round > 1) await this.ui.banner(t('common.round', { round: ev.round, total: ev.total }), 1300 / this.speed());
           break;
         case 'turnStart':
+          this.resyncMinimap();
           this.refreshHud();
           this.board?.focus(ev.player);
           this.audio.babble(e.state.players[ev.player].character);
@@ -1040,6 +1100,8 @@ export class HostSession {
             this.stage.timeScale = this.speed();
             await done;
           }
+          this.mm.pos[ev.player] = ev.to;
+          this.updateMinimap();
           break;
         case 'land':
           this.board?.focus(ev.player, 16);
@@ -1072,8 +1134,10 @@ export class HostSession {
           if (this.board) {
             this.board.focusField(ev.to, 30);
             await this.board.setStar(ev.to, true);
-            await this.sleep(500);
           }
+          this.mm.star = ev.to;
+          this.updateMinimap();
+          if (this.board) await this.sleep(500);
           break;
         case 'trap':
           this.board?.setTrap(ev.field, ev.owner, e.state.players[ev.owner].color, ev.placed);
@@ -1084,6 +1148,8 @@ export class HostSession {
         case 'tide':
           this.board?.setTide(ev.tide);
           this.board?.overview();
+          this.syncGimmickMarks();
+          this.updateMinimap();
           this.renderGimmickWidget();
           await this.sleep(1200);
           break;
@@ -1095,7 +1161,7 @@ export class HostSession {
           this.stage.shakeCamera(1.6);
           this.audio.sfx('boom');
           if (this.board) {
-            this.board.burst(new Vector3(0, 9, -2), 'rocks', 10);
+            this.board.burst(this.board.craterTop() ?? new Vector3(0, 9, -2), 'rocks', 10);
             for (const hIdx of ev.hits) this.board.rigs[hIdx]?.setAnim('hit');
           }
           await this.sleep(1600);
@@ -1103,12 +1169,16 @@ export class HostSession {
           break;
         case 'lava':
           this.board?.setLava(e.map.gimmickParams?.lavaGroups ?? [], ev.active ? ev.group : null);
+          this.syncGimmickMarks();
+          this.updateMinimap();
           break;
         case 'coinBag':
           this.board?.setBag(ev.field, ev.placed);
           break;
         case 'timetable':
           this.board?.highlightRoute(ev.next[0] ?? null);
+          this.syncGimmickMarks(ev.next[0]);
+          this.updateMinimap();
           this.renderGimmickWidget(ev.next);
           break;
         case 'train':
@@ -1275,6 +1345,7 @@ export class HostSession {
         stars: p?.stars ?? 0,
         coins: p?.coins ?? 0,
         items: p?.items ?? [],
+        tickets: e?.map.gimmick === 'train' ? (p?.tickets ?? 0) : undefined,
         isBot: s.cpu,
         connected: s.cpu || s.connected,
         chief: this.chief === s.slot,
@@ -1295,6 +1366,8 @@ export class HostSession {
         ? `${t('common.round', { round: e.state.round, total: e.state.config.rounds })} · ${t(e.map.nameKey)}`
         : `${t('play.mode.marathon')} · ${Math.min((e.state.marathon?.idx ?? 0) + 1, e.state.marathon?.games.length ?? 10)} / ${e.state.marathon?.games.length ?? 10}`;
     this.ui.setHud(title, this.hudPlayers(), e.state.config.mode);
+    this.ui.setMinimap(this.minimap?.el ?? null);
+    this.updateMinimap();
   }
 
   private renderGimmickWidget(next?: number[]) {
@@ -1334,6 +1407,7 @@ export class HostSession {
       stars: p?.stars ?? 0,
       items: p?.items ?? [],
       tickets: p?.tickets ?? 0,
+      usesTickets: this.engine?.state.config.mode === 'board' && this.engine.map.gimmick === 'train',
       starDiscount: p?.starDiscount ?? false,
     };
   }
@@ -1445,6 +1519,7 @@ export class HostSession {
         paused: this.paused,
         round: this.engine && this.phase === 'game' && this.engine.state.config.mode === 'board' ? { round: this.engine.state.round, total: this.engine.state.config.rounds } : undefined,
         afk: this.awaiting?.player === s.slot && this.afkLeft !== null ? { secondsLeft: this.afkLeft } : null,
+        volumes: this.chief === s.slot ? this.audio.volumes() : undefined,
         view: this.resuming && s.unclaimed !== false && this.phase === 'lobby' ? this.claimEnvelope().view : this.viewFor(s),
       };
       this.send(s, { t: 'view', v: env });

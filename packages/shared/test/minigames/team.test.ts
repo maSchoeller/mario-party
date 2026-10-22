@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { flossRumble, SAFE_TIME } from '../../src/minigames/games/flossRumble';
 import { TEAM_GAMES } from '../../src/minigames/games/group-2v2';
-import { paketKette } from '../../src/minigames/games/paketKette';
+import { PARCEL_COLORS, paketKette } from '../../src/minigames/games/paketKette';
 import { schatzTauziehen } from '../../src/minigames/games/schatzTauziehen';
-import { tandemTretboot } from '../../src/minigames/games/tandemTretboot';
+import { COURSE as TANDEM_COURSE, tandemTretboot } from '../../src/minigames/games/tandemTretboot';
 import { weichenChaos } from '../../src/minigames/games/weichenChaos';
 import { makeMgPlayers, runMinigameHeadless } from '../../src/minigames/headless';
 import type { MgPlayer, MinigameDef } from '../../src/minigames/types';
@@ -137,6 +137,20 @@ describe('paketKette rules', () => {
     paketKette.input(s, 2, { type: 'swipe', dir: 'right' });
     expect(ts.score).toBe(0);
   });
+  it('the sorter phone shows the parcel in hand; throwing onto full hands costs a point', () => {
+    const rng = Rng.fromSeed(5);
+    const s = paketKette.setup(humans([0, 1, 0, 1]), rng, { practice: false });
+    const ts = s.teams[0];
+    expect(paketKette.layout(s, 2)).toMatchObject({ kind: 'swipe', labelKey: 'ctrl.swipeSort', color: null });
+    ts.hand.push({ id: 900, color: 2 }, { id: 901, color: 0 }, { id: 902, color: 1 });
+    expect(paketKette.layout(s, 2)).toMatchObject({ color: PARCEL_COLORS[2], dirColors: { left: PARCEL_COLORS[0], up: PARCEL_COLORS[1], right: PARCEL_COLORS[2] } });
+    ts.score = 3;
+    while (!(ts.belt[0] && ts.belt[0].pos >= 0.9)) paketKette.tick(s, 1 / 30, rng);
+    paketKette.input(s, 0, { type: 'swipe', dir: 'up' });
+    for (let k = 0; k < 20; k++) paketKette.tick(s, 1 / 30, rng);
+    expect(ts.hand).toHaveLength(3);
+    expect(ts.score).toBe(2);
+  });
 });
 
 describe('weichenChaos rules', () => {
@@ -202,6 +216,27 @@ describe('schatzTauziehen rules', () => {
     }
     expect(s.rope).toBeGreaterThan(0);
   });
+  it('one impulse per gap counts: the tap fallback (0.75 per tap) pulls like firm shaking', () => {
+    // player 0 taps at the limit (6.7/s), player 1 shakes firmly (5.5/s at power 0.9)
+    const rng = Rng.fromSeed(10);
+    const s = schatzTauziehen.setup(humans([0, 1, 0, 1]), rng, { practice: false });
+    s.waveAt = 999;
+    let e0 = 0;
+    let e1 = 0;
+    let n = 0;
+    for (let k = 0; k < 60 * 10; k++) {
+      if (k % 9 === 0) for (let d = 0; d < 3; d++) schatzTauziehen.input(s, 0, { type: 'shake', power: 0.75 }); // double taps are dropped
+      if (k % 11 === 0) schatzTauziehen.input(s, 1, { type: 'shake', power: 0.9 });
+      schatzTauziehen.tick(s, 1 / 60, rng);
+      if (k > 120) {
+        e0 += s.energy[0];
+        e1 += s.energy[1];
+        n++;
+      }
+    }
+    expect(e0 / n).toBeGreaterThan(1);
+    expect(Math.abs(e0 / e1 - 1)).toBeLessThan(0.1);
+  });
 });
 
 describe('2v2 play time and draws (medium bots)', () => {
@@ -243,6 +278,22 @@ describe('2v2 tie-breaks and warm-up', () => {
     expect(s.ps.every((p) => p.state === 'raft')).toBe(true);
     expect(flossRumble.result(s)).toEqual([1, 0, 1, 0]);
   });
+  it('flossRumble: pushes against the warm-up railing do not count for the tie-break', () => {
+    const rng = Rng.fromSeed(26);
+    const s = flossRumble.setup(humans([0, 0, 1, 1]), rng, { practice: false });
+    const push = () => {
+      Object.assign(s.ps[0], { x: 0, z: 0, pushCd: 0 });
+      Object.assign(s.ps[2], { x: 1.2, z: 0 });
+      flossRumble.input(s, 0, { type: 'stick', x: 1, y: 0 });
+      flossRumble.input(s, 0, { type: 'button', id: 'push', down: true });
+    };
+    push();
+    expect(s.ps[2].kx).toBeGreaterThan(5);
+    expect(s.hits).toEqual([0, 0]);
+    while (s.t < SAFE_TIME + 0.1) flossRumble.tick(s, 1 / 30, rng);
+    push();
+    expect(s.hits).toEqual([1, 0]);
+  });
   it('paketKette: equal score → the team that reached it first wins', () => {
     const rng = Rng.fromSeed(23);
     const s = paketKette.setup(humans([0, 1, 0, 1]), rng, { practice: false });
@@ -269,8 +320,8 @@ describe('2v2 tie-breaks and warm-up', () => {
     const rng = Rng.fromSeed(25);
     const s = tandemTretboot.setup(humans([0, 0, 1, 1]), rng, { practice: false });
     // boat 0 (first in the update order) is a little behind but just as fast
-    Object.assign(s.boats[0], { pos: 139.9, v: 6 });
-    Object.assign(s.boats[1], { pos: 139.95, v: 6 });
+    Object.assign(s.boats[0], { pos: TANDEM_COURSE - 0.1, v: 6 });
+    Object.assign(s.boats[1], { pos: TANDEM_COURSE - 0.05, v: 6 });
     tandemTretboot.tick(s, 1 / 30, rng);
     expect(s.boats.every((b) => b.finishedAt !== null)).toBe(true);
     expect(tandemTretboot.result(s)).toEqual([1, 1, 0, 0]);

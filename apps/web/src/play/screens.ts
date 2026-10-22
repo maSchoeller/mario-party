@@ -1,8 +1,8 @@
-import { BOT_LEVELS, CHARACTERS, PLAYER_COLOR_HEX, PLAYER_SHAPE, ROUND_OPTIONS } from '@wb/shared/config';
+import { BALANCE, BOT_LEVELS, CHARACTERS, PLAYER_COLOR_HEX, PLAYER_SHAPE, ROUND_OPTIONS } from '@wb/shared/config';
 import type { ItemId } from '@wb/shared/game/items';
 import { t } from '@wb/shared/i18n/index';
 import type { ControllerLayout } from '@wb/shared/minigames/types';
-import { EMOJIS, type ControllerView, type LobbySettings, type PhoneDecision, type ViewEnvelope } from '@wb/shared/net/protocol';
+import { EMOJIS, type ControllerView, type LobbySettings, type PhoneDecision, type ViewEnvelope, type VolumeKind } from '@wb/shared/net/protocol';
 import { DICE, type DiceId } from '@wb/shared/game/dice';
 import { CHAR_EMOJI, ITEM_EMOJI, WHEEL_EMOJI } from '../common/characters';
 import { h } from '../common/dom';
@@ -50,8 +50,109 @@ export function renderHeader(app: PlayApp, hostOnline: boolean): HTMLElement {
         )
       : h('div', { class: 'who' }, t('app.title')),
     me ? h('div', { class: 'stats' }, h('span', {}, `★ ${me.stars}`), h('span', {}, `● ${me.coins}`)) : null,
-    env?.round ? h('div', { class: 'round' }, t('common.round', env.round)) : null,
-    h('div', { class: `link ${app.mode}`, title: app.mode }, !hostOnline ? '⏳' : app.mode === 'p2p' ? 'P2P' : app.mode === 'relay' ? t('play.relayMode') : '…'),
+    // compact round counter: the name keeps its room on narrow phones
+    env?.round ? h('div', { class: 'round', title: t('common.round', env.round) }, h('small', {}, t('play.roundLabel')), `${env.round.round}/${env.round.total}`) : null,
+    h('div', { class: `link ${app.mode}`, title: app.mode === 'relay' ? t('play.relayMode') : app.mode }, !hostOnline ? '⏳' : app.mode === 'p2p' ? 'P2P' : app.mode === 'relay' ? t('host.connectionRelay') : '…'),
+    me && env && inGame(env)
+      ? h(
+          'button',
+          { class: 'inv-btn', 'aria-label': t('play.inventory'), title: t('play.inventory'), onclick: () => (vibrate(8), app.openSheet('inventory')) },
+          '🎒',
+          me.items.length ? h('span', { class: 'badge' }, String(me.items.length)) : null,
+        )
+      : null,
+  );
+}
+
+/** Inventory is reachable everywhere in a running game except during the active minigame controller. */
+function inGame(env: ViewEnvelope): boolean {
+  return !['lobby', 'claim', 'mg'].includes(env.view.screen);
+}
+
+export type SheetKind = 'inventory' | 'volume';
+
+/** Key of the sheet content: the open sheet only re-renders when this changes. */
+export function sheetKey(env: ViewEnvelope, kind: SheetKind): string {
+  if (kind === 'volume') return 'volume';
+  const me = env.me;
+  return `inv:${JSON.stringify(me?.items)}:${me?.tickets}:${me?.starDiscount}:${me?.coins}:${me?.stars}`;
+}
+
+/** Whether a sheet may stay open with this envelope. */
+export function sheetAllowed(env: ViewEnvelope, kind: SheetKind): boolean {
+  return kind === 'volume' ? env.chief && !!env.volumes : !!env.me && inGame(env);
+}
+
+/** Bottom sheet over the current screen: own inventory or the chief's TV volumes. */
+export function renderSheet(app: PlayApp, env: ViewEnvelope, kind: SheetKind): HTMLElement {
+  const body = kind === 'inventory' ? inventorySheet(env) : volumeSheet(app, env);
+  const close = () => app.closeSheet();
+  return h(
+    'div',
+    { class: 'sheet-backdrop', onclick: (e: Event) => e.target === e.currentTarget && close() },
+    h(
+      'section',
+      { class: `sheet card s-${kind}`, role: 'dialog', 'aria-modal': 'true', 'aria-label': t(kind === 'inventory' ? 'play.inventory' : 'play.volumeTitle') },
+      h('div', { class: 'sheet-head' }, h('h2', {}, kind === 'inventory' ? `🎒 ${t('play.inventory')}` : `🔊 ${t('play.volumeTitle')}`), h('button', { class: 'close', 'aria-label': t('common.close'), onclick: close }, '✕')),
+      body,
+    ),
+  );
+}
+
+function inventorySheet(env: ViewEnvelope): HTMLElement {
+  const me = env.me!;
+  return h(
+    'div',
+    { class: 'sheet-body' },
+    h('div', { class: 'inv-stats' }, h('span', { class: 'stars' }, `★ ${me.stars}`), h('span', { class: 'coins' }, `● ${me.coins}`)),
+    h('h3', {}, t('play.itemsCount', { count: me.items.length, max: BALANCE.maxItems })),
+    me.items.length
+      ? h(
+          'ul',
+          { class: 'inv-items' },
+          me.items.map((it) => h('li', {}, h('span', { class: 'emoji' }, ITEM_EMOJI[it] ?? '❔'), h('div', {}, h('strong', {}, t(`item.${it}.name`)), h('small', {}, t(`item.${it}.desc`))))),
+        )
+      : h('p', { class: 'muted' }, t('play.noItemsHint')),
+    me.usesTickets || me.tickets || me.starDiscount
+      ? h(
+          'ul',
+          { class: 'inv-items' },
+          me.usesTickets || me.tickets ? h('li', {}, h('span', { class: 'emoji' }, '🎟️'), h('div', {}, h('strong', {}, t('play.tickets', { count: me.tickets })), h('small', {}, t('play.ticketsDesc')))) : null,
+          me.starDiscount ? h('li', {}, h('span', { class: 'emoji' }, '🏷️'), h('div', {}, h('strong', {}, t('wheel.starDiscount')), h('small', {}, t('play.starDiscountDesc')))) : null,
+        )
+      : null,
+    me.character
+      ? h('div', { class: 'inv-die' }, h('h3', {}, t('play.yourDie', { die: t(`dice.${me.character}.name`) })), diceStrip(me.character), h('small', { class: 'muted' }, t(`dice.${me.character}.desc`)))
+      : null,
+  );
+}
+
+function volumeSheet(app: PlayApp, env: ViewEnvelope): HTMLElement {
+  const vol = env.volumes ?? { music: 0.5, sfx: 0.7, voice: 0.9 };
+  const labels: Record<VolumeKind, string> = { music: 'host.volumeMusic', sfx: 'host.volumeSfx', voice: 'host.volumeVoice' };
+  const icons: Record<VolumeKind, string> = { music: '🎵', sfx: '💥', voice: '🦜' };
+  return h(
+    'div',
+    { class: 'sheet-body volumes' },
+    h('p', { class: 'muted' }, t('play.volumeHint')),
+    (['music', 'sfx', 'voice'] as VolumeKind[]).map((k) => {
+      const out = h('output', {}, `${Math.round(vol[k] * 100)} %`);
+      const input = h('input', { type: 'range', min: 0, max: 100, step: 5, value: Math.round(vol[k] * 100), 'aria-label': t(labels[k]) });
+      let last = 0;
+      let pending: ReturnType<typeof setTimeout> | null = null;
+      const send = () => app.send({ t: 'volume', kind: k, value: Number(input.value) / 100 });
+      input.addEventListener('input', () => {
+        out.textContent = `${input.value} %`;
+        // throttle while dragging, the final value always goes out
+        const now = performance.now();
+        if (pending) clearTimeout(pending);
+        if (now - last > 120) {
+          last = now;
+          send();
+        } else pending = setTimeout(send, 130);
+      });
+      return h('label', { class: 'vol-row' }, h('span', { class: 'vol-label' }, icons[k], ' ', t(labels[k])), out, input);
+    }),
   );
 }
 
@@ -137,11 +238,11 @@ function lobby(app: PlayApp, env: ViewEnvelope, v: Extract<ControllerView, { scr
     { class: 'lobby' },
     h('section', { class: 'card pad' }, h('h2', {}, t('play.chooseCharacter')), chars),
     h('section', { class: 'card pad' }, h('h2', {}, t('play.players')), players),
-    env.chief ? settings(app, v) : h('section', { class: 'card pad muted' }, t('play.waitForChief')),
+    env.chief ? settings(app, env, v) : h('section', { class: 'card pad muted' }, t('play.waitForChief')),
   );
 }
 
-function settings(app: PlayApp, v: Extract<ControllerView, { screen: 'lobby' }>): HTMLElement {
+function settings(app: PlayApp, env: ViewEnvelope, v: Extract<ControllerView, { screen: 'lobby' }>): HTMLElement {
   const s = v.settings;
   const patch = (p: Partial<LobbySettings>) => app.send({ t: 'settings', patch: p });
   const seg = <T extends string | number>(label: string, options: { value: T; label: string }[], current: T, on: (v: T) => void) =>
@@ -201,6 +302,7 @@ function settings(app: PlayApp, v: Extract<ControllerView, { screen: 'lobby' }>)
     s.mode === 'board' ? seg(t('play.teamMode'), [{ value: 'fields' as const, label: t('play.teamMode.fields') }, { value: 'random' as const, label: t('play.teamMode.random') }], s.teamMode, (teamMode) => patch({ teamMode })) : null,
     h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: s.noMotion, onchange: (e: Event) => patch({ noMotion: (e.target as HTMLInputElement).checked }) }), t('play.noMotion')),
     mgList,
+    volumeButton(app, env, 'secondary wide', 'play.volumeTitle'),
     h('button', { class: 'primary big', disabled: !v.canStart, onclick: () => app.send({ t: 'start' }) }, v.canStart ? t('play.start') : t('play.needPlayers')),
   );
 }
@@ -249,7 +351,18 @@ function chiefTools(app: PlayApp, env: ViewEnvelope): HTMLElement | null {
   ff.addEventListener('pointerup', off);
   ff.addEventListener('pointercancel', off);
   ff.addEventListener('pointerleave', off);
-  return h('div', { class: 'chief-tools' }, h('button', { onclick: () => app.send({ t: 'pause', paused: true }) }, `⏸ ${t('play.pause')}`), ff);
+  return h(
+    'section',
+    { class: 'card pad chief-menu' },
+    h('h3', {}, `👑 ${t('play.chiefMenu')}`),
+    h('div', { class: 'chief-tools' }, h('button', { onclick: () => app.send({ t: 'pause', paused: true }) }, `⏸ ${t('play.pause')}`), ff, volumeButton(app, env)),
+  );
+}
+
+/** Opens the TV volume sheet (chief only, AUDIO-06). */
+function volumeButton(app: PlayApp, env: ViewEnvelope, cls = '', labelKey = 'play.volume'): HTMLElement | null {
+  if (!env.chief || !env.volumes) return null;
+  return h('button', { class: `vol-btn ${cls}`, 'aria-label': t('play.volumeTitle'), onclick: () => app.openSheet('volume') }, `🔊 ${t(labelKey)}`);
 }
 
 function emojiBar(app: PlayApp): HTMLElement {
@@ -554,7 +667,14 @@ function pauseOverlay(app: PlayApp, env: ViewEnvelope): HTMLElement {
   return h(
     'div',
     { class: 'pause-overlay' },
-    h('div', { class: 'card pad big-msg' }, '⏸ ', t('host.paused'), env.chief ? h('button', { class: 'primary big', onclick: () => app.send({ t: 'pause', paused: false }) }, t('play.resume')) : h('p', {}, t('host.pausedHint'))),
+    h(
+      'div',
+      { class: 'card pad big-msg' },
+      '⏸ ',
+      t('host.paused'),
+      env.chief ? h('button', { class: 'primary big', onclick: () => app.send({ t: 'pause', paused: false }) }, t('play.resume')) : h('p', {}, t('host.pausedHint')),
+      volumeButton(app, env, 'secondary', 'play.volumeTitle'),
+    ),
   );
 }
 

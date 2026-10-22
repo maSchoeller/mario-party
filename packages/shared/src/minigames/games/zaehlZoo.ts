@@ -1,12 +1,13 @@
 import type { Rng } from '../../rng';
-import type { EntityKind, MgEntity, MgHud, MgPlayer, MinigameDef } from '../types';
-import { ageFx, clamp, emitFx, ranksFromScores, rowSpawn, viewFx, type FxState } from '../util';
+import { botRef, type EntityKind, type MgEntity, type MgHud, type MgPlayer, type MinigameDef } from '../types';
+import { ageFx, clamp, emitFx, rowSpawn, viewFx, type FxState } from '../util';
+import { BOT_LIVE_LAG } from './botLag';
 
 /**
  * #7 Zähl-Zoo (FFA, Quiz): animals run across the TV – count one kind (e.g. red crabs).
  * Afterwards everybody enters a number on the phone; the error |guess − count| is summed
  * over 3 rounds of rising difficulty (more animals, faster, look-alikes). Smallest total
- * error wins.
+ * error wins; ties go to more exact rounds, then to the faster answers (total time).
  */
 export type SortId = 'crab' | 'hermit' | 'chick' | 'duck' | 'frog' | 'penguin' | 'sheep';
 
@@ -71,7 +72,12 @@ export interface ZaehlZooState extends FxState {
   nextId: number;
   guesses: (number | null)[];
   total: number[];
+  /** tie-breaks: exact rounds and summed answer time (s) per player */
+  exact: number[];
+  answerTime: number[];
   botAt: (number | null)[];
+  /** bot form per player (v0.5) */
+  form: number[];
 }
 
 function startRound(s: ZaehlZooState, rng: Rng): void {
@@ -106,8 +112,14 @@ function animalX(a: Animal, t: number): number {
 }
 
 function finishGuess(s: ZaehlZooState): void {
+  s.guesses.forEach((g, i) => {
+    if (g === null) s.answerTime[i] += GUESS;
+  });
   s.guesses = s.guesses.map((g) => (g === null ? 0 : g));
-  s.guesses.forEach((g, i) => (s.total[i] += Math.abs(g! - s.count)));
+  s.guesses.forEach((g, i) => {
+    s.total[i] += Math.abs(g! - s.count);
+    if (g === s.count) s.exact[i]++;
+  });
   s.phase = 'reveal';
   s.phaseAt = s.t;
   // reveal: the count pops up on the pedestal, exact guesses sparkle, far-off ones fizzle
@@ -178,7 +190,10 @@ export const zaehlZoo: MinigameDef<ZaehlZooState> = {
       nextId: 1,
       guesses: Array(n).fill(null),
       total: Array(n).fill(0),
+      exact: Array(n).fill(0),
+      answerTime: Array(n).fill(0),
       botAt: Array(n).fill(null),
+      form: players.map((p) => p.form ?? 1),
       fx: [],
       fxN: 0,
     };
@@ -195,6 +210,7 @@ export const zaehlZoo: MinigameDef<ZaehlZooState> = {
     if (input.type !== 'number' || s.phase !== 'guess' || s.guesses[i] !== null) return;
     if (!Number.isFinite(input.value)) return;
     s.guesses[i] = clamp(Math.round(input.value), 0, MAX);
+    s.answerTime[i] += s.t - s.phaseAt;
     emitFx(s, { kind: 'pop', sfx: 'click', x: rowSpawn(s.n, 3.4, i), y: 2.8, z: -5, s: 0.7 });
   },
   tick(s, dt, rng) {
@@ -221,19 +237,31 @@ export const zaehlZoo: MinigameDef<ZaehlZooState> = {
         }
         s.round = 0;
         s.total = s.total.map(() => 0);
+        s.exact = s.exact.map(() => 0);
+        s.answerTime = s.answerTime.map(() => 0);
       }
       s.round++;
       startRound(s, rng);
     }
   },
   isOver: (s) => s.phase === 'done',
-  result: (s) => ranksFromScores(s.total, false),
+  result(s) {
+    // smaller total error, then more exact rounds, then faster answers
+    const better = (a: number, b: number) =>
+      s.total[a] !== s.total[b] ? s.total[a] < s.total[b] : s.exact[a] !== s.exact[b] ? s.exact[a] > s.exact[b] : s.answerTime[a] < s.answerTime[b] - 1e-6;
+    return s.total.map((_, i) => s.total.filter((_, j) => better(j, i)).length);
+  },
   bot(s, i, level, rng) {
     if (s.phase !== 'guess' || s.guesses[i] !== null) return [];
-    if (s.botAt[i] === null) s.botAt[i] = s.phaseAt + rng.range(1, { easy: 4, medium: 3, hard: 2.5 }[level]);
+    const ref = botRef(level, s.form[i]);
+    // read the question, type one or two digits, send (≈ 2–3.5 s like a person)
+    if (s.botAt[i] === null) s.botAt[i] = s.phaseAt + BOT_LIVE_LAG + ref.choice + 0.7 + rng.next() * 1.4;
     if (s.t < s.botAt[i]!) return [];
-    const sigma = { easy: 2.1, medium: 1.1, hard: 0.45 }[level] * (0.8 + 0.2 * s.round);
-    return [{ type: 'number', value: clamp(Math.round(s.count + rng.noise() * sigma), 0, MAX) }];
+    // counting by eye: the error grows with the round (more, faster animals) and in the
+    // look-alike round a similar animal sometimes gets counted as well
+    const sigma = ref.countSd * (0.8 + 0.3 * s.round);
+    const lookAlike = ROUND_CFG[(s.round - 1) % ROUND_CFG.length].both && rng.chance(ref.lookAlike) ? 1 : 0;
+    return [{ type: 'number', value: clamp(Math.round(s.count + lookAlike + rng.noise() * sigma), 0, MAX) }];
   },
   view(s) {
     const entities: MgEntity[] = [

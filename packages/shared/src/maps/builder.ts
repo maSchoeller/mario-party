@@ -86,7 +86,9 @@ export interface P {
  * Points on a Catmull-Rom spline through `ctrl`, evenly spaced by arc length.
  * open: `n` interior points (t = k/(n+1), the end points are existing fields);
  * closed: `n` points around the loop starting at ctrl[0].
- * y is interpolated linearly along the arc when the control points carry it.
+ * y is interpolated linearly along the arc between control points that carry it; where
+ * either end of a span has no y (e.g. an existing field that takes the terrain height)
+ * the points get none either, so the landscape decides instead of a made-up 0.
  */
 export function spline(ctrl: P[], n: number, closed = false): P[] {
   const pts = closed ? [ctrl[ctrl.length - 1], ...ctrl, ctrl[0], ctrl[1]] : [ctrl[0], ...ctrl, ctrl[ctrl.length - 1]];
@@ -102,11 +104,12 @@ export function spline(ctrl: P[], n: number, closed = false): P[] {
       dense.push({
         x: cr(p0.x, p1.x, p2.x, p3.x),
         z: cr(p0.z, p1.z, p2.z, p3.z),
-        y: (p1.y ?? 0) + ((p2.y ?? 0) - (p1.y ?? 0)) * t,
+        y: p1.y !== undefined && p2.y !== undefined ? p1.y + (p2.y - p1.y) * t : undefined,
       });
     }
   }
-  dense.push(closed ? { ...ctrl[0], y: ctrl[0].y ?? 0 } : { ...ctrl[ctrl.length - 1], y: ctrl[ctrl.length - 1].y ?? 0 });
+  const last = closed ? ctrl[0] : ctrl[ctrl.length - 1];
+  dense.push({ x: last.x, z: last.z, y: last.y });
   const acc = [0];
   for (let i = 1; i < dense.length; i++) acc.push(acc[i - 1] + Math.hypot(dense[i].x - dense[i - 1].x, dense[i].z - dense[i - 1].z));
   const total = acc[acc.length - 1];
@@ -118,7 +121,7 @@ export function spline(ctrl: P[], n: number, closed = false): P[] {
     const a = dense[i - 1];
     const b = dense[i];
     const p: P = { x: a.x + (b.x - a.x) * t, z: a.z + (b.z - a.z) * t };
-    if (hasY) p.y = (a.y ?? 0) + ((b.y ?? 0) - (a.y ?? 0)) * t;
+    if (hasY && a.y !== undefined && b.y !== undefined) p.y = a.y + (b.y - a.y) * t;
     return p;
   };
   const out: P[] = [];
@@ -154,9 +157,9 @@ export function distToPolyline(p: { x: number; z: number }, line: [number, numbe
 
 /**
  * Fields standing in a channel: ford stones for `fordIds` (flooded at high tide), bridge
- * fields (raised to `bridgeY`) for everything else.
+ * fields for everything else (the terrain raises them a little above their banks).
  */
-export function tagCrossings(b: MapBuilder, channel: [number, number][], reach: number, bridgeY: number, fordIds: string[] = []): void {
+export function tagCrossings(b: MapBuilder, channel: [number, number][], reach: number, fordIds: string[] = []): void {
   for (const f of b.fields.values()) {
     if (distToPolyline(f, channel) > reach) continue;
     if (fordIds.includes(f.id)) {
@@ -164,7 +167,7 @@ export function tagCrossings(b: MapBuilder, channel: [number, number][], reach: 
       f.y = -0.3;
     } else {
       f.tags = [...(f.tags ?? []), 'bridge'];
-      f.y = bridgeY;
+      delete f.y;
     }
   }
 }

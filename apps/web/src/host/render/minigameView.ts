@@ -1,10 +1,10 @@
-import { Color3, Matrix, Mesh, MeshBuilder, PointLight, StandardMaterial, Texture, TransformNode, Vector3 } from '@babylonjs/core';
+import { AbstractMesh, Color3, Matrix, Mesh, MeshBuilder, PointLight, StandardMaterial, Texture, TransformNode, Vector3 } from '@babylonjs/core';
 import type { MgEntity, MgFx, MgPlayer, MgSet, MgSfx, MgView } from '@wb/shared/minigames/types';
 import { t } from '@wb/shared/i18n/index';
 import { CharacterRig } from './characters';
 import { burst } from './mgFx';
 import { SceneryBuilder } from './mgScenery';
-import { box, coin, cone, cyl, labelPlane, palm, rock, sphere, starMesh } from './props';
+import { box, coin, cone, cyl, handLantern, labelPlane, palm, rock, sphere, starMesh } from './props';
 import type { Stage } from './stage';
 import { surfaceMat, worldUvs } from './surfaces';
 import { copyTexture, lavaTexture, waterNormals } from './terrain';
@@ -29,10 +29,17 @@ const ENV: Record<MgView['env'], { sky: [string, string]; fog: string; ground: s
 /** Library models standing in for the classic entity kinds (fallback: procedural). */
 const LIBRARY: Partial<Record<MgEntity['kind'], { id: string; scale: number; yaw?: number }>> = {
   palm: { id: 'palm', scale: 0.95 },
-  // the library boat and loco point along z, minigames expect x
-  boat: { id: 'boat', scale: 1, yaw: Math.PI / 2 },
+  // minigames expect the front at +x (ry = 0): the boat's bow points to -z, the loco's to +z
+  boat: { id: 'boat', scale: 1, yaw: -Math.PI / 2 },
   train: { id: 'loco', scale: 1, yaw: Math.PI / 2 },
 };
+
+/** Kinds whose base sits at y (the rest is centered). */
+const BASE_AT_Y = new Set<MgEntity['kind']>(['player', 'cone', 'palm', 'boat', 'train', 'prop']);
+/** Alpha of water surfaces without an entity alpha. */
+const WATER_ALPHA = 0.78;
+/** Balloon string length (does not scale with the balloon). */
+const STRING_LEN = 1;
 
 interface Item {
   node: TransformNode;
@@ -44,7 +51,19 @@ interface Item {
   light?: PointLight;
   /** size the geometry was built with (surface primitives): scaling = size / base */
   base?: [number, number, number];
+  /** requested size at build time (surface primitives are rebuilt when it drifts) */
+  built?: [number, number, number];
   tex?: Texture;
+  /** node + all child meshes (alpha and shadow switches) */
+  meshes: AbstractMesh[];
+  alpha: number;
+  waterMat?: StandardMaterial;
+  balloon?: { ball: Mesh; knot: Mesh; str: Mesh };
+  /** kind may cast shadows; casting = currently registered as caster */
+  casts: boolean;
+  casting?: boolean;
+  /** terrain height below the entity, sampled at (x, z) */
+  ground?: { x: number; z: number; y: number };
 }
 
 export type FxSound = (sfx: MgSfx, pan: number, gain: number) => void;
@@ -85,6 +104,8 @@ export class MinigameView {
     this.scenery = null;
     this.root.dispose(false, false);
     this.restoreLight();
+    // back to the board: rebuilding / recompiling is no slowness (adaptive quality)
+    this.stage.settle();
   }
 
   /** Winners cheer, the others are sad (ranks per minigame player, null = game decides). */
@@ -147,7 +168,16 @@ export class MinigameView {
   }
 
   private keyOf(e: MgEntity): string {
-    return `${e.kind}|${e.color ?? ''}|${e.player ?? ''}|${e.glow ? 1 : 0}|${e.alpha !== undefined && e.alpha < 1 ? 'a' : ''}|${e.mat ?? ''}|${e.prop ?? ''}|${e.taper ?? ''}`;
+    // alpha is applied per frame (mesh visibility): fades never rebuild the meshes
+    return `${e.kind}|${e.color ?? ''}|${e.player ?? ''}|${e.glow ? 1 : 0}|${e.mat ?? ''}|${e.prop ?? ''}|${e.taper ?? ''}`;
+  }
+
+  /** Surface primitives are built at their size: rebuild when it drifts > 10 % (texture scale). */
+  private resized(it: Item, e: MgEntity): boolean {
+    const b = it.built;
+    if (!b) return false;
+    const now = [Math.abs(e.sx ?? 1) || 1, Math.abs(e.sy ?? 1) || 1, Math.abs(e.sz ?? 1) || 1];
+    return now.some((v, k) => (k !== 1 || it.kind !== 'plane') && Math.max(v / b[k], b[k] / v) > 1.1);
   }
 
   private create(e: MgEntity): Item {
@@ -159,11 +189,12 @@ export class MinigameView {
     let light: PointLight | undefined;
     let base: Item['base'];
     let tex: Texture | undefined;
-    const translucent = e.alpha !== undefined && e.alpha < 1;
-    const mat = (c: string) =>
-      e.mat ? surfaceMat(s, c, e.mat, { emissive: e.glow ? 0.3 : 0, alpha: translucent ? 0.55 : undefined }) : s.mat(c, { emissive: e.glow ? 0.8 : 0, alpha: translucent ? 0.55 : 1 });
+    let waterMat: StandardMaterial | undefined;
+    let balloon: Item['balloon'];
+    // opaque materials: the entity alpha becomes the mesh visibility (applyAlpha)
+    const mat = (c: string) => (e.mat ? surfaceMat(s, c, e.mat, { emissive: e.glow ? 0.3 : 0 }) : s.mat(c, { emissive: e.glow ? 0.8 : 0 }));
     const lib = LIBRARY[e.kind];
-    const libNode = lib && !translucent ? s.assets.prop(lib.id, e.id, undefined, e.kind === 'train' ? color : e.color) : null;
+    const libNode = lib ? s.assets.prop(lib.id, e.id, undefined, e.kind === 'train' ? color : e.color) : null;
     if (libNode) {
       node = libNode;
       for (const c of node.getChildMeshes()) {
@@ -177,6 +208,7 @@ export class MinigameView {
       // surface primitives are built at their real size so the texture keeps its scale
       const [w, h, d] = [Math.abs(e.sx ?? 1) || 1, Math.abs(e.sy ?? 1) || 1, Math.abs(e.sz ?? 1) || 1];
       base = [w, h, d];
+      const built: Item['built'] = [w, h, d];
       let m: Mesh;
       if (e.kind === 'box') m = MeshBuilder.CreateBox(e.id, { width: w, height: h, depth: d }, s.scene);
       else if (e.kind === 'plane') {
@@ -202,8 +234,7 @@ export class MinigameView {
           m.receiveShadows = true;
           node = wrap;
           node.parent = this.root;
-          for (const c of [m]) s.castShadow(c, false);
-          return { node, kind: e.kind, key, base };
+          return this.finish(e, { node, kind: e.kind, key, base, built, meshes: [m], alpha: 1, casts: true });
         }
         m.scaling.z = 1;
       }
@@ -215,7 +246,8 @@ export class MinigameView {
         m.material = mat(color);
       }
       m.receiveShadows = true;
-      node = m;
+      m.parent = this.root;
+      return this.finish(e, { node: m, kind: e.kind, key, base, built, meshes: [m], alpha: 1, casts: e.kind !== 'plane' });
     } else {
       switch (e.kind) {
         case 'player': {
@@ -257,8 +289,9 @@ export class MinigameView {
           break;
         }
         case 'coin':
-          node = coin(s, e.id, 1);
-          node.rotation.x = 0;
+          // upright (face to the camera): the node spins it about y like a real coin
+          node = new TransformNode(e.id, s.scene);
+          coin(s, `${e.id}_c`, 1, node);
           break;
         case 'star':
           node = starMesh(s, e.id, 1, e.color ?? '#f2c94c');
@@ -275,23 +308,21 @@ export class MinigameView {
           node = palm(s, e.id);
           break;
         case 'balloon': {
+          // only the ball scales (render): knot and string stay attached below it
           node = new TransformNode(e.id, s.scene);
           const b = MeshBuilder.CreateSphere(`${e.id}_b`, { diameter: 1, segments: 8 }, s.scene);
           b.parent = node;
-          b.scaling.y = 1.15;
           const bm = new StandardMaterial(`${e.id}_bm`, s.scene);
           const c = Color3.FromHexString(color);
           bm.diffuseColor = c;
           bm.specularColor = new Color3(0.5, 0.5, 0.5);
           bm.specularPower = 40;
           bm.emissiveColor = c.scale(e.glow ? 0.6 : 0.12);
-          if (translucent) bm.alpha = 0.55;
           b.material = bm;
           b.onDisposeObservable.add(() => bm.dispose());
           const knot = cone(s, `${e.id}_k`, 0.14, 0.12, color, 5, node);
-          knot.position.y = -0.62;
-          const str = cyl(s, `${e.id}_s`, { d: 0.02, h: 1, tess: 3 }, '#ffffff', node);
-          str.position.y = -1.15;
+          const str = cyl(s, `${e.id}_s`, { d: 0.02, h: STRING_LEN, tess: 3 }, '#ffffff', node);
+          balloon = { ball: b, knot, str };
           break;
         }
         case 'boat': {
@@ -312,16 +343,10 @@ export class MinigameView {
           break;
         }
         case 'lantern': {
-          node = new TransformNode(e.id, s.scene);
-          const model = s.assets.prop('lantern', `${e.id}_m`, node);
-          if (model) model.position.y = -1.1;
-          else {
-            const body = sphere(s, `${e.id}_l`, 0.5, '#ffe08a', 4, node);
-            body.material = s.mat('#ffe08a', { emissive: 1 });
-          }
-          const halo = sphere(s, `${e.id}_h`, 0.55, '#ffe08a', 4, node);
-          halo.material = s.mat('#ffe08a', { emissive: 1 });
-          light = new PointLight(`${e.id}_light`, Vector3.Zero(), s.scene);
+          // hand-held lantern: handle at y, the glowing glass (and the light) hangs below it
+          const lt = handLantern(s, e.id);
+          node = lt.root;
+          light = new PointLight(`${e.id}_light`, lt.glass.clone(), s.scene);
           light.diffuse = new Color3(1, 0.86, 0.55);
           light.intensity = 1.8;
           light.range = 10;
@@ -337,6 +362,7 @@ export class MinigameView {
           const d = Math.abs(e.sz ?? 10);
           const m = MeshBuilder.CreateGround(e.id, { width: w, height: d }, s.scene);
           const wm = new StandardMaterial(`${e.id}_wm`, s.scene);
+          waterMat = wm;
           if (e.mat === 'lava') {
             tex = copyTexture(s.scene, lavaTexture(s.scene, true), `${e.id}_lava`);
             tex.uScale = w / 12;
@@ -346,7 +372,7 @@ export class MinigameView {
             wm.specularColor = Color3.Black();
           } else {
             wm.diffuseColor = Color3.FromHexString(e.color ?? '#3fb0d8');
-            wm.alpha = translucent ? (e.alpha ?? 0.7) : 0.78;
+            wm.alpha = WATER_ALPHA;
             wm.specularColor = new Color3(0.6, 0.65, 0.7);
             wm.specularPower = 110;
             tex = copyTexture(s.scene, waterNormals(s.scene), `${e.id}_wn`);
@@ -371,12 +397,56 @@ export class MinigameView {
       }
     }
     node.parent = this.root;
-    // parts hidden below the backdrop's ground would still darken it (soft-shadow bleeding)
-    const sc = this.scenery;
-    const buried = !!sc && !sc.def.water && e.y + Math.abs(e.sy ?? 1) / 2 < sc.g - 0.05 && e.kind !== 'player';
-    if (e.kind !== 'plane' && e.kind !== 'water' && !buried) for (const m of [node, ...node.getChildMeshes()]) if (m instanceof Mesh) s.castShadow(m, false);
     for (const m of node.getChildMeshes()) m.receiveShadows = true;
-    return { node, kind: e.kind === 'player' ? `player${e.player ?? 0}` : e.kind, key, rig, light, base, tex };
+    const meshes = [...(node instanceof AbstractMesh ? [node] : []), ...node.getChildMeshes()];
+    const kind = e.kind === 'player' ? `player${e.player ?? 0}` : e.kind;
+    return this.finish(e, { node, kind, key, rig, light, base, tex, meshes, alpha: 1, waterMat, balloon, casts: e.kind !== 'plane' && e.kind !== 'water' });
+  }
+
+  /** Common tail of create(): shadow state and alpha for the first frame. */
+  private finish(e: MgEntity, it: Item): Item {
+    // builders (props, rigs, palms …) register their casters themselves: start from a clean state
+    for (const m of it.meshes) this.stage.shadows.removeShadowCaster(m, false);
+    this.updateShadow(it, e);
+    this.applyAlpha(it, e);
+    return it;
+  }
+
+  /** Terrain (or flat ground) height below a point, -Infinity without ground. */
+  private groundAt(x: number, z: number): number {
+    if (this.scenery) return this.scenery.height(x, z);
+    return this.ground ? this.ground.position.y : -Infinity;
+  }
+
+  /**
+   * Shadow casters follow the entity: parts below the terrain would still darken it
+   * (soft-shadow bleeding) and faded entities would leave a full shadow. Re-evaluated every
+   * frame, so things raised out of the ground (or faded in) cast again.
+   */
+  private updateShadow(it: Item, e: MgEntity) {
+    if (!it.casts) return;
+    let g = it.ground;
+    if (!g || Math.abs(g.x - e.x) > 1 || Math.abs(g.z - e.z) > 1) g = it.ground = { x: e.x, z: e.z, y: this.groundAt(e.x, e.z) };
+    const h = Math.abs(e.sy ?? e.sx ?? 1) * (e.kind === 'player' ? 1.8 : e.kind === 'palm' ? 5 : 1);
+    const top = BASE_AT_Y.has(e.kind) ? e.y + h : e.y + h / 2;
+    const want = (e.alpha ?? 1) >= 0.5 && top > g.y - 0.05;
+    if (want === it.casting) return;
+    it.casting = want;
+    for (const m of it.meshes) {
+      if (want) this.stage.castShadow(m, false);
+      else this.stage.shadows.removeShadowCaster(m, false);
+    }
+  }
+
+  /** Entity alpha → visibility of every mesh (water: its material alpha), light and label. */
+  private applyAlpha(it: Item, e: MgEntity) {
+    const a = Math.max(0, Math.min(1, e.alpha ?? 1));
+    if (a === it.alpha) return;
+    it.alpha = a;
+    if (it.waterMat && e.mat !== 'lava') it.waterMat.alpha = a < 1 ? a : WATER_ALPHA;
+    else for (const m of it.meshes) m.visibility = a;
+    if (it.light) it.light.intensity = 1.8 * a;
+    if (it.label) it.label.visibility = a;
   }
 
   private disposeItem(it: Item) {
@@ -395,7 +465,7 @@ export class MinigameView {
       seen.add(e.id);
       let it = this.items.get(e.id);
       const key = this.keyOf(e);
-      if (it && it.key !== key) {
+      if (it && (it.key !== key || this.resized(it, e))) {
         this.disposeItem(it);
         it = undefined;
       }
@@ -412,8 +482,22 @@ export class MinigameView {
       const sz = e.sz ?? 1;
       if (it.base) n.scaling.set(sx / it.base[0], it.kind === 'plane' || it.kind === 'water' ? 1 : sy / it.base[1], sz / it.base[2]);
       else if (e.kind === 'player' || e.kind === 'palm' || e.kind === 'lantern' || e.kind === 'prop' || e.kind === 'boat' || e.kind === 'train') n.scaling.setAll(sx);
+      else if (it.balloon) {
+        // the string keeps its length and hangs from the knot below the ball
+        const b = it.balloon;
+        const k = (Math.abs(sx) + Math.abs(sz)) / 2;
+        const bottom = -0.575 * Math.abs(sy);
+        b.ball.scaling.set(sx, sy * 1.15, sz);
+        b.knot.scaling.setAll(k);
+        b.knot.position.y = bottom - 0.045 * k;
+        b.str.position.y = bottom - 0.09 * k - STRING_LEN / 2;
+      } else if (e.kind === 'rock') n.scaling.set(sx, sy * 0.7, sz); // squat boulders
       else n.scaling.set(sx, sy, sz);
       if (it.tex && e.kind === 'water') {
+        // ripples / lava keep their scale when the surface is resized
+        const rep = e.mat === 'lava' ? 12 : 5;
+        it.tex.uScale = Math.abs(sx) / rep;
+        it.tex.vScale = Math.abs(sz) / rep;
         if (e.mat === 'lava') {
           it.tex.uOffset = Math.sin(this.t * 0.05) * 0.4;
           it.tex.vOffset = this.t * 0.02;
@@ -428,6 +512,7 @@ export class MinigameView {
         it.rig.update(dt);
       }
       n.setEnabled(e.alpha === undefined || e.alpha > 0.02);
+      this.updateShadow(it, e);
       const text = e.label ?? (e.labelKey ? t(e.labelKey) : undefined);
       if (text !== it.labelText) {
         it.label?.dispose();
@@ -438,8 +523,10 @@ export class MinigameView {
           it.label.parent = this.root;
           // white emissive labels would bloom into blobs in the glow layer
           this.stage.glow.addExcludedMesh(it.label);
+          it.label.visibility = it.alpha;
         }
       }
+      this.applyAlpha(it, e);
       if (it.label) it.label.position.set(e.x, e.y + (e.kind === 'player' ? 2.6 : (sy || 1) / 2 + 1.1), e.z);
     }
     for (const [id, it] of this.items) {

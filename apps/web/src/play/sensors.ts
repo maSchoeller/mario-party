@@ -2,6 +2,8 @@
  * Phone sensors & device features: motion permission (asked once on join, CTRL-06),
  * tilt/shake sources with fallbacks, wake lock and vibration (CTRL-05).
  */
+import { SHAKE_MIN_GAP } from '@wb/shared/minigames/games/botLag';
+
 type PermissionResult = 'granted' | 'denied' | 'unsupported';
 
 interface IOSMotionEvent {
@@ -63,7 +65,10 @@ export function startTilt(cb: (x: number, y: number) => void): () => void {
   return () => window.removeEventListener('deviceorientation', on);
 }
 
-/** Shake source: emits power 0..1 for each detected shake impulse. */
+/**
+ * Shake source: emits power 0..1 for each detected shake impulse – at most one per
+ * SHAKE_MIN_GAP, the same limit the games and the tap fallback use (v0.5).
+ */
 export function startShake(cb: (power: number) => void): () => void {
   let last = 0;
   let prev: { x: number; y: number; z: number } | null = null;
@@ -74,7 +79,7 @@ export function startShake(cb: (power: number) => void): () => void {
     if (prev) {
       const d = Math.abs(cur.x - prev.x) + Math.abs(cur.y - prev.y) + Math.abs(cur.z - prev.z);
       const now = performance.now();
-      if (d > 12 && now - last > 90) {
+      if (d > 12 && now - last >= SHAKE_MIN_GAP * 1000) {
         last = now;
         cb(Math.min(1, (d - 12) / 25 + 0.3));
       }

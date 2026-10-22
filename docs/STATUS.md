@@ -1,4 +1,4 @@
-# Umsetzungsstand je Anforderung (Stand 20.10.2026, v0.4)
+# Umsetzungsstand je Anforderung (Stand 21.10.2026, v0.5)
 
 Legende: ✅ umgesetzt & lokal getestet · 🟡 umgesetzt mit Platzhalter/Einschränkung · ⛔ offen (externer Dienst/Gerät nötig, siehe [OPEN_POINTS.md](OPEN_POINTS.md))
 
@@ -35,14 +35,16 @@ Legende: ✅ umgesetzt & lokal getestet · 🟡 umgesetzt mit Platzhalter/Einsch
 | ITEM-01/02 | ✅ | 10 Items (neu: Risiko-Würfel, Gold-Würfel), Einsatz am Handy vor dem Würfeln, max. 3, Ersetzen/Verwerfen |
 | CHAOS-01 | ✅ | Finale letzte 5 Runden: Zwischenstand, Blau/Rot ×2, Letzter dreht Rad (Münzen/Item/Stern-Rabatt) |
 | CHAOS-02/03 | ✅ | 3 aus 7 Bonus-Kategorien (eine immer aus dem Aufhol-Pool), einzeln enthüllt; Halbzeit-Aufholrad; Letzter nach Runde 10 gewinnt in 15–18 % der Bot-Partien ([BALANCING.md](BALANCING.md)) |
-| BOT-01..04 | ✅ | 3 Stärken, Übernahme bei Abbruch, Bot-KI für alle 21 Minispiele, Brett-Entscheidungen Richtung Stern |
+| BOT-01..04 | ✅ | 3 Stärken, Übernahme bei Abbruch, Bot-KI für alle 21 Minispiele, Brett-Entscheidungen Richtung Stern. v0.5: Minispiel-Bots nach menschlichem Referenzmodell (`HUMAN_REF`), nur sichtbare Infos, TV-Verzögerung, Tagesform je Bot ([BALANCING.md](BALANCING.md)) |
 
 ## Maps
 
 | ID | Stand | Umsetzung / Nachweis |
 |---|---|---|
-| MAP-01 | ✅ | v0.3: 60–80 Felder, 4–6 Abzweigungen, 1–2 Shops, ≥ 5 Sternplätze – automatisch validiert (`validateMap`). Kokosnuss 73/5, Vulkan 65/4, Bimmelbahn 61/5 |
+| MAP-01 | ✅ | v0.3: 60–80 Felder, 4–6 Abzweigungen, 1–2 Shops, ≥ 5 Sternplätze – automatisch validiert (`validateMap`). v0.5: Kokosnuss 75/5, Vulkan 65/4, Bimmelbahn 62/5; Geometrie-Prüfung (`maps.test.ts`: Deko/Gebäude/Wege/Wasser/Kreuzungswinkel/Brücken) |
 | MAP-07 (v0.3) | ✅ | Landschaft aus Map-Daten: Höhenfeld mit Küsten, Hügeln, Fluss-/Lava-/Kanal-Rinnen; Wege eingeebnet; Brücken, Steg, Gebäude an Shop/Item/Glück/Duell/Start; instanzierte Vegetation (`terrain.ts`, `board.ts`) |
+| MAP-08 (v0.5) | ✅ | Minimap unten Mitte (Wege, Felder, Figuren mit Form, Stern, Shops, gesperrte Felder), live, in Minispielen/Overlays ausgeblendet (`minimap.ts`) |
+| ART-08 (v0.5) | ✅ | Keine koplanaren Flächen: Brett (Wege/Sockel/Icons/Brücken/Wasser gestaffelt, `maps.test.ts`) und Minispiele (`coplanar.test.ts`); keine dauerhafte Auflösungsabsenkung mehr nach dem Laden (`stage.ts`) |
 | MAP-02 | ✅ | Gimmick angekündigt + animiert (Wasserstand, Ausbruch/Kamerawackeln, Zugfahrt), HUD-Widget |
 | MAP-03 | ✅ | Übersichtskamera, Verfolgung des aktiven Spielers, Zoom bei Ereignissen |
 | MAP-04 | ✅ | Suno-Loop je Map + Finale-Variante, Crossfade-Loop |
@@ -69,7 +71,7 @@ Legende: ✅ umgesetzt & lokal getestet · 🟡 umgesetzt mit Platzhalter/Einsch
 | ID | Stand | Umsetzung / Nachweis |
 |---|---|---|
 | CTRL-01/02 | ✅ | Handy = Controller + private Infos; kontextabhängige Layouts |
-| CTRL-03 | ✅ | Wartebildschirm: wer dran ist, Emoji-Reaktionen am TV |
+| CTRL-03 | ✅ | Wartebildschirm: wer dran ist, Emoji-Reaktionen am TV. v0.5: 🎒-Inventar jederzeit (Items, Tickets, Würfel), Item-Symbole aller Spieler am TV |
 | CTRL-04 | ✅ | Touch-Ziele ≥ 48 px, Hinweis zum Drehen |
 | CTRL-05 | ✅ | Wake Lock (HTTPS nötig), Vibration |
 | CTRL-06 | 🟡 | Gyro-Freigabe beim Beitritt; auf echtem iOS ungetestet ⛔ |
@@ -83,7 +85,7 @@ Legende: ✅ umgesetzt & lokal getestet · 🟡 umgesetzt mit Platzhalter/Einsch
 | ASSET-01..04 | 🟡 | GLB aus Blender-Skripten (Figur ≤ 1,8 k Dreiecke, Budget im Build geprüft); statt CC0/Meshy eigene Modelle, keine Mesh-Kompression ([Abweichungen](ASSETS_LICENSES.md#bewusste-abweichungen-von-der-asset-pipeline-der-spec)) |
 | ASSET-05 | ✅ | `docs/ASSETS_LICENSES.md` |
 | AUDIO-01..03 | ✅ | Suno-Musik + Jingles, ElevenLabs-SFX + Moderator; prozeduraler Fallback |
-| AUDIO-04/05/06 | ✅ | Gebrabbel, Audio nur am Host, getrennte Lautstärken (gespeichert) |
+| AUDIO-04/05/06 | ✅ | Gebrabbel, Audio nur am Host, getrennte Lautstärken (gespeichert); v0.5: im Bandenchef-Menü am Handy, am TV nur bei Mausbewegung |
 | AUDIO-08 (v0.4) | ✅ | Minispiele: 22 Effekte, 5 Ablauf-Stinger, 9 Ambient-Loops je Kulisse; Musik leiser unter der Erklärung, Tiefpass beim Abpfiff, Stereo-Panorama der Effekte |
 | AUDIO-07 | 🟡 | Tarife dokumentiert (ElevenLabs Free = nicht-kommerziell, Suno über Drittanbieter = unklar) – Klärung vor Veröffentlichung ⛔ |
 

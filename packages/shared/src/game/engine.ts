@@ -22,10 +22,14 @@ import type {
 
 export class ActionError extends Error {}
 
-const LUCKY_WHEEL: WheelSegment['id'][] = ['coins5', 'coins10', 'item', 'swapCoins', 'coinsMinus5', 'bonusDuel'];
-const FINALE_WHEEL: WheelSegment['id'][] = ['coins10', 'item', 'starDiscount', 'coins15', 'item', 'star'];
-/** Mid-game comeback wheel for the last place (CHAOS-03: trailing players can still win). */
-const CATCHUP_WHEEL: WheelSegment['id'][] = ['stealStar', 'star', 'swapCoins', 'coins10', 'stealStar', 'item'];
+export const LUCKY_WHEEL: WheelSegment['id'][] = ['coins5', 'coins10', 'item', 'swapCoins', 'coinsMinus5', 'bonusDuel'];
+export const FINALE_WHEEL: WheelSegment['id'][] = ['coins10', 'item', 'starDiscount', 'coins15', 'item', 'star'];
+/**
+ * Half-time comeback wheel for the last place (CHAOS-03: trailing players can still win).
+ * v0.5: spins after 10 of 20 rounds; one star steal became coins so the last place after
+ * round 10 wins ~17 % of bot games (target 15–18 %, see scripts/balance.ts).
+ */
+export const CATCHUP_WHEEL: WheelSegment['id'][] = ['stealStar', 'star', 'swapCoins', 'coins10', 'item', 'coins10'];
 
 export function createGame(config: GameConfig, setups: PlayerSetup[]): GameState {
   // GAME-01: bots fill up to 4; with 3+ humans bots can be switched off -> 3 seats
@@ -65,7 +69,7 @@ export function createGame(config: GameConfig, setups: PlayerSetup[]): GameState
     round: 1,
     turnIdx: 0,
     stage: 'intro',
-    starField: rng.pick(map.starSpots),
+    starField: map.starSpots[0],
     traps: [],
     coinBags: [],
     gimmick: {},
@@ -75,6 +79,9 @@ export function createGame(config: GameConfig, setups: PlayerSetup[]): GameState
     finaleStarted: false,
   };
   GIMMICKS[map.gimmick].init(state, map);
+  // the first star must be reachable under the initial gimmick state (e.g. high tide)
+  const spots = new GameEngine(state).reachableStarSpots();
+  state.starField = rng.pick(spots.length ? spots : map.starSpots);
   return state;
 }
 
@@ -202,10 +209,92 @@ export class GameEngine {
     return !this.gimmick.isBlocked?.(this, fieldId);
   }
 
+  /** Open successors. Blocked fields are never entered (may be empty: the walk stops). */
   openNext(fieldId: string): string[] {
-    const all = this.field(fieldId).next;
-    const open = all.filter((n) => this.isOpen(n));
-    return open.length ? open : all;
+    return this.field(fieldId).next.filter((n) => this.isOpen(n));
+  }
+
+  private liveCache: { sig: string; live: Set<string> } | null = null;
+
+  /**
+   * Open fields from which a player can keep walking forever over open fields, i.e. that
+   * do not lead into a blocked dead end (flooded ford, lava). Cached per blocking state.
+   */
+  liveFields(): Set<string> {
+    const open = this.map.fields.filter((f) => this.isOpen(f.id)).map((f) => f.id);
+    const sig = open.join(',');
+    if (this.liveCache?.sig === sig) return this.liveCache.live;
+    const live = new Set(open);
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const id of live) {
+        if (!this.field(id).next.some((n) => live.has(n))) {
+          live.delete(id);
+          changed = true;
+        }
+      }
+    }
+    this.liveCache = { sig, live };
+    return live;
+  }
+
+  isLive(fieldId: string): boolean {
+    return this.liveFields().has(fieldId);
+  }
+
+  /**
+   * Ways forward a walking player may choose: open successors without the ones that only
+   * lead into blocked dead ends (look-ahead). Inside a dead end all open ways are offered.
+   */
+  moveOptions(fieldId: string): string[] {
+    const open = this.openNext(fieldId);
+    if (open.length <= 1) return open;
+    const live = open.filter((n) => this.isLive(n));
+    return live.length ? live : open;
+  }
+
+  /** Fields reachable from `from` over live fields. */
+  private reachable(from: string): Set<string> {
+    const live = this.liveFields();
+    const seen = new Set<string>([from]);
+    const queue = [from];
+    while (queue.length) {
+      for (const n of this.field(queue.shift()!).next) {
+        if (live.has(n) && !seen.has(n)) {
+          seen.add(n);
+          queue.push(n);
+        }
+      }
+    }
+    return seen;
+  }
+
+  /**
+   * Star spots everybody can walk to right now: reachable over open, not cut-off fields
+   * from the start and from every player's field (a spot behind the flooded ford is not).
+   */
+  reachableStarSpots(exclude?: string): string[] {
+    const sources = [this.map.start, ...this.state.players.map((p) => p.field)].filter((f) => this.isLive(f));
+    const sets = [...new Set(sources)].map((f) => this.reachable(f));
+    return this.map.starSpots.filter((s) => s !== exclude && this.isLive(s) && sets.every((r) => r.has(s)));
+  }
+
+  /**
+   * A gimmick changed which fields are blocked: players on blocked or cut-off fields are
+   * moved to the nearest safe field behind them, and the star flees if nobody can reach it.
+   */
+  refreshBlocking(washKey: string, starKey: string): void {
+    this.state.players.forEach((p, i) => {
+      if (this.isLive(p.field)) return;
+      const safe = this.safeFieldBehind(p.field);
+      this.emit({ type: 'announce', key: washKey, player: i });
+      this.teleport(i, safe, 'wash');
+    });
+    if (!this.reachableStarSpots().includes(this.state.starField)) {
+      this.emit({ type: 'announce', key: starKey });
+      this.moveStar();
+    }
   }
 
   /** Moves a player directly (no walking), e.g. cannon/warp/wash. */
@@ -216,7 +305,7 @@ export class GameEngine {
     this.emit({ type: 'move', player: i, from, to, kind });
   }
 
-  /** Nearest field (walking backwards) that is not blocked – used to wash players back. */
+  /** Nearest field (walking backwards) that is open and not cut off – used to wash players back. */
   safeFieldBehind(fieldId: string): string {
     const seen = new Set<string>([fieldId]);
     let frontier = [fieldId];
@@ -226,7 +315,7 @@ export class GameEngine {
         for (const pr of predecessors(this.map, f)) {
           if (seen.has(pr)) continue;
           seen.add(pr);
-          if (this.isOpen(pr) && !PASS_FIELDS.includes(this.field(pr).type)) return pr;
+          if (this.isLive(pr) && !PASS_FIELDS.includes(this.field(pr).type)) return pr;
           nextFrontier.push(pr);
         }
       }
@@ -264,6 +353,19 @@ export class GameEngine {
     const pa = this.player(a);
     const pb = this.player(b);
     return pb.stars - pa.stars || pb.coins - pa.coins;
+  }
+
+  /** Last place for the comeback wheels: fewest stars, then fewest coins, a tie is drawn by lot. */
+  lastPlace(): number {
+    const st = this.standings();
+    const worst = st[st.length - 1];
+    const tied = st.filter((i) => this.compare(i, worst) === 0);
+    return tied.length > 1 ? this.rng.pick(tied) : worst;
+  }
+
+  /** Standings with the drawn last place shown last (it may share the rank with others). */
+  private standingsWithLast(last: number): number[] {
+    return [...this.standings().filter((i) => i !== last), last];
   }
 
   // ---------------------------------------------------------------- decisions
@@ -319,17 +421,19 @@ export class GameEngine {
         this.continueMove();
         return;
       }
+      // invalid actions throw before `pending` is cleared, so a bad message cannot stall the game
       case 'shop': {
         if (a.type !== 'buy') throw new ActionError('expected buy');
-        this.state.pending = null;
         if (a.item) {
           if (!p.offer.includes(a.item)) throw new ActionError('item not offered');
           const price = ITEMS[a.item].price;
           const pl = this.player(p.player);
           if (pl.coins < price) throw new ActionError('not enough coins');
-          if (pl.items.length >= BALANCE.maxItems) {
-            if (a.replace === undefined || a.replace < 0 || a.replace >= pl.items.length) throw new ActionError('inventory full');
-            const old = pl.items.splice(a.replace, 1)[0];
+          const full = pl.items.length >= BALANCE.maxItems;
+          if (full && (a.replace === undefined || a.replace < 0 || a.replace >= pl.items.length)) throw new ActionError('inventory full');
+          this.state.pending = null;
+          if (full) {
+            const old = pl.items.splice(a.replace!, 1)[0];
             this.emit({ type: 'item', player: p.player, item: old, gained: false });
           }
           this.spend(p.player, price, 'shop');
@@ -337,11 +441,13 @@ export class GameEngine {
           this.emit({ type: 'item', player: p.player, item: a.item, gained: true });
           this.emit({ type: 'announce', key: 'mod.shopBought', params: { item: `item.${a.item}.name` }, player: p.player });
         }
+        this.state.pending = null;
         this.continueMove();
         return;
       }
       case 'buyStar': {
         if (a.type !== 'buyStar') throw new ActionError('expected buyStar');
+        if (a.accept && this.player(p.player).coins < p.price) throw new ActionError('not enough coins');
         this.state.pending = null;
         if (a.accept) this.buyStar(p.player, p.price);
         this.continueMove();
@@ -349,25 +455,26 @@ export class GameEngine {
       }
       case 'station': {
         if (a.type !== 'station') throw new ActionError('expected station');
-        this.state.pending = null;
         if (a.dest) {
           if (!p.destinations.includes(a.dest)) throw new ActionError('invalid station');
           const pl = this.player(p.player);
+          if (pl.tickets <= 0 && pl.coins < p.ticketPrice) throw new ActionError('no ticket');
+          this.state.pending = null;
           if (pl.tickets > 0) pl.tickets--;
-          else if (pl.coins >= p.ticketPrice) this.spend(p.player, p.ticketPrice, 'ticket');
-          else throw new ActionError('no ticket');
+          else this.spend(p.player, p.ticketPrice, 'ticket');
           this.emit({ type: 'announce', key: 'mod.trainRide', params: { station: this.field(a.dest).label ?? '' }, player: p.player });
           this.teleport(p.player, a.dest, 'ride');
           this.state.turn!.passResolved = a.dest;
         }
+        this.state.pending = null;
         this.continueMove();
         return;
       }
       case 'cablecar': {
         if (a.type !== 'cablecar') throw new ActionError('expected cablecar');
+        if (a.accept && this.player(p.player).coins < p.price) throw new ActionError('not enough coins');
         this.state.pending = null;
         if (a.accept) {
-          if (this.player(p.player).coins < p.price) throw new ActionError('not enough coins');
           this.spend(p.player, p.price, 'cablecar');
           this.emit({ type: 'announce', key: 'mod.cablecar', player: p.player });
           this.teleport(p.player, p.target, 'cable');
@@ -378,10 +485,10 @@ export class GameEngine {
       }
       case 'itemReplace': {
         if (a.type !== 'replaceItem') throw new ActionError('expected replaceItem');
-        this.state.pending = null;
         const pl = this.player(p.player);
+        if (a.index !== null && (a.index < 0 || a.index >= pl.items.length)) throw new ActionError('invalid index');
+        this.state.pending = null;
         if (a.index !== null) {
-          if (a.index < 0 || a.index >= pl.items.length) throw new ActionError('invalid index');
           const old = pl.items[a.index];
           pl.items[a.index] = p.newItem;
           this.emit({ type: 'item', player: p.player, item: old, gained: false });
@@ -438,6 +545,7 @@ export class GameEngine {
       passResolved: null,
       landed: false,
       stepsTaken: 0,
+      starBought: false,
     };
     this.emit({ type: 'turnStart', player: i });
     this.state.pending = { kind: 'turnMenu', player: i, canUseItem: this.player(i).items.some((it) => ITEMS[it].usable), dice: this.diceOptions(i) };
@@ -484,15 +592,32 @@ export class GameEngine {
         t.starSteal = true;
         break;
       case 'trapStone': {
-        this.state.traps = this.state.traps.filter((tr) => tr.field !== pl.field);
-        this.state.traps.push({ field: pl.field, owner: i });
-        this.emit({ type: 'trap', field: pl.field, owner: i, placed: true });
+        const field = this.trapField(pl.field);
+        this.state.traps = this.state.traps.filter((tr) => tr.field !== field);
+        this.state.traps.push({ field, owner: i });
+        this.emit({ type: 'trap', field, owner: i, placed: true });
         break;
       }
       default:
         break; // dice items modify the roll
     }
     this.state.pending = { kind: 'turnMenu', player: i, canUseItem: false, dice: this.diceOptions(i) };
+  }
+
+  /**
+   * Traps only fire when someone stops on the field. On a pass field (start, shop, ...) or
+   * under the star nobody ever stops, so the trap goes onto the next field ahead instead.
+   */
+  trapField(from: string): string {
+    const ok = (id: string) => !PASS_FIELDS.includes(this.field(id).type) && id !== this.state.starField;
+    const seen = new Set([from]);
+    const queue = [from];
+    while (queue.length) {
+      const cur = queue.shift()!;
+      if (ok(cur)) return cur;
+      for (const n of this.moveOptions(cur)) if (!seen.has(n)) (seen.add(n), queue.push(n));
+    }
+    return from;
   }
 
   private roll(i: number, second: DiceId, fixed?: number): void {
@@ -534,8 +659,10 @@ export class GameEngine {
         return;
       }
       const backward = t.remaining < 0;
-      const options = backward ? this.openPrev(pl.field) : this.openNext(pl.field);
+      const options = backward ? this.openPrev(pl.field) : this.moveOptions(pl.field);
       if (!options.length) {
+        // every way on is blocked: the move ends here (never walk into a blocked field)
+        this.emit({ type: 'announce', key: 'mod.blocked', player: i });
         t.remaining = 0;
         continue;
       }
@@ -547,11 +674,9 @@ export class GameEngine {
     }
   }
 
-  /** Predecessors that can be walked to backwards (negative dice totals). */
+  /** Open predecessors that can be walked to backwards (negative dice totals). */
   openPrev(fieldId: string): string[] {
-    const all = predecessors(this.map, fieldId);
-    const open = all.filter((n) => this.isOpen(n));
-    return open.length ? open : all;
+    return predecessors(this.map, fieldId).filter((n) => this.isOpen(n));
   }
 
   private step(i: number, to: string, backward = false): void {
@@ -617,6 +742,11 @@ export class GameEngine {
   private passTrigger(i: number, fieldId: string): boolean {
     const pl = this.player(i);
     if (this.state.starField === fieldId) {
+      // one star per turn: the star may move further along the same path after a purchase
+      if (this.state.turn?.starBought) {
+        this.emit({ type: 'announce', key: 'mod.starLimit', player: i });
+        return false;
+      }
       const price = this.starPrice(i);
       if (pl.coins >= price) {
         this.state.pending = { kind: 'buyStar', player: i, price };
@@ -657,15 +787,18 @@ export class GameEngine {
     this.spend(i, price, 'star');
     pl.starDiscount = false;
     pl.stats.starsBought++;
+    if (this.state.turn) this.state.turn.starBought = true;
     this.changeStars(i, 1, 'buy');
     this.emit({ type: 'announce', key: 'mod.starBought', player: i });
     this.moveStar();
   }
 
+  /** Moves the star to another spot that players can walk to under the current blocking. */
   moveStar(): void {
     const from = this.state.starField;
+    const reachable = this.reachableStarSpots(from);
     const open = this.map.starSpots.filter((s) => s !== from && this.isOpen(s));
-    const candidates = open.length ? open : this.map.starSpots.filter((s) => s !== from);
+    const candidates = reachable.length ? reachable : open.length ? open : this.map.starSpots.filter((s) => s !== from);
     const to = this.rng.pick(candidates);
     this.state.starField = to;
     this.emit({ type: 'starMoved', from, to });
@@ -722,10 +855,16 @@ export class GameEngine {
         break;
       case 'duel': {
         pl.lastColor = 'neutral';
-        const options = this.all().filter((o) => o !== i);
+        // the challenger cannot risk more than they own; without coins on either side there is
+        // nothing to win, so no duel (a 0-coin stake used to start a pointless minigame)
+        const stake = Math.min(BALANCE.duelStake, pl.coins);
+        const options = this.all().filter((o) => o !== i && this.player(o).coins > 0);
+        if (stake <= 0 || !options.length) {
+          this.emit({ type: 'announce', key: 'mod.duelNoCoins', player: i });
+          break;
+        }
         this.emit({ type: 'announce', key: 'mod.duel', player: i });
-        // the challenger cannot risk more than they own
-        this.state.pending = { kind: 'duelPick', player: i, options, stake: Math.min(BALANCE.duelStake, pl.coins) };
+        this.state.pending = { kind: 'duelPick', player: i, options, stake };
         break;
       }
       default:
@@ -896,12 +1035,11 @@ export class GameEngine {
     this.emit({ type: 'roundStart', round: s.round, total: s.config.rounds });
     this.gimmick.onRoundStart?.(this);
     this.emit({ type: 'autosave' });
-    if (s.config.mode === 'board' && !s.catchupDone && s.round === Math.floor(s.config.rounds / 2)) {
+    if (s.config.mode === 'board' && !s.catchupDone && s.round === halftimeRound(s.config.rounds)) {
       // half time: the last place gets a comeback spin (CHAOS-03)
       s.catchupDone = true;
-      const st = this.standings();
-      this.emit({ type: 'standings', ranking: st });
-      const last = st[st.length - 1];
+      const last = this.lastPlace();
+      this.emit({ type: 'standings', ranking: this.standingsWithLast(last) });
       s.turn = null;
       s.pending = { kind: 'wheel', player: last, segments: CATCHUP_WHEEL, reason: 'catchup' };
       this.emit({ type: 'announce', key: 'mod.catchup', player: last });
@@ -910,10 +1048,10 @@ export class GameEngine {
     if (this.isFinale() && !s.finaleStarted) {
       s.finaleStarted = true;
       this.emit({ type: 'finale' });
-      const st = this.standings();
+      const last = this.lastPlace();
+      const st = this.standingsWithLast(last);
       this.emit({ type: 'standings', ranking: st });
       this.emit({ type: 'announce', key: 'mod.finale', params: { leader: st[0], stars: this.player(st[0]).stars } });
-      const last = st[st.length - 1];
       // last place spins the finale wheel (CHAOS-01)
       s.turn = null;
       s.pending = { kind: 'wheel', player: last, segments: FINALE_WHEEL, reason: 'finale' };
@@ -1014,6 +1152,14 @@ export class GameEngine {
     this.emit({ type: 'announce', key: 'mod.winner', player: s.ranking[0] });
     this.emit({ type: 'gameOver', ranking: [...s.ranking] });
   }
+}
+
+/**
+ * Round at whose start the half-time comeback wheel spins: after half of the rounds have
+ * been played (20 rounds: before round 11; it used to spin after only 9 rounds).
+ */
+export function halftimeRound(rounds: number): number {
+  return Math.floor(rounds / 2) + 1;
 }
 
 function formatOf(game: string): MgFormat {

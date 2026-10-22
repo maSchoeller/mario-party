@@ -97,6 +97,31 @@ export function coin(stage: Stage, name: string, d = 0.8, parent?: TransformNode
   return m;
 }
 
+/**
+ * Hand-held lantern (~0.7 high): origin at the top of the handle, the glowing glass hangs
+ * below it. `glass` is its center in local space (where a light belongs).
+ */
+export function handLantern(stage: Stage, name: string, parent?: TransformNode): { root: TransformNode; glass: Vector3 } {
+  const root = new TransformNode(name, stage.scene);
+  if (parent) root.parent = parent;
+  const frame = '#3d3a4a';
+  const handle = MeshBuilder.CreateTorus(`${name}_hd`, { diameter: 0.2, thickness: 0.035, tessellation: 10 }, stage.scene);
+  handle.rotation.x = Math.PI / 2;
+  handle.position.y = -0.1;
+  handle.material = stage.mat(frame);
+  handle.parent = root;
+  const cap = cone(stage, `${name}_cap`, 0.36, 0.14, frame, 4, root);
+  cap.rotation.y = Math.PI / 4;
+  cap.position.y = -0.24;
+  const glass = box(stage, `${name}_gl`, 0.22, 0.32, 0.22, '#ffe08a', root);
+  glass.material = stage.mat('#ffe08a', { emissive: 1 });
+  glass.position.y = -0.47;
+  for (const [x, z] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) box(stage, `${name}_post${x}${z}`, 0.04, 0.34, 0.04, frame, root).position.set(x * 0.12, -0.47, z * 0.12);
+  const foot = box(stage, `${name}_ft`, 0.3, 0.06, 0.3, frame, root);
+  foot.position.y = -0.66;
+  return { root, glass: new Vector3(0, -0.47, 0) };
+}
+
 export function palm(stage: Stage, name: string, parent?: TransformNode, scale = 1): TransformNode {
   const root = new TransformNode(name, stage.scene);
   if (parent) root.parent = parent;

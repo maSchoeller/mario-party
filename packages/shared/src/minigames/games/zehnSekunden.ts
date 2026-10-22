@@ -1,6 +1,6 @@
 import { PLAYER_COLOR_HEX } from '../../config';
-import type { MgEntity, MgHud, MgPlayer, MinigameDef } from '../types';
-import { ageFx, emitFx, ranksFromScores, rowSpawn, viewFx, type FxState } from '../util';
+import { botRef, type MgEntity, type MgHud, type MgPlayer, type MinigameDef } from '../types';
+import { ageFx, emitFx, faceAngle, ranksFromScores, rowSpawn, viewFx, type FxState } from '../util';
 
 /**
  * #5 Zehn-Sekunden-Zauber (FFA, Timing): a clock starts and is visible for the first 3 s,
@@ -20,6 +20,8 @@ const CLOCK_Y = 4.5;
 const CLOCK_Z = 3;
 const ROW_Z = -1.5;
 const PED = 0.3;
+/** bots: people counting in their head tend to press early (the less practised, the earlier) */
+const BOT_BIAS = { easy: -0.3, medium: -0.15, hard: 0 };
 
 export interface ZehnSekundenState extends FxState {
   t: number;
@@ -39,6 +41,8 @@ export interface ZehnSekundenState extends FxState {
   /** sum of deviations from 10.00 s per player */
   total: number[];
   botPlan: (number | null)[];
+  /** bot form per player (v0.5) */
+  form: number[];
 }
 
 const dev = (v: number) => Math.abs(v - TARGET);
@@ -93,6 +97,7 @@ export const zehnSekunden: MinigameDef<ZehnSekundenState> = {
       pressedAt: Array(n).fill(null),
       total: Array(n).fill(0),
       botPlan: Array(n).fill(null),
+      form: players.map((p) => p.form ?? 1),
     };
   },
   layout(s, i) {
@@ -143,8 +148,10 @@ export const zehnSekunden: MinigameDef<ZehnSekundenState> = {
   bot(s, i, level, rng) {
     if (s.phase !== 'run' || s.presses[i] !== null) return [];
     if (s.botPlan[i] === null) {
-      const sigma = { easy: 0.85, medium: 0.45, hard: 0.18 }[level];
-      s.botPlan[i] = s.startAt + TARGET + rng.noise() * sigma;
+      // blind estimate like a person counting in their head: spread = blindCv × 10 s
+      // (hard ≈ ±0.45 s, medium ≈ ±0.8 s, easy ≈ ±1.5 s) plus the typical early bias
+      const sigma = botRef(level, s.form[i]).blindCv * TARGET;
+      s.botPlan[i] = s.startAt + TARGET + BOT_BIAS[level] + rng.noise() * sigma;
     }
     if (s.t >= s.botPlan[i]!) return [{ type: 'press', t: s.botPlan[i]! }];
     return [];
@@ -168,8 +175,8 @@ export const zehnSekunden: MinigameDef<ZehnSekundenState> = {
       { id: 'rim', kind: 'torus', x: 0, y: CLOCK_Y, z: CLOCK_Z - 0.15, rx: -Math.PI / 2, sx: 6.3, sy: 1, sz: 6.3, color: '#f0c04a' },
       { id: 'hub', kind: 'sphere', x: 0, y: CLOCK_Y, z: CLOCK_Z - 0.4, sx: 0.5, sy: 0.5, sz: 0.5, color: '#3b2f4f', mat: 'metal' },
       // stage lights, a magician's hat and an hourglass at the sides
-      { id: 'spotL', kind: 'prop', prop: 'stagelight', x: -7.4, y: 0, z: -3, ry: 2.5, sx: 1.2 },
-      { id: 'spotR', kind: 'prop', prop: 'stagelight', x: 7.4, y: 0, z: -3, ry: -2.5, sx: 1.2 },
+      { id: 'spotL', kind: 'prop', prop: 'stagelight', x: -7.4, y: 0, z: -3, ry: faceAngle(7.4, 4), sx: 1.2 },
+      { id: 'spotR', kind: 'prop', prop: 'stagelight', x: 7.4, y: 0, z: -3, ry: faceAngle(-7.4, 4), sx: 1.2 },
       { id: 'tableL', kind: 'cylinder', x: -7.3, y: 0.5, z: 1.2, sx: 1.2, sy: 1, sz: 1.2, color: '#b8324a', mat: 'cloth', taper: 0.8 },
       { id: 'hatL', kind: 'cylinder', x: -7.3, y: 1.38, z: 1.2, sx: 0.7, sy: 0.7, sz: 0.7, color: '#25213a', mat: 'cloth' },
       { id: 'brimL', kind: 'cylinder', x: -7.3, y: 1.04, z: 1.2, sx: 1.1, sy: 0.06, sz: 1.1, color: '#25213a', mat: 'cloth' },

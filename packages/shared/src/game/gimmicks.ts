@@ -24,21 +24,10 @@ function hasTag(f: FieldDef, tag: string): boolean {
   return !!f.tags?.includes(tag);
 }
 
-/** Players standing on now-blocked fields are moved to the nearest safe field behind them. */
-function washBlocked(e: GameEngine, announceKey: string): void {
-  e.state.players.forEach((p, i) => {
-    if (!e.isOpen(p.field)) {
-      const safe = e.safeFieldBehind(p.field);
-      e.emit({ type: 'announce', key: announceKey, player: i });
-      e.teleport(i, safe, 'wash');
-    }
-  });
-}
-
-/** Kokos-Kanone: shoot the player to a random (open, landable) field of the island. */
+/** Kokos-Kanone: shoot the player to a random landable field of the island that is not cut off. */
 function coconutCannon(e: GameEngine, player: number): void {
   const candidates = e.map.fields.filter(
-    (f) => !PASS_FIELDS.includes(f.type) && e.isOpen(f.id) && f.id !== e.player(player).field && f.id !== e.state.starField,
+    (f) => !PASS_FIELDS.includes(f.type) && e.isLive(f.id) && f.id !== e.player(player).field && f.id !== e.state.starField,
   );
   const target = e.rng.pick(candidates);
   e.emit({ type: 'announce', key: 'mod.cannon', player });
@@ -65,7 +54,7 @@ const tides: Gimmick = {
     e.state.gimmick.tide = next;
     e.emit({ type: 'tide', tide: next });
     e.emit({ type: 'announce', key: next === 'low' ? 'mod.tideLow' : 'mod.tideHigh' });
-    if (next === 'high') washBlocked(e, 'mod.washed');
+    if (next === 'high') e.refreshBlocking('mod.washed', 'mod.starFleesTide');
   },
 };
 
@@ -77,24 +66,21 @@ function erupt(e: GameEngine): void {
   g.eruption = 0;
   e.emit({ type: 'announce', key: 'mod.eruption' });
   if (group >= 0) {
+    // a new eruption replaces a still active lava stream: that one cools down first
+    if (g.lava) e.emit({ type: 'lava', group: g.lava.group, active: false });
     g.lava = { group, until: e.state.round + 1 };
     e.emit({ type: 'lava', group, active: true });
-    washBlocked(e, 'mod.lavaFlee');
-    if (!e.isOpen(e.state.starField)) {
-      // the star must stay reachable: it flees from the lava
-      e.emit({ type: 'announce', key: 'mod.starFlees' });
-      e.moveStar();
-    }
+    // players flee from the lava; the star must stay reachable
+    e.refreshBlocking('mod.lavaFlee', 'mod.starFlees');
   }
-  // coin rain on random open fields
-  const landable = e.map.fields.filter((f) => !PASS_FIELDS.includes(f.type) && e.isOpen(f.id));
-  const bags: string[] = [];
-  for (let k = 0; k < 5; k++) {
-    const f = e.rng.pick(landable);
-    if (bags.includes(f.id) || e.state.coinBags.some((b) => b.field === f.id)) continue;
-    bags.push(f.id);
-    e.state.coinBags.push({ field: f.id, amount: 5 });
-    e.emit({ type: 'coinBag', field: f.id, amount: 5, placed: true });
+  // coin rain: 5 bags on distinct reachable fields without a bag
+  const landable = e.map.fields.filter(
+    (f) => !PASS_FIELDS.includes(f.type) && e.isLive(f.id) && !e.state.coinBags.some((b) => b.field === f.id),
+  );
+  const bags = e.rng.shuffle(landable.map((f) => f.id)).slice(0, 5);
+  for (const id of bags) {
+    e.state.coinBags.push({ field: id, amount: 5 });
+    e.emit({ type: 'coinBag', field: id, amount: 5, placed: true });
   }
   // boulders hit two random players
   const hits = e.rng.shuffle(e.all()).slice(0, 2);
@@ -144,7 +130,7 @@ const eruption: Gimmick = {
   passTrigger(e, player, field) {
     if (field.type !== 'cablecar') return false;
     const target = e.map.gimmickParams?.cableCarTarget;
-    if (!target || !e.isOpen(target)) return false;
+    if (!target || !e.isLive(target)) return false;
     if (e.player(player).coins < BALANCE.cableCarPrice) return false;
     e.state.pending = { kind: 'cablecar', player, price: BALANCE.cableCarPrice, target };
     return true;
@@ -187,7 +173,8 @@ const train: Gimmick = {
     if (field.type !== 'station') return false;
     const p = e.player(player);
     if (p.tickets <= 0 && p.coins < BALANCE.ticketPrice) return false;
-    const destinations = e.map.fields.filter((f) => f.type === 'station' && f.id !== field.id).map((f) => f.id);
+    const destinations = e.map.fields.filter((f) => f.type === 'station' && f.id !== field.id && e.isLive(f.id)).map((f) => f.id);
+    if (!destinations.length) return false;
     e.state.pending = {
       kind: 'station',
       player,

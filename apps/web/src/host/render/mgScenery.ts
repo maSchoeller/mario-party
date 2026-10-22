@@ -488,6 +488,8 @@ export class SceneryBuilder {
       for (let k = 0; k < (d.birds ?? 0); k++) this.bird(k);
       for (const a of d.ambient ?? []) this.emitters.push(ambient(stage, a.kind, new Vector3(this.cx, this.g + a.y, this.cz + (a.z ?? 0)), new Vector3(...a.size)));
     } else d.extra?.(this);
+    // building the backdrop and the first frames' shader compiles are no slowness
+    stage.settle();
   }
 
   // ---------------------------------------------------------------- geometry helpers
@@ -509,7 +511,10 @@ export class SceneryBuilder {
     if (!this.def.water) return d < 0 ? Math.min(y, this.g - 0.04) : y;
     // water sets: land reaching into the play area is levelled to the ground (beach games),
     // with a short blend; water inside the play area stays water
-    if (d < 4 && y > this.w + 0.05) return this.g - 0.04 + (y - (this.g - 0.04)) * smoothstep(0, 4, d);
+    // (never within 6 cm of the bobbing water: that would z-fight)
+    let lev = this.g - 0.04;
+    if (Math.abs(lev - this.w) < 0.06) lev = this.w - 0.06;
+    if (d < 4 && y > this.w + 0.05) return lev + (y - lev) * smoothstep(0, 4, d);
     return y;
   }
 
@@ -964,9 +969,11 @@ export class SceneryBuilder {
       f.parent = this.root;
       f.isPickable = false;
     }
-    // stage riser with marquee bulbs along the edge
-    const riser = MeshBuilder.CreateBox('riser', { width: hw * 2 + 8, height: 0.5, depth: 6 }, s.scene);
-    riser.position.set(this.cx, this.g - 0.25, backZ - 2.5);
+    // stage riser behind the play area (front edge = its back edge) with marquee bulbs along
+    // the front; its top stays 3 cm below the ground level so it never z-fights game floors
+    const riserTop = this.g - 0.03;
+    const riser = MeshBuilder.CreateBox('riser', { width: hw * 2 + 8, height: 0.5, depth: 4.5 }, s.scene);
+    riser.position.set(this.cx, riserTop - 0.25, backZ - 1.75);
     riser.material = surfaceMat(s, '#4a3f78', 'planks');
     riser.parent = this.root;
     riser.receiveShadows = true;
@@ -983,7 +990,7 @@ export class SceneryBuilder {
       buf.push(...tmp.asArray());
     }
     for (let x = -hw - 3; x <= hw + 3; x += 0.9) {
-      Matrix.TranslationToRef(this.cx + x, this.g + 0.05, backZ - 5.5, tmp);
+      Matrix.TranslationToRef(this.cx + x, riserTop + 0.08, backZ - 3.75, tmp);
       buf.push(...tmp.asArray());
     }
     bulb.thinInstanceSetBuffer('matrix', new Float32Array(buf), 16, true);

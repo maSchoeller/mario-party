@@ -1,16 +1,23 @@
 import { PLAYER_COLOR_HEX } from '../../config';
-import type { MgEntity, MinigameDef } from '../types';
-import { ageFx, emitFx, ranksFromScores, rowSpawn, viewFx, type FxState } from '../util';
+import type { Rng } from '../../rng';
+import { botRef, HUMAN_CAP, type MgEntity, type MinigameDef } from '../types';
+import { ageFx, clamp, emitFx, ranksFromScores, rowSpawn, tapCounts, viewFx, type FxState } from '../util';
+import { TAP_MIN_GAP } from './botLag';
 
-/** #3 Gipfel-Sprint (FFA, Mashen): tap as fast as possible to run up the volcano. */
-const GOAL = 220; // taps to the top (~30 s for an average masher, MINI-03)
+/**
+ * #3 Gipfel-Sprint (FFA, Mashen): tap as fast as possible to run up the volcano. Taps count
+ * at most 10 per second (TAP_MIN_GAP), so two-thumb drumming gives no edge.
+ */
+const GOAL = 168; // taps to the top: casual masher ≈ 28 s, a child ≈ 37 s (limit 40 s, MINI-03)
 const DURATION = 40;
 
 interface P {
   progress: number;
   finishedAt: number | null;
-  tapAcc: number;
   speedVis: number;
+  /** bot: time of the next tap and its mashing "grip" for this run (±) */
+  botNext: number | null;
+  botGrip: number;
 }
 
 export interface GipfelSprintState extends FxState {
@@ -21,6 +28,10 @@ export interface GipfelSprintState extends FxState {
   n: number;
   /** player colors (view only) */
   colors: string[];
+  /** time of each player's last counted tap (tap gate; tie-break: earlier is better) */
+  lastTap: number[];
+  /** bot form per player (v0.5) */
+  form: number[];
 }
 
 // the mountain: a tapered basalt cone with a lava crater, its front slope follows the run
@@ -34,11 +45,25 @@ const RUNGS = 12;
 /** dust puff every … taps, a milestone every … taps (25 / 50 / 75 %) */
 const DUST_EVERY = 11;
 const MILESTONE = GOAL / 4;
+/** lanes converge towards the crater, but stay ≥ 1.4 m apart (runners must not overlap) */
+const CONVERGE = 0.53;
+const RAMP_SHRINK = 0.55;
 
 /** World position of a runner at progress f (0..1) on lane i. */
 function runnerPos(n: number, i: number, f: number): { x: number; y: number; z: number } {
   const x = rowSpawn(n, 3, i);
-  return { x: x * (1 - f * 0.7), y: f * 14.5, z: f * 12 };
+  return { x: x * (1 - f * CONVERGE), y: f * 14.5, z: f * 12 };
+}
+
+/**
+ * Human-like mashing for bots (v0.5): the reference rate × form × a per-run grip, slowing
+ * down by `fatigue` from 15 s on, with a little rhythm jitter. Returns the next tap time.
+ */
+export function nextMashTap(last: number, t: number, ref: { tapRate: number; fatigue: number; rhythmSd: number }, grip: number, rng: Rng): number {
+  const tired = 1 - ref.fatigue * clamp((t - 15) / 5, 0, 1);
+  const gap = 1 / (Math.min(HUMAN_CAP.tapRate, ref.tapRate * grip) * tired) + rng.noise() * ref.rhythmSd;
+  // never closer than the tap gate (a bit of margin for the 60 Hz tick)
+  return Math.max(last + gap, t + TAP_MIN_GAP + 0.001);
 }
 
 /** Height of the mountain surface at (x, z) (for dressing on the flanks). */
@@ -59,7 +84,9 @@ export const gipfelSprint: MinigameDef<GipfelSprintState> = {
       duration: DURATION,
       practice: opts.practice,
       n: players.length,
-      ps: players.map(() => ({ progress: 0, finishedAt: null, tapAcc: 0, speedVis: 0 })),
+      ps: players.map(() => ({ progress: 0, finishedAt: null, speedVis: 0, botNext: null, botGrip: 1 })),
+      lastTap: players.map(() => -1),
+      form: players.map((p) => p.form ?? 1),
       colors: players.map((p) => PLAYER_COLOR_HEX[p.color]),
       fx: [],
       fxN: 0,
@@ -70,6 +97,7 @@ export const gipfelSprint: MinigameDef<GipfelSprintState> = {
     if (input.type !== 'tap') return;
     const p = s.ps[i];
     if (p.finishedAt !== null) return;
+    if (!tapCounts(s.lastTap, i, s.t, TAP_MIN_GAP)) return;
     p.progress = Math.min(GOAL, p.progress + 1);
     p.speedVis = Math.min(1, p.speedVis + 0.18);
     if (p.progress >= GOAL) p.finishedAt = s.t;
@@ -92,19 +120,21 @@ export const gipfelSprint: MinigameDef<GipfelSprintState> = {
   },
   isOver: (s) => !s.practice && (s.t >= s.duration || s.ps.every((p) => p.finishedAt !== null)),
   result(s) {
-    // finished players by time, others by progress
-    return ranksFromScores(s.ps.map((p) => (p.finishedAt !== null ? 1000 - p.finishedAt : p.progress)));
+    // finished players by time, others by progress, then by who got there first
+    return ranksFromScores(s.ps.map((p, i) => (p.finishedAt !== null ? 2 * GOAL + DURATION - p.finishedAt : p.progress + (DURATION - s.lastTap[i]) / (DURATION + 2))));
   },
-  bot(s, i, level, rng, dt) {
-    const rate = { easy: 5.2, medium: 6.8, hard: 8.2 }[level] * (0.85 + rng.next() * 0.3);
+  bot(s, i, level, rng) {
     const p = s.ps[i];
-    p.tapAcc += rate * dt;
-    const out: { type: 'tap' }[] = [];
-    while (p.tapAcc >= 1) {
-      p.tapAcc -= 1;
-      out.push({ type: 'tap' });
+    if (p.finishedAt !== null) return [];
+    const ref = botRef(level, s.form[i]);
+    if (p.botNext === null) {
+      // per-run grip: the same person mashes a bit faster or slower from game to game
+      p.botGrip = clamp(1 + rng.noise() * 0.09, 0.8, 1.2);
+      p.botNext = s.t + 0.15 + rng.next() * 0.25;
     }
-    return out;
+    if (s.t < p.botNext) return [];
+    p.botNext = nextMashTap(p.botNext, s.t, ref, p.botGrip, rng);
+    return [{ type: 'tap' }];
   },
   view(s) {
     const entities: MgEntity[] = [
@@ -119,8 +149,8 @@ export const gipfelSprint: MinigameDef<GipfelSprintState> = {
       // dressing on the foothills and flanks
       { id: 'rockL', kind: 'prop', prop: 'lavarock', x: -11, y: 0, z: -1.5, sx: 1.5, ry: 0.6 },
       { id: 'rockR', kind: 'prop', prop: 'lavarock', x: 11.5, y: 0, z: 0.5, sx: 1.8, ry: 2.2 },
-      { id: 'ventL', kind: 'prop', prop: 'vent', x: -15, y: 0, z: 4.5, sx: 1.2 },
-      { id: 'obsR', kind: 'prop', prop: 'obsidian', x: 16, y: 0, z: 5.5, sx: 1.3, ry: -0.5 },
+      { id: 'ventL', kind: 'prop', prop: 'vent', x: -17, y: 0, z: 2, sx: 1.2 },
+      { id: 'obsR', kind: 'prop', prop: 'obsidian', x: 17.5, y: 0, z: 2.5, sx: 1.3, ry: -0.5 },
       { id: 'cryL', kind: 'prop', prop: 'crystal', x: -9, y: mountainY(-9, 9) - 0.25, z: 9, sx: 1.2, ry: 0.3 },
       { id: 'cryR', kind: 'prop', prop: 'crystal', x: 7.5, y: mountainY(7.5, 12) - 0.25, z: 12, sx: 0.9, ry: 2 },
       { id: 'treeL', kind: 'prop', prop: 'deadtree', x: -12.5, y: mountainY(-12.5, 11) - 0.2, z: 11, ry: 1 },
@@ -145,12 +175,12 @@ export const gipfelSprint: MinigameDef<GipfelSprintState> = {
         const fm = (k + 0.5) / RAMP_SEGS;
         const m = runnerPos(s.n, i, fm);
         const th = 0.6;
-        entities.push({ id: `rp${i}_${k}`, kind: 'box', x: m.x - nx * th * 0.5, y: m.y - ny * th * 0.5, z: m.z - nz * th * 0.5, rx, ry, sx: 2.1 * (1 - fm * 0.68), sy: th, sz: len / RAMP_SEGS + 0.08, color: '#b88a5c', mat: 'planks' });
+        entities.push({ id: `rp${i}_${k}`, kind: 'box', x: m.x - nx * th * 0.5, y: m.y - ny * th * 0.5, z: m.z - nz * th * 0.5, rx, ry, sx: 2.1 * (1 - fm * RAMP_SHRINK), sy: th, sz: len / RAMP_SEGS + 0.08, color: '#b88a5c', mat: 'planks' });
       }
       for (let k = 1; k < RUNGS; k++) {
         const fm = k / RUNGS;
         const m = runnerPos(s.n, i, fm);
-        entities.push({ id: `rg${i}_${k}`, kind: 'box', x: m.x + nx * 0.05, y: m.y + ny * 0.05, z: m.z + nz * 0.05, rx, ry, sx: 2.2 * (1 - fm * 0.68), sy: 0.12, sz: 0.22, color: '#7a5236', mat: 'wood' });
+        entities.push({ id: `rg${i}_${k}`, kind: 'box', x: m.x + nx * 0.05, y: m.y + ny * 0.05, z: m.z + nz * 0.05, rx, ry, sx: 2.2 * (1 - fm * RAMP_SHRINK), sy: 0.12, sz: 0.22, color: '#7a5236', mat: 'wood' });
       }
       entities.push({ id: `start${i}`, kind: 'box', x: a.x, y: -0.08, z: -0.5, sx: 2.3, sy: 0.2, sz: 1.4, color: s.colors[i], mat: 'stone' });
       const f = p.progress / GOAL;

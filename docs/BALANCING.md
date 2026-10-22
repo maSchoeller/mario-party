@@ -1,5 +1,89 @@
 # Balancing & unabhängiger Review
 
+## v0.5: Bots gegen Menschen, Brett-Regeln
+
+### Menschliches Referenzmodell (Minispiel-Bots)
+
+Bots waren bisher gegeneinander abgestimmt, nicht gegen Menschen am TV. Seit v0.5 richten sie sich nach
+`HUMAN_REF` in `packages/shared/src/minigames/types.ts`:
+
+| Stufe | Vorbild | Reaktion (ohne TV-Latenz) | Tippen | Joystick-Fehler | Schätzen 10 s blind |
+|---|---|---|---|---|---|
+| Leicht | Kind / Erstspieler | 0,40 ± 0,08 s | 5,0/s | ±0,25 rad | ±1,5 s |
+| Mittel | Gelegenheitsspieler | 0,28 ± 0,05 s | 6,3/s | ±0,15 rad | ±0,8 s |
+| Schwer | geübter Erwachsener (Top ~20 %) | 0,23 ± 0,035 s | 7,5/s | ±0,09 rad | ±0,45 s |
+| Obergrenze | bester Mensch – kein Bot darf besser sein | 0,18 s | 9,5/s | ±0,05 rad | ±0,25 s |
+
+- **Wahrnehmung:** Bots sehen nur, was am TV sichtbar ist (kein versteckter Wind, keine exakte Tierzahl, keine
+  Labyrinth-Suche), und das verzögert: +0,11 s bei Tasten mit Zeitstempel, +0,15 s bei Joystick/Neigen/Wischen/Auswahl.
+- **Tagesform:** Jeder Bot spielt jedes Minispiel mit eigener Form (±10 %), zusätzlich zur Stufen-Tagesform des Hosts.
+- **Gleiche Regeln für alle:** max. 10 Taps/s (gegen Zwei-Daumen-Trommeln), Schüttel-Impulse mit Mindestabstand,
+  Tipp-Ersatz so stark wie echtes Schütteln. Tests laufen jetzt mit 60 Hz wie der Host.
+
+### Ergebnisse je Minispiel (Bot gegen Bot, 200–400 Seeds)
+
+„Schwer vs. Mittel“ = Anteil, in dem der schwere Bot vor dem mittleren landet (FFA) bzw. gewinnt (Duell/2v2).
+
+| Spiel | Schwer vs. Mittel vorher → nachher | Gleichstand Platz 1 vorher → nachher |
+|---|---|---|
+| Kokos-Regen | 96–99 % → 61–66 % | 16 % → 0 % |
+| Schubs-Scholle | 40 % (Schwer war schwächer!) → 54–62 % | ~1 % → 0 % |
+| Wackel-Brücke | 100 % → 69–73 % | – |
+| Strich-Künstler | 100 % → 85 % | ≤ 6 % → ≤ 5 % |
+| Zehn Sekunden | 87 % → 76 % | 0–1 % → 0 % |
+| Zähl-Zoo | 87 % → 77 % | 21–41 % → 0 % |
+| Gipfel-Sprint | 100 % → 93 % | 0–14 % → 0 % |
+| Lava-Seil | 65 % → 68 % | 1–14 % → 0 % |
+| Gipfelsturm (Finale) | 98 % → 90–94 % | 0–1 % |
+| Schnellzieher (Duell) | 100 % → 88 % | 0 % |
+| Memo-Duell (Duell) | 85 % → 87 % | 0 % |
+| Schnick-Schnack (Duell) | 51 % → 49 % | 0 % |
+| Floß-Rumble (2v2) | 73 % → 70–74 % | 1 % → 1–4 % |
+| Tandem-Tretboot (2v2) | 100 % → 68–74 % | – |
+| Weichen-Chaos (2v2) | 91 % → 81–84 % | 0 % |
+| Paket-Kette (2v2) | 81 % → 76 % | 2 % |
+| Schatz-Tauziehen (2v2) | 100 % → 98 % | – |
+
+- **Tandem-Tretboot:** Vorher kamen „Leicht + Leicht“ und „Schwer + Leicht“ nie ins Ziel. Jetzt schafft es jedes
+  Team (Leicht + Leicht in 95 % der Fälle, Median 40 s).
+- **Reine Geschicklichkeit bleibt über 75 %** (Tippen, Schnellzieher, Schatz-Tauziehen, Strich-Künstler): Der Abstand
+  zwischen „Gelegenheitsspieler“ und „geübt“ ist dort größer als die Tagesform. Im echten Spiel spielt ein schwerer
+  Bot zusätzlich in 40 % der Minispiele nur als mittel oder leicht (`minigameBotLevel`).
+
+### 1 gegen 3: Siegquote des Solos (Ziel 35–45 %, bei 12 vs. 8 Münzen fair)
+
+| Spiel | Leicht/Leicht vorher → nachher | Mittel/Mittel | Schwer/Schwer | Extremfall vorher → nachher |
+|---|---|---|---|---|
+| Laternen-Jagd | 44 → 48 % | 41 → 39 % | 39 → 43 % | 0 % / 100 % → 33 % / 65 % |
+| Kokos-Kanonier | 87 → 33 % | 71 → 36 % | 45 → 42 % | 99 % → 64 % |
+| Wand-Labyrinth | 49 → 44 % | 45 → 49 % | 47 → 49 % | – |
+| Ballon-Bombardement | 89 → 40 % | 50 → 42 % | 66 → 45 % | 99 % → 73 % |
+
+- Laternen-Jagd: Der Solo sieht seine Position jetzt als Radar am Handy (ohne Sucher). Vorher war ein menschlicher
+  Solo praktisch blind.
+- Wand-Labyrinth: Abklingzeit des Solos 0,8 → 0,6 s. Mittel/Mittel und Schwer/Schwer liegen mit 49 % knapp über dem Ziel.
+
+### Brett (Regeln v0.5)
+
+Gemessen mit `npx tsx packages/shared/scripts/balance.ts` (300 Partien je Map, 20 Runden, ±95 %-Intervalle).
+
+| Kennzahl (Ziel) | Kokosnuss | Vulkan | Bimmelbahn |
+|---|---|---|---|
+| Letzter nach Runde 10 gewinnt (15–18 %) | 16 ± 4 % | 19 ± 4 % | 19 ± 4 % |
+| Bonus-Sterne an Vorab-Führende (≤ 40 %) | 30 % | 32 % | 35 % |
+| 2 harte gegen 2 leichte Bots: harte Sitze gewinnen | 82 ± 8 % | 84 ± 7 % | 85 ± 7 % |
+| Ø Endmünzen | 55,5 | 67,0 | 31,1 |
+| Gekaufte Sterne / Partie | 10,3 | 12,1 | 15,9 |
+
+- Die frühere Messung „7–10 %“ für die Aufholjagd war Rauschen aus 60 Partien. Das Halbzeit-Rad dreht jetzt nach
+  genau der Hälfte der Runden (vorher eine Runde früher), ein „Stern klauen“ wurde zu „+10 Münzen“.
+- **Regelfehler behoben** (40 Partien je Map, vorher → nachher): Schritte in die Flut 285 → 0, zweiter Stern im selben
+  Zug 49 → 0, Duelle mit Einsatz 0: 4 → 0.
+- „Harte Sitze gewinnen“ ist mit 82–85 % über dem alten Ziel 70–80 %. Ursache sind die realistischeren Minispiel-Bots
+  (leichte Bots spielen jetzt wirklich wie Kinder), nicht die Brett-Entscheidungen (dort 63–71 %).
+- **Charakterwürfel** (300 Partien je Figur): alle Figuren zwischen 18,7 % und 29,3 %; nur Foxy (18,7 ± 4,4 %) liegt
+  knapp außerhalb von 2σ, nach Korrektur für 8 Tests nicht signifikant. Keine Würfel geändert, Foxy bleibt unter Beobachtung.
+
 ## v0.3: Würfel und größere Maps
 
 Gemessen mit `npx tsx packages/shared/scripts/dice-balance.ts 96`: 96 Partien je Map à 20 Runden,

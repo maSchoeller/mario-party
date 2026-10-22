@@ -7,7 +7,8 @@ import { BOT_DISPLAY_LAG } from './botLag';
  * #8 Lava-Seilspringen (FFA, Timing-Button): a glowing lava beam sweeps around the centre
  * of a small island and gets faster. Players stand in a circle and must jump when it
  * passes – a jump lasts a fixed time. Whoever is hit is out; ranks follow the elimination
- * order, survivors share first place.
+ * order. Several survivors are ranked by their cleanest jumps (on average closest to the
+ * top of the jump when the beam passed); exactly equal survivors share first place.
  *
  * Fairness (NET-05): a jump starts at the phone timestamp `press.t`. Each beam pass is only
  * judged GRACE seconds after it happened, so a press that was made in time but arrives a
@@ -26,6 +27,12 @@ const OMEGA0 = 1.7;
 const OMEGA_ACC = 0.085;
 const OMEGA_MAX = 6.2;
 const OUT_R = 9.6;
+/** out players sit on a rock in the lava (rock centre / height, ridge height of the icosphere) */
+const OUT_ROCK_Y = -0.2;
+const OUT_ROCK_H = 1.4;
+const OUT_SEAT = OUT_ROCK_Y + 0.425 * OUT_ROCK_H - 0.04;
+/** players stand on the inner stone ring (top at 0.04) */
+const STAND = 0.04;
 
 interface P {
   phi: number;
@@ -34,6 +41,9 @@ interface P {
   out: number | null;
   hitT: number;
   hits: number;
+  /** cleared passes and the summed margin to the edge of the airborne window (tie-break) */
+  cleared: number;
+  clean: number;
   /** bot: planned press time and the beam pass it is meant for */
   botPress: number | null;
   botFor: number | null;
@@ -52,6 +62,8 @@ export interface LavaSeilState extends FxState {
   /** view only: last time a jump sound played (throttle) and the beam speed level */
   jumpSfxAt: number;
   speedLvl: number;
+  /** bot form per player (v0.5) */
+  form: number[];
 }
 
 const LAVA = '#ff7a3d';
@@ -63,6 +75,18 @@ const wrap = (a: number) => ((a % TAU) + TAU) % TAU;
 /** Is the player in the air (high enough) at time t? */
 export function airborne(p: { jumps: number[] }, t: number): boolean {
   return p.jumps.some((j) => t >= j + SAFE && t <= j + JUMP - SAFE);
+}
+
+/** How clean a clearance at time t was: distance to the nearer edge of the airborne window (s). */
+function margin(p: { jumps: number[] }, t: number): number {
+  let best = 0;
+  for (const j of p.jumps) best = Math.max(best, Math.min(t - (j + SAFE), j + JUMP - SAFE - t));
+  return best;
+}
+
+/** Result score: elimination time, survivors above everybody, ordered by their mean margin. */
+function score(p: P): number {
+  return p.out === null ? 1e6 + (p.cleared ? Math.round((p.clean / p.cleared) * 1000) : 0) : p.out;
 }
 
 function jumpHeight(p: P, t: number): number {
@@ -89,7 +113,8 @@ export const lavaSeil: MinigameDef<LavaSeilState> = {
       // start between two players
       angle: -Math.PI / 2 + Math.PI / n,
       omega: 0,
-      ps: players.map((_, i) => ({ phi: wrap(-Math.PI / 2 + (i / n) * TAU), jumps: [], out: null, hitT: 0, hits: 0, botPress: null, botFor: null })),
+      ps: players.map((_, i) => ({ phi: wrap(-Math.PI / 2 + (i / n) * TAU), jumps: [], out: null, hitT: 0, hits: 0, cleared: 0, clean: 0, botPress: null, botFor: null })),
+      form: players.map((p) => p.form ?? 1),
       pending: [],
       endAt: null,
       jumpSfxAt: -1,
@@ -140,7 +165,12 @@ export const lavaSeil: MinigameDef<LavaSeilState> = {
     s.pending = s.pending.filter(({ p: i, tc }) => {
       if (s.t < tc + GRACE) return true;
       const p = s.ps[i];
-      if (p.out !== null || airborne(p, tc)) return false;
+      if (p.out !== null) return false;
+      if (airborne(p, tc)) {
+        p.cleared++;
+        p.clean += margin(p, tc);
+        return false;
+      }
       p.hitT = 1;
       p.hits++;
       const [hx, hz] = [Math.cos(p.phi) * RP, Math.sin(p.phi) * RP];
@@ -158,7 +188,7 @@ export const lavaSeil: MinigameDef<LavaSeilState> = {
     if (!s.practice && s.endAt === null && s.ps.filter((p) => p.out === null).length <= 1) s.endAt = s.t + 1.5;
   },
   isOver: (s) => !s.practice && (s.t >= s.duration || (s.endAt !== null && s.t >= s.endAt)),
-  result: (s) => ranksFromScores(s.ps.map((p) => (p.out === null ? 1e6 : p.out))),
+  result: (s) => ranksFromScores(s.ps.map(score)),
   bot(s, i, level, rng: Rng) {
     const p = s.ps[i];
     if (p.out !== null || s.omega <= 0) return [];
@@ -172,7 +202,7 @@ export const lavaSeil: MinigameDef<LavaSeilState> = {
     const tc = s.t + ttc;
     if (ttc > 1 || (p.botFor !== null && Math.abs(tc - p.botFor) < 0.3)) return [];
     // the faster the beam, the harder the timing
-    const sigma = { easy: 0.075, medium: 0.06, hard: 0.05 }[level] * (1 + s.omega / 3);
+    const sigma = { easy: 0.075, medium: 0.06, hard: 0.05 }[level] * (1 + s.omega / 3) * (2 - (s.form[i] ?? 1));
     p.botFor = tc;
     // humans see the beam a little late (TV + touch latency, see botLag.ts) and therefore
     // jump late on average – bots get the same handicap
@@ -195,7 +225,8 @@ export const lavaSeil: MinigameDef<LavaSeilState> = {
     // torches on the rim (outside the beam's reach) and rocks / crystals in the lava around
     for (let k = 0; k < 4; k++) {
       const a = Math.PI / 4 + (k * Math.PI) / 2;
-      entities.push({ id: `torch${k}`, kind: 'prop', prop: 'torch', x: Math.cos(a) * 7.7, y: -0.25, z: Math.sin(a) * 7.7 });
+      // on the flat rim of the island (top radius 7.5, outside the arena and the beam tip)
+      entities.push({ id: `torch${k}`, kind: 'prop', prop: 'torch', x: Math.cos(a) * 7.4, y: -0.07, z: Math.sin(a) * 7.4 });
     }
     const deco: [string, number, number, number][] = [
       ['obsidian', 2.35, 11.5, 1.3],
@@ -219,8 +250,8 @@ export const lavaSeil: MinigameDef<LavaSeilState> = {
     s.ps.forEach((p, i) => {
       if (p.out !== null) {
         const sp = ringSpawn(s.n, OUT_R, i);
-        entities.push({ id: `rk${i}`, kind: 'rock', x: sp.x, y: 0, z: sp.z, sx: 1.8, sy: 1, sz: 1.8, color: '#6e6168' });
-        entities.push({ id: `p${i}`, kind: 'player', player: i, x: sp.x, y: 0.5, z: sp.z, ry: faceAngle(-sp.x, -sp.z), anim: p.hitT > 0 ? 'hit' : 'sad' });
+        entities.push({ id: `rk${i}`, kind: 'rock', x: sp.x, y: OUT_ROCK_Y, z: sp.z, sx: 1.8, sy: OUT_ROCK_H, sz: 1.8, color: '#6e6168' });
+        entities.push({ id: `p${i}`, kind: 'player', player: i, x: sp.x, y: OUT_SEAT, z: sp.z, ry: faceAngle(-sp.x, -sp.z), anim: p.hitT > 0 ? 'hit' : 'sad' });
         return;
       }
       const x = Math.cos(p.phi) * RP;
@@ -231,12 +262,12 @@ export const lavaSeil: MinigameDef<LavaSeilState> = {
         kind: 'player',
         player: i,
         x,
-        y: h,
+        y: STAND + h,
         z,
         ry: faceAngle(-x, -z),
         anim: p.hitT > 0 ? 'hit' : h > 0 ? 'jump' : over ? 'cheer' : 'idle',
       });
-      entities.push({ id: `sh${i}`, kind: 'cylinder', x, y: 0.1, z, sx: 1.2 - h * 0.3, sy: 0.02, sz: 1.2 - h * 0.3, color: '#222222', alpha: 0.35 });
+      entities.push({ id: `sh${i}`, kind: 'cylinder', x, y: STAND + 0.015, z, sx: 1.2 - h * 0.3, sy: 0.02, sz: 1.2 - h * 0.3, color: '#222222', alpha: 0.35 });
     });
     return {
       env: 'lava',
@@ -247,7 +278,12 @@ export const lavaSeil: MinigameDef<LavaSeilState> = {
       hud: {
         timer: s.practice ? undefined : Math.max(0, s.duration - s.t),
         scores: s.ps.map((p, i) => ({ player: i, value: s.practice ? `💥 ${p.hits}` : p.out === null ? '❤️' : '💥' })),
-        message: s.t < COUNTDOWN ? { key: 'mg.lavaSeil.ready' } : undefined,
+        message:
+          s.t < COUNTDOWN
+            ? { key: 'mg.lavaSeil.ready' }
+            : !s.practice && s.t > s.duration - 4 && s.ps.filter((p) => p.out === null).length > 1
+              ? { key: 'mg.lavaSeil.style' }
+              : undefined,
       },
     };
   },

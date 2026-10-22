@@ -1,6 +1,6 @@
 import type { BotLevel } from '../config';
 import type { Rng } from '../rng';
-import { BOT_SKILL, type MgCamera, type MgFx, type MgPlayer } from './types';
+import { BOT_SKILL, botRef, type HumanRef, type MgCamera, type MgFx, type MgPlayer } from './types';
 
 export const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
 export const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
@@ -59,6 +59,67 @@ export function skill(level: BotLevel) {
 export function botReady(now: number, since: number, level: BotLevel, rng: Rng): boolean {
   const s = BOT_SKILL[level];
   return now - since > s.reaction * (0.8 + rng.next() * 0.4);
+}
+
+/** Human reference values for bot `i` of a minigame (level + form, v0.5). */
+export function refOf(players: MgPlayer[], i: number, level: BotLevel): HumanRef {
+  return botRef(level, players[i]?.form ?? 1);
+}
+
+/**
+ * One human-like reaction time: perception `lag` + reaction drawn around the reference
+ * (never faster than the top-human cap baked into `ref`).
+ */
+export function reactTime(ref: HumanRef, rng: Rng, lag: number): number {
+  return lag + Math.max(ref.reaction * 0.75, ref.reaction + rng.noise() * ref.reactionSd);
+}
+
+/** Chance per tick for an event with `rate` per second – independent of the tick length. */
+export function chance(rate: number, dt: number): number {
+  return 1 - Math.exp(-rate * dt);
+}
+
+/**
+ * Delayed perception for bots (v0.5): a small ring buffer of observed values (e.g. all
+ * player positions), read back `delay` seconds late. JSON-serializable (plain arrays).
+ */
+export interface SeenBuf {
+  t: number[];
+  v: number[][];
+}
+
+export function seenBuf(): SeenBuf {
+  return { t: [], v: [] };
+}
+
+/** Records a snapshot at time `t` and forgets everything older than `keep` seconds. */
+export function seenPush(b: SeenBuf, t: number, v: number[], keep = 1): void {
+  b.t.push(t);
+  b.v.push(v);
+  let drop = 0;
+  while (drop < b.t.length - 1 && b.t[drop + 1] <= t - keep) drop++;
+  if (drop) {
+    b.t.splice(0, drop);
+    b.v.splice(0, drop);
+  }
+}
+
+/** The newest snapshot taken at or before `t` (the oldest one if `t` is earlier still). */
+export function seenAt(b: SeenBuf, t: number): number[] | null {
+  if (!b.t.length) return null;
+  for (let k = b.t.length - 1; k >= 0; k--) if (b.t[k] <= t) return b.v[k];
+  return b.v[0];
+}
+
+/**
+ * Tap gate against two-thumb drumming: true if this tap counts (at least `minGap` after
+ * the last counted one of the same player). `last` holds one time per player.
+ */
+export function tapCounts(last: number[], i: number, now: number, minGap: number): boolean {
+  // small tolerance: taps exactly minGap apart on the 60 Hz clock may measure 0.09999 s
+  if (now - (last[i] ?? -1e9) < minGap - 1e-6) return false;
+  last[i] = now;
+  return true;
 }
 
 /** Basic movement integration for joystick games. */

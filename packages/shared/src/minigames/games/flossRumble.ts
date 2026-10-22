@@ -1,14 +1,16 @@
 import type { BotLevel } from '../../config';
 import type { Rng } from '../../rng';
-import type { ControllerLayout, MgEntity, MgInput, MgPlayer, MinigameDef } from '../types';
-import { TEAM_COLORS, ageFx, clamp, emitFx, faceAngle, moveWithStick, skill, steerTo, teamRanks, viewFx, type FxState } from '../util';
+import { botRef, type ControllerLayout, type MgEntity, type MgInput, type MgPlayer, type MinigameDef } from '../types';
+import { TEAM_COLORS, ageFx, chance, clamp, emitFx, faceAngle, moveWithStick, reactTime, seenAt, seenBuf, seenPush, teamRanks, viewFx, type FxState, type SeenBuf } from '../util';
+import { BOT_LIVE_LAG } from './botLag';
 
 /**
  * #9 Floß-Rumble (2v2, Joystick + Button „Schubsen“): push the other team off a rocking,
  * slowly shrinking raft. Players in the water stay out (no climbing back). The team with
  * more players on board at the end wins – or instantly, once both opponents are swimming.
  * During the first SAFE_TIME seconds a railing keeps everybody on board (warm-up, MINI-03).
- * Tie-break at the time limit (same number on board): the team with more successful pushes.
+ * Tie-break at the time limit (same number on board): the team with more successful pushes
+ * after the railing came off (pushes against the railing can't throw anybody off).
  */
 const DURATION = 45;
 const H0 = 5.5; // half size of the raft at start
@@ -25,6 +27,9 @@ const RESPAWN = 3; // practice only
 export const SAFE_TIME = 6;
 /** lagoon water level (visual) */
 const WATER = -0.22;
+/** bots by level: push attempts per second once an opponent is in reach, chance to step back from the edge */
+const BOT_PUSH_RATE = { easy: 2, medium: 3, hard: 4 };
+const BOT_CAREFUL = { easy: 0.5, medium: 0.8, hard: 0.95 };
 
 interface P {
   team: number;
@@ -45,9 +50,12 @@ interface P {
   state: 'raft' | 'fall' | 'swim';
   fallT: number;
   y: number;
-  /** bot memory */
+  /** bot memory: re-plan timer, target, perception delay, heading error, minds the edge */
   think: number;
   target: number;
+  lag: number;
+  hd: number;
+  careful: boolean;
 }
 
 export interface FlossRumbleState extends FxState {
@@ -61,9 +69,13 @@ export interface FlossRumbleState extends FxState {
   /** -1 = running, 0/1 = winning team, 2 = tie */
   winner: number;
   overAt: number | null;
-  /** successful pushes per team id (tie-break) */
+  /** successful pushes per team id after the railing came off (tie-break) */
   hits: number[];
   splashes: { x: number; z: number; t: number }[];
+  /** bot form per player (v0.5) */
+  form: number[];
+  /** what the bots have seen: per player x, z, on the raft (1/0) */
+  seen: SeenBuf;
 }
 
 const onBoard = (s: FlossRumbleState, team: number) => s.ps.filter((p) => p.team === team && p.state === 'raft').length;
@@ -105,7 +117,7 @@ function doPush(s: FlossRumbleState, i: number): void {
     o.kx += kx * PUSH_FORCE * brace;
     o.kz += kz * PUSH_FORCE * brace;
     o.stun = 0.45;
-    s.hits[p.team] = (s.hits[p.team] ?? 0) + 1;
+    if (s.practice || s.t >= SAFE_TIME) s.hits[p.team] = (s.hits[p.team] ?? 0) + 1;
     emitFx(s, { kind: 'hit', sfx: 'thud', x: o.x, y: 1.2, z: o.z, s: brace < 1 ? 0.7 : 1 });
     landed = true;
   });
@@ -154,6 +166,9 @@ export const flossRumble: MinigameDef<FlossRumbleState> = {
           y: 0,
           think: 0,
           target: -1,
+          lag: 0.4,
+          hd: 0,
+          careful: true,
         };
       }),
       half: H0,
@@ -162,6 +177,8 @@ export const flossRumble: MinigameDef<FlossRumbleState> = {
       overAt: null,
       hits: [0, 0],
       splashes: [],
+      form: players.map((p) => p.form ?? 1),
+      seen: seenBuf(),
       fx: [],
       fxN: 0,
     };
@@ -316,54 +333,79 @@ export const flossRumble: MinigameDef<FlossRumbleState> = {
   },
   bot(s, i, level: BotLevel, rng: Rng, dt) {
     const p = s.ps[i];
+    // what the bots see on the TV: everybody's position, read back late
+    if (s.seen.t[s.seen.t.length - 1] !== s.t) seenPush(s.seen, s.t, s.ps.flatMap((o) => [o.x, o.z, o.state === 'raft' ? 1 : 0]), 1);
     if (p.state !== 'raft' || s.winner >= 0) return [{ type: 'stick', x: 0, y: 0 }];
-    const sk = skill(level);
+    const ref = botRef(level, s.form[i]);
     const H = s.half;
+    const now = seenAt(s.seen, s.t - p.lag)!;
+    const me = seenAt(s.seen, s.t - BOT_LIVE_LAG)!;
+    const mx = me[i * 3];
+    const mz = me[i * 3 + 1];
     const out: MgInput[] = [];
     p.think -= dt;
     if (p.think <= 0) {
-      p.think = sk.reaction * (0.6 + rng.next() * 0.8);
-      const opps = s.ps.map((o, j) => ({ o, j })).filter(({ o }) => o.team !== p.team && o.state === 'raft');
+      // re-plan on what was seen one reaction time ago
+      p.think = 0.25 + rng.next() * 0.2;
+      p.lag = reactTime(ref, rng, BOT_LIVE_LAG);
+      p.hd = rng.noise() * ref.headingNoise;
+      p.careful = rng.next() < BOT_CAREFUL[level];
+      const opps = s.ps.map((o, j) => ({ o, j })).filter(({ o, j }) => o.team !== p.team && now[j * 3 + 2]);
+      const ox = (j: number) => now[j * 3];
+      const oz = (j: number) => now[j * 3 + 1];
       if (!opps.length) p.target = -1;
-      else if (level === 'easy' || rng.chance(0.3)) {
+      else if (level === 'easy' || rng.next() < 0.3) {
         // nearest opponent
-        opps.sort((a, b) => Math.hypot(a.o.x - p.x, a.o.z - p.z) - Math.hypot(b.o.x - p.x, b.o.z - p.z));
+        opps.sort((a, b) => Math.hypot(ox(a.j) - mx, oz(a.j) - mz) - Math.hypot(ox(b.j) - mx, oz(b.j) - mz));
         p.target = opps[0].j;
       } else {
         // smarter: the opponent closest to the edge (easier to push off), weighted by distance
-        const score = (o: P) => H - Math.max(Math.abs(o.x), Math.abs(o.z)) + Math.hypot(o.x - p.x, o.z - p.z) * 0.4;
-        opps.sort((a, b) => score(a.o) - score(b.o));
+        const score = (j: number) => H - Math.max(Math.abs(ox(j)), Math.abs(oz(j))) + Math.hypot(ox(j) - mx, oz(j) - mz) * 0.4;
+        opps.sort((a, b) => score(a.j) - score(b.j));
         p.target = opps[0].j;
       }
     }
-    const myEdge = H - Math.max(Math.abs(p.x), Math.abs(p.z));
+    const myEdge = H - Math.max(Math.abs(mx), Math.abs(mz));
     let goal: { x: number; z: number } | null = null;
-    if (myEdge < 1.1 && rng.chance(0.3 + sk.accuracy * 0.7)) {
-      goal = { x: p.x * 0.4, z: p.z * 0.4 };
-    } else if (p.target >= 0 && s.ps[p.target].state === 'raft') {
-      const o = s.ps[p.target];
+    if (myEdge < 1.1 && p.careful) {
+      goal = { x: mx * 0.4, z: mz * 0.4 };
+    } else if (p.target >= 0 && now[p.target * 3 + 2]) {
+      const tx = now[p.target * 3];
+      const tz = now[p.target * 3 + 1];
       // position on the inner side of the opponent, so the push goes towards the closest edge
       let ux: number;
       let uz: number;
-      if (Math.abs(o.x) >= Math.abs(o.z)) {
-        ux = Math.sign(o.x || 1);
+      if (Math.abs(tx) >= Math.abs(tz)) {
+        ux = Math.sign(tx || 1);
         uz = 0;
       } else {
         ux = 0;
-        uz = Math.sign(o.z || 1);
+        uz = Math.sign(tz || 1);
       }
       const behind = level === 'easy' ? 0 : 1.15;
-      goal = { x: o.x - ux * behind, z: o.z - uz * behind };
-      const d = Math.hypot(o.x - p.x, o.z - p.z);
-      if (d < PUSH_RANGE * 0.85 && p.pushCd <= 0 && rng.chance(sk.accuracy * dt * 4)) {
-        const aim = steerTo(p.x, p.z, o.x, o.z, rng, sk.accuracy);
-        out.push({ type: 'stick', x: aim.x, y: aim.y });
+      goal = { x: tx - ux * behind, z: tz - uz * behind };
+      const d = Math.hypot(tx - mx, tz - mz);
+      if (d < PUSH_RANGE * 0.85 && p.pushCd <= 0 && rng.next() < chance(BOT_PUSH_RATE[level], dt)) {
+        const a = Math.atan2(tz - mz, tx - mx) + rng.noise() * ref.headingNoise;
+        out.push({ type: 'stick', x: Math.cos(a), y: Math.sin(a) });
         out.push({ type: 'button', id: 'push', down: true }, { type: 'button', id: 'push', down: false });
         return out;
       }
     }
-    const stick = goal ? steerTo(p.x, p.z, goal.x, goal.z, rng, sk.accuracy) : { x: 0, y: 0 };
-    out.push({ type: 'stick', x: stick.x * sk.speed, y: stick.y * sk.speed });
+    if (!goal) {
+      out.push({ type: 'stick', x: 0, y: 0 });
+      return out;
+    }
+    const gx = goal.x - mx;
+    const gz = goal.z - mz;
+    const len = Math.hypot(gx, gz);
+    if (len < 0.15) {
+      out.push({ type: 'stick', x: 0, y: 0 });
+      return out;
+    }
+    const a = Math.atan2(gz, gx) + p.hd;
+    const mag = ref.stickMag * clamp(len / 1.2, 0.3, 1);
+    out.push({ type: 'stick', x: Math.cos(a) * mag, y: Math.sin(a) * mag });
     return out;
   },
   view(s) {
@@ -411,8 +453,9 @@ export const flossRumble: MinigameDef<FlossRumbleState> = {
     // rope lashings across the planks and the cross beams below
     for (const side of [-1, 1]) {
       const z = side * (H - 0.75);
-      entities.push({ id: `lash${side}`, kind: 'box', x: 0, y: 0.02 + ry0(0, z), z, sx: 2 * H + 0.08, sy: 0.1, sz: 0.2, rx: tiltX, rz: tiltZ, color: '#d9bd86', mat: 'rope' });
-      entities.push({ id: `beam${side}`, kind: 'box', x: 0, y: -0.38 + ry0(0, side * (H - 0.5)), z: side * (H - 0.5), sx: 2 * H + 0.6, sy: 0.3, sz: 0.5, rx: tiltX, rz: tiltZ, color: '#8a5a32', mat: 'wood' });
+      entities.push({ id: `lash${side}`, kind: 'box', x: 0, y: 0.04 + ry0(0, z), z, sx: 2 * H + 0.08, sy: 0.14, sz: 0.2, rx: tiltX, rz: tiltZ, color: '#d9bd86', mat: 'rope' });
+      // the cross beams stay under the planks (their ends would cut through the bobbing water)
+      entities.push({ id: `beam${side}`, kind: 'box', x: 0, y: -0.45 + ry0(0, side * (H - 0.5)), z: side * (H - 0.5), sx: 2 * H - 0.1, sy: 0.3, sz: 0.5, rx: tiltX, rz: tiltZ, color: '#8a5a32', mat: 'wood' });
     }
     if (!s.practice && s.t < SAFE_TIME) {
       // rope railing on posts (disappears when the warm-up is over)

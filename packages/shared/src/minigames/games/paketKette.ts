@@ -1,7 +1,8 @@
 import type { BotLevel } from '../../config';
 import type { Rng } from '../../rng';
 import type { ControllerLayout, MgEntity, MgInput, MgPlayer, MinigameDef } from '../types';
-import { TEAM_COLORS, ageFx, clamp, emitFx, faceAngle, skill, teamRanksFromScores, viewFx, type FxState } from '../util';
+import { TEAM_COLORS, ageFx, clamp, emitFx, faceAngle, reactTime, refOf, teamRanksFromScores, viewFx, type FxState } from '../util';
+import { BOT_LIVE_LAG } from './botLag';
 
 /**
  * #11 Paket-Kette (2v2, Wischen): parcels arrive on a conveyor belt at the thrower (first
@@ -19,10 +20,14 @@ const GAP = 0.2; // minimum spacing on the belt
 const FLIGHT = 0.45;
 const HAND_MAX = 3;
 const AREA_X = [-6.5, 6.5];
+/** thrower bots: chance to hold a parcel back while the partner's hands are full */
+const CAREFUL = { easy: 0.5, medium: 0.8, hard: 0.92 };
 
 interface Parcel {
   id: number;
   color: number;
+  /** time it landed in the sorter's hands */
+  at?: number;
 }
 
 interface TeamState {
@@ -50,7 +55,10 @@ export interface PaketKetteState extends FxState {
   roleOf: ('thrower' | 'sorter')[];
   spawnIn: number;
   nextId: number;
+  /** bot memory: countdown, parcel being handled, carefulness rolled per parcel [id, 0/1] */
   botCd: number[];
+  botFor: number[];
+  botCareful: [number, number][];
 }
 
 const chuteOf = (dir: string) => CHUTE_DIRS.indexOf(dir as (typeof CHUTE_DIRS)[number]);
@@ -118,12 +126,22 @@ export const paketKette: MinigameDef<PaketKetteState> = {
       spawnIn: 1,
       nextId: 1,
       botCd: players.map(() => 0),
+      botFor: players.map(() => -1),
+      botCareful: players.map((): [number, number] => [-1, 0]),
       fx: [],
       fxN: 0,
     };
   },
   layout(s, i): ControllerLayout {
-    return { kind: 'swipe', labelKey: s.roleOf[i] === 'thrower' ? 'ctrl.swipeThrow' : 'ctrl.swipeSort' };
+    if (s.roleOf[i] === 'thrower') return { kind: 'swipe', labelKey: 'ctrl.swipeThrow' };
+    // the sorter sees the parcel in hand and the chute colours on the phone, too (v0.5)
+    const p = s.teams[s.teamOf[i]].hand[0];
+    return {
+      kind: 'swipe',
+      labelKey: 'ctrl.swipeSort',
+      color: p ? PARCEL_COLORS[p.color] : null,
+      dirColors: { left: PARCEL_COLORS[0], up: PARCEL_COLORS[1], right: PARCEL_COLORS[2] },
+    };
   },
   input(s, i, input: MgInput) {
     if (input.type !== 'swipe') return;
@@ -165,12 +183,17 @@ export const paketKette: MinigameDef<PaketKetteState> = {
       }
       for (const f of ts.flying) f.t += dt;
       for (const f of ts.flying.filter((f) => f.t >= FLIGHT)) {
-        // partner's hands full: the parcel drops to the floor
+        // partner's hands full: the parcel drops to the floor and costs a point (no blind
+        // throwing, v0.5)
         if (ts.hand.length >= HAND_MAX) {
+          if (ts.score > 0) {
+            ts.score--;
+            ts.scoreAt = s.t;
+          }
           ts.fx.push({ id: f.id, color: f.color, chute: -2, ok: null, t: 0.6 });
           emitFx(s, { kind: 'dust', sfx: 'thud', x: (AREA_X[s.teams.indexOf(ts)] ?? 0) + 0.8, y: 0.2, z: SORTER_Z - 0.8, s: 0.8 });
         } else {
-          ts.hand.push({ id: f.id, color: f.color });
+          ts.hand.push({ id: f.id, color: f.color, at: s.t });
           emitFx(s, { kind: 'pop', x: AREA_X[s.teams.indexOf(ts)] ?? 0, y: 2.6, z: SORTER_Z, color: PARCEL_COLORS[f.color], s: 0.5 });
         }
       }
@@ -184,27 +207,40 @@ export const paketKette: MinigameDef<PaketKetteState> = {
   result: (s) => teamRanksFromScores(s.players, (team) => tieBreakScore(s, s.teams.find((ts) => ts.team === team))),
   bot(s, i, level: BotLevel, rng: Rng, dt) {
     const ts = s.teams[s.teamOf[i]];
-    const sk = skill(level);
+    const ref = refOf(s.players, i, level);
     const isThrower = s.roleOf[i] === 'thrower';
-    let ready: boolean;
+    // what is there to do right now (parcel id), as seen on the TV
+    let want = -1;
     if (isThrower) {
       const front = ts.belt[0];
-      const partnerLoad = ts.hand.length + ts.flying.length;
-      // good throwers wait while the partner's hands are full; easy ones don't care
-      const careful = level === 'easy' ? rng.chance(0.3) : rng.chance(sk.accuracy);
-      ready = !!front && front.pos >= 0.9 && (!careful || partnerLoad < HAND_MAX);
-    } else ready = ts.hand.length > 0;
-    if (!ready) {
-      s.botCd[i] = sk.reaction * (0.6 + rng.next() * 0.7);
+      if (front && front.pos >= 0.9) {
+        // careful throwers wait while the partner's hands are full (a dropped parcel costs a
+        // point) – decided once per parcel, children often just throw
+        if (s.botCareful[i][0] !== front.id) s.botCareful[i] = [front.id, rng.chance(CAREFUL[level]) ? 1 : 0];
+        const full = ts.hand.length + ts.flying.length >= HAND_MAX;
+        if (!(full && s.botCareful[i][1])) want = front.id;
+      }
+    } else if (ts.hand.length) want = ts.hand[0].id;
+    if (want < 0) {
+      s.botFor[i] = -1;
       return [];
+    }
+    if (s.botFor[i] !== want) {
+      s.botFor[i] = want;
+      if (isThrower) s.botCd[i] = reactTime(ref, rng, BOT_LIVE_LAG);
+      else {
+        // colour → direction is a choice reaction; a parcel that already waited in the hands
+        // was recognised before, only the swipe itself is left
+        const seen = s.t - (ts.hand[0].at ?? s.t);
+        s.botCd[i] = Math.max(0.6 * ref.choice, BOT_LIVE_LAG + ref.choice - seen) * (0.85 + rng.next() * 0.3);
+      }
     }
     s.botCd[i] -= dt;
     if (s.botCd[i] > 0) return [];
-    s.botCd[i] = sk.reaction * (0.5 + rng.next() * 0.6);
+    s.botFor[i] = -2; // done – wait for the next parcel
     if (isThrower) return [{ type: 'swipe', dir: 'up' }];
     const p = ts.hand[0];
-    const correct = rng.chance(0.62 + 0.38 * sk.accuracy);
-    const chute = correct ? p.color : (p.color + 1 + rng.int(0, 1)) % 3;
+    const chute = rng.chance(ref.choiceError * 1.5) ? (p.color + 1 + rng.int(0, 1)) % 3 : p.color;
     return [{ type: 'swipe', dir: CHUTE_DIRS[chute] }];
   },
   view(s) {
@@ -233,7 +269,8 @@ export const paketKette: MinigameDef<PaketKetteState> = {
         [0, xs + side * 0.6],
         [1, xe - side * 0.6],
       ] as [number, number][]) {
-        entities.push({ id: `roller${k}_${r}`, kind: 'cylinder', x: rx, y: 0.5, z: tz, rx: Math.PI / 2, sx: 0.36, sy: 1.6, sz: 0.36, color: '#f2c14e', mat: 'metal' });
+        // under the belt (top 0.58 < belt 0.60), only the yellow ends show at the sides
+        entities.push({ id: `roller${k}_${r}`, kind: 'cylinder', x: rx, y: 0.4, z: tz, rx: Math.PI / 2, sx: 0.36, sy: 1.6, sz: 0.36, color: '#f2c14e', mat: 'metal' });
       }
       // parcel source: the post office counter at the outer end, crates waiting
       entities.push({ id: `crateA${k}`, kind: 'prop', prop: 'crate', x: xs + side * 1.7, y: 0, z: tz - 0.9, ry: 0.2 });

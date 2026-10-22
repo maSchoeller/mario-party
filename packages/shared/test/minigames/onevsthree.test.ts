@@ -48,14 +48,14 @@ describe('1v3 group', () => {
 describe.each(ONE_VS_THREE_GAMES)('1v3 minigame $id', (def) => {
   it('fulfils the module contract', () => checkMinigameContract(def));
 
-  it('is balanced for equally strong bots (solo wins 20–80 %)', () => {
-    const rate = soloWinRate(def, 'medium', 'medium');
-    expect(rate).toBeGreaterThanOrEqual(0.2);
-    expect(rate).toBeLessThanOrEqual(0.8);
+  it('is balanced for equally strong bots (solo wins 25–60 %, 12 vs 8 coins)', () => {
+    const rate = soloWinRate(def, 'medium', 'medium', 40);
+    expect(rate).toBeGreaterThanOrEqual(0.25);
+    expect(rate).toBeLessThanOrEqual(0.6);
   });
 
   it('bot strength matters: hard solo vs easy trio wins more than easy solo vs hard trio', () => {
-    expect(soloWinRate(def, 'hard', 'easy')).toBeGreaterThan(soloWinRate(def, 'easy', 'hard'));
+    expect(soloWinRate(def, 'hard', 'easy', 60)).toBeGreaterThan(soloWinRate(def, 'easy', 'hard', 60));
   });
 
   it('gives solo and trio different controller layouts', () => {
@@ -91,6 +91,23 @@ describe('kokosKanonier rules', () => {
     const ranks = kokosKanonier.result(s);
     expect(ranks[s.solo]).toBe(1);
     for (const i of s.trio) expect(ranks[i]).toBe(0);
+  });
+
+  it('shells leave the muzzle; knocked-out players sit outside the arena', () => {
+    const rng = Rng.fromSeed(3);
+    const s = kokosKanonier.setup(humans(), rng, { practice: false });
+    s.cross = { x: 5, z: -3 };
+    while (!s.shells.length) kokosKanonier.tick(s, 1 / 60, rng);
+    const sh = s.shells[0];
+    const coco = kokosKanonier.view(s).entities.find((e) => e.id === `sh${sh.id}`)!;
+    // the barrel points at the crosshair: the coconut starts ahead of the cannon, towards +x
+    expect(coco.x).toBeGreaterThan(0.5);
+    expect(coco.z).toBeLessThan(7.7);
+    const out = s.trio[1];
+    Object.assign(s.ps[out], { out: true, x: 0, z: 0 });
+    const fig = kokosKanonier.view(s).entities.find((e) => e.id === `p${out}`)!;
+    expect(fig.alpha).toBeUndefined();
+    expect(Math.abs(fig.z)).toBeGreaterThan(4.5 + 0.7);
   });
 
   it('tilt moves the crosshair', () => {
@@ -158,6 +175,23 @@ describe('wandLabyrinth rules', () => {
     const ranks = wandLabyrinth.result(s);
     expect(ranks).toEqual([0, 1, 0, 0]);
   });
+
+  it('trio bots notice a moved wall a moment late (not on the same frame)', () => {
+    const rng = Rng.fromSeed(5);
+    const s = wandLabyrinth.setup(humans(TEAMS[1]), rng, { practice: false });
+    for (let k = 0; k < 30; k++) wandLabyrinth.bot(s, 0, 'hard', rng, 1 / 60);
+    s.cooldown = 0;
+    wandLabyrinth.input(s, 1, { type: 'swipe', dir: 'right' });
+    const p = s.ps[0];
+    let t = 0;
+    while (p.knownH !== s.hPos && t < 2) {
+      wandLabyrinth.bot(s, 0, 'hard', rng, 1 / 60);
+      s.t += 1 / 60;
+      t += 1 / 60;
+    }
+    expect(t).toBeGreaterThan(0.4);
+    expect(t).toBeLessThan(1);
+  });
 });
 
 describe('laternenJagd rules', () => {
@@ -180,6 +214,24 @@ describe('laternenJagd rules', () => {
     for (let k = 0; k < 30 * 3 && !laternenJagd.isOver(s); k++) laternenJagd.tick(s, 1 / 30, rng);
     expect(laternenJagd.isOver(s)).toBe(true);
     expect(laternenJagd.result(s)).toEqual([1, 0, 0, 0]);
+  });
+
+  it("the solo's phone shows a garden radar: own position, bushes, gate – never the seekers", () => {
+    const rng = Rng.fromSeed(12);
+    const s = laternenJagd.setup(humans(TEAMS[2]), rng, { practice: false });
+    const sp = s.ps[s.solo];
+    Object.assign(sp, { x: 4.1, z: -2.9 });
+    const l = laternenJagd.layout(s, s.solo);
+    expect(l.kind).toBe('joystick');
+    if (l.kind !== 'joystick' || !l.radar) throw new Error('no radar');
+    expect(l.radar.x).toBeCloseTo(0.41, 1);
+    expect(l.radar.y).toBeCloseTo(-0.29, 1);
+    expect(l.radar.marks).toHaveLength(s.bushes.length);
+    expect(l.radar.seen).toBe(false);
+    // seekers moving around do not change the solo's radar
+    for (const i of s.trio) Object.assign(s.ps[i], { x: 3, z: 3 });
+    expect(laternenJagd.layout(s, s.solo)).toEqual(l);
+    for (const i of s.trio) expect(laternenJagd.layout(s, i)).toEqual({ kind: 'joystick' });
   });
 
   it('sneaking leaves no footprints, running does', () => {
@@ -230,6 +282,23 @@ describe('ballonBombardement rules', () => {
     ballonBombardement.tick(s, 0.6, rng);
     expect(s.pops).toBe(1);
     expect(s.balloons[1].phase).toBe('popped');
+  });
+
+  it('a pump stroke needs time to draw air: frantic shaking is no faster than steady shaking', () => {
+    const fillAfter = (gap: number) => {
+      const rng = Rng.fromSeed(9);
+      const s = ballonBombardement.setup(humans(), rng, { practice: false });
+      const pi = s.trio[0];
+      for (let k = 0; k < Math.round(3 / gap); k++) {
+        ballonBombardement.input(s, pi, { type: 'shake', power: 0.8 });
+        ballonBombardement.tick(s, gap, rng);
+      }
+      return s.balloons[0].fill;
+    };
+    const steady = fillAfter(0.2); // 5 strokes/s
+    const frantic = fillAfter(0.15); // 6.7 strokes/s (the limit)
+    expect(frantic).toBeLessThan(steady * 1.05);
+    expect(fillAfter(0.3)).toBeLessThan(steady * 0.75); // slow strokes do fall behind
   });
 
   it('trio wins with enough balloons, solo when time runs out', () => {
