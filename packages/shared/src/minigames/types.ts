@@ -24,16 +24,41 @@ export interface MgPlayer {
   color: PlayerColor;
   isBot: boolean;
   botLevel: BotLevel;
+  /**
+   * Bot "Tagesform" within one minigame (v0.5): 0.9 = off day … 1.1 = great day, 1 = nominal.
+   * Scales the human reference values (see `botRef`), so equal levels don't play identically.
+   */
+  form?: number;
 }
 
+/**
+ * Mini map on the phone (v0.5) – only what this player may know anyway: the own position
+ * and fixed landmarks, never other players. Coordinates −1..1, x to the right, y away from
+ * the TV camera (= up on the TV picture).
+ */
+export interface MgRadar {
+  x: number;
+  y: number;
+  shape: 'round' | 'rect';
+  /** fixed landmarks (x, y, radius), e.g. hiding bushes */
+  marks?: [number, number, number][];
+  /** entry / gate marker on the edge */
+  gate?: [number, number];
+  /** the own figure is visible on the TV right now (e.g. caught in a lantern beam) */
+  seen?: boolean;
+}
+
+export type SwipeDir = 'up' | 'down' | 'left' | 'right';
+
 export type ControllerLayout =
-  | { kind: 'joystick'; buttons?: { id: string; labelKey: string }[] }
+  | { kind: 'joystick'; buttons?: { id: string; labelKey: string }[]; radar?: MgRadar }
   | { kind: 'mash'; labelKey: string }
   | { kind: 'button'; labelKey: string }
   | { kind: 'tilt'; labelKey?: string }
   | { kind: 'shake'; labelKey?: string }
   | { kind: 'draw'; shape: [number, number][] }
-  | { kind: 'swipe'; labelKey?: string }
+  /** `color`: the item to swipe right now (e.g. parcel colour), `dirColors`: colour per direction */
+  | { kind: 'swipe'; labelKey?: string; color?: string | null; dirColors?: Partial<Record<SwipeDir, string>> }
   | { kind: 'choice'; options: { id: string; labelKey: string; color?: string; icon?: string }[]; locked?: string | null }
   | { kind: 'number'; min: number; max: number; value?: number | null }
   | { kind: 'pads'; count: number; colors: string[]; active?: boolean }
@@ -248,12 +273,128 @@ export interface MinigameDef<S = any> {
   view(state: S): MgView;
 }
 
-/** Helper: bot skill parameters by level. */
+/** Helper: bot skill parameters by level (legacy; new bot code uses `HUMAN_REF` / `botRef`). */
 export const BOT_SKILL: Record<BotLevel, { reaction: number; accuracy: number; speed: number }> = {
   easy: { reaction: 0.45, accuracy: 0.6, speed: 0.68 },
   medium: { reaction: 0.35, accuracy: 0.75, speed: 0.8 },
   hard: { reaction: 0.28, accuracy: 0.88, speed: 0.92 },
 };
+
+/**
+ * Human reference model (v0.5): what a person on the couch can do with a phone in front of
+ * a TV. Bots are calibrated against it – easy ≈ child / first-timer, medium ≈ casual adult,
+ * hard ≈ practised adult (top ~20 %) – and never beat `HUMAN_CAP` (top human).
+ *
+ * Two rules go with it:
+ * - Information: a bot only uses what a human sees on the TV (no hidden wind, exact counts,
+ *   maze search, future spawns), observed with `PERCEPTION` delay plus its reaction time.
+ * - Variance: every bot plays each minigame with its own `form` (±10 %), so hard beats
+ *   medium roughly 70:30 instead of 100:0.
+ */
+export interface HumanRef {
+  /** simple reaction time to a visual signal, mean / sd in seconds (without perception delay) */
+  reaction: number;
+  reactionSd: number;
+  /** choice reaction between 2–4 options (s) and the rate of wrong picks / colour mix-ups */
+  choice: number;
+  choiceError: number;
+  /** timing on a predictable mover (jump over a rope, hit a beat): sd in seconds */
+  timingSd: number;
+  /** estimating a duration blind: coefficient of variation (0.08 = ±0.8 s on 10 s) */
+  blindCv: number;
+  /** sustained one-finger mashing (taps/s) and the slowdown after 15 s (0.1 = −10 %) */
+  tapRate: number;
+  fatigue: number;
+  /** rhythm jitter when alternating presses (s) */
+  rhythmSd: number;
+  /** real shake impulses per second */
+  shakeRate: number;
+  /** joystick: deflection people actually use and their heading noise (rad) */
+  stickMag: number;
+  headingNoise: number;
+  /** tilt control: steady-state error (−1..1 scale) and response lag (s) */
+  tiltError: number;
+  tiltLag: number;
+  /** counting 10–20 moving objects: error sd, and chance to count a look-alike by mistake */
+  countSd: number;
+  lookAlike: number;
+  /** memory span (sequence length with 50 % success) */
+  memorySpan: number;
+  /** tracing a shape: mean deviation (0..1 canvas) and time for one shape (s) */
+  traceDev: number;
+  traceTime: number;
+}
+
+export const HUMAN_REF: Record<BotLevel, HumanRef> = {
+  easy: {
+    reaction: 0.4, reactionSd: 0.08, choice: 0.85, choiceError: 0.08, timingSd: 0.07, blindCv: 0.15,
+    tapRate: 5.0, fatigue: 0.15, rhythmSd: 0.06, shakeRate: 4.5, stickMag: 0.9, headingNoise: 0.25,
+    tiltError: 0.15, tiltLag: 0.45, countSd: 2.2, lookAlike: 0.2, memorySpan: 5, traceDev: 0.05, traceTime: 7,
+  },
+  medium: {
+    reaction: 0.28, reactionSd: 0.05, choice: 0.65, choiceError: 0.04, timingSd: 0.05, blindCv: 0.08,
+    tapRate: 6.3, fatigue: 0.1, rhythmSd: 0.04, shakeRate: 5.5, stickMag: 1, headingNoise: 0.15,
+    tiltError: 0.1, tiltLag: 0.38, countSd: 1.4, lookAlike: 0.12, memorySpan: 7, traceDev: 0.03, traceTime: 5,
+  },
+  hard: {
+    reaction: 0.23, reactionSd: 0.035, choice: 0.52, choiceError: 0.02, timingSd: 0.035, blindCv: 0.045,
+    tapRate: 7.5, fatigue: 0.05, rhythmSd: 0.025, shakeRate: 6.5, stickMag: 1, headingNoise: 0.09,
+    tiltError: 0.06, tiltLag: 0.32, countSd: 0.9, lookAlike: 0.06, memorySpan: 9, traceDev: 0.02, traceTime: 3.5,
+  },
+};
+
+/** Top-human limits: no bot may be better than this, whatever its form. */
+export const HUMAN_CAP = {
+  reaction: 0.18,
+  choice: 0.42,
+  choiceError: 0.01,
+  timingSd: 0.025,
+  blindCv: 0.025,
+  tapRate: 9.5,
+  rhythmSd: 0.015,
+  shakeRate: 8,
+  headingNoise: 0.05,
+  countSd: 0.5,
+  memorySpan: 11,
+  traceDev: 0.012,
+  traceTime: 2.5,
+};
+
+/**
+ * Reference values for one bot in one minigame: `HUMAN_REF[level]` scaled by its form
+ * (better form = faster, steadier, fewer mistakes) and clamped to `HUMAN_CAP`.
+ */
+export function botRef(level: BotLevel, form = 1): HumanRef {
+  const r = HUMAN_REF[level];
+  const better = form; // > 1 = better
+  const worse = 2 - form; // < 1 = better
+  return {
+    reaction: Math.max(HUMAN_CAP.reaction, r.reaction * worse),
+    reactionSd: r.reactionSd,
+    choice: Math.max(HUMAN_CAP.choice, r.choice * worse),
+    choiceError: Math.max(HUMAN_CAP.choiceError, r.choiceError * worse),
+    timingSd: Math.max(HUMAN_CAP.timingSd, r.timingSd * worse),
+    blindCv: Math.max(HUMAN_CAP.blindCv, r.blindCv * worse),
+    tapRate: Math.min(HUMAN_CAP.tapRate, r.tapRate * better),
+    fatigue: r.fatigue,
+    rhythmSd: Math.max(HUMAN_CAP.rhythmSd, r.rhythmSd * worse),
+    shakeRate: Math.min(HUMAN_CAP.shakeRate, r.shakeRate * better),
+    stickMag: r.stickMag,
+    headingNoise: Math.max(HUMAN_CAP.headingNoise, r.headingNoise * worse),
+    tiltError: r.tiltError * worse,
+    tiltLag: r.tiltLag * worse,
+    countSd: Math.max(HUMAN_CAP.countSd, r.countSd * worse),
+    lookAlike: r.lookAlike * worse,
+    memorySpan: Math.min(HUMAN_CAP.memorySpan, r.memorySpan * better),
+    traceDev: Math.max(HUMAN_CAP.traceDev, r.traceDev * worse),
+    traceTime: Math.max(HUMAN_CAP.traceTime, r.traceTime * worse),
+  };
+}
+
+/** Draws a bot's form for one minigame (uniform 0.9..1.1). */
+export function rollBotForm(rng: Rng): number {
+  return 0.9 + rng.next() * 0.2;
+}
 
 /**
  * "Tagesform": bots don't play every minigame at their nominal level, so a strong bot can

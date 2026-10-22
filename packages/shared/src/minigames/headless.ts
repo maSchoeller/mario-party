@@ -1,7 +1,7 @@
 import type { BotLevel, CharacterId, PlayerColor } from '../config';
 import { CHARACTERS, PLAYER_COLORS } from '../config';
 import { Rng } from '../rng';
-import type { MgFormat, MgPlayer, MinigameDef } from './types';
+import { rollBotForm, type MgFormat, type MgPlayer, type MinigameDef } from './types';
 
 export function makeMgPlayers(format: MgFormat, teams?: number[], level: BotLevel = 'medium', count?: number): MgPlayer[] {
   const n = count ?? (format === 'duel' ? 2 : 4);
@@ -26,7 +26,10 @@ export function runMinigameHeadless(
 ): { ranks: number[]; seconds: number; state: unknown } {
   const rng = Rng.fromSeed(seed);
   const botRng = Rng.fromSeed(seed ^ 0x9e3779b9);
-  const dt = opts.dt ?? 1 / 30;
+  // same tick as the host (60 Hz), so tests and balancing measure the shipped game
+  const dt = opts.dt ?? 1 / 60;
+  // every bot gets its own form for this run, like on the host (v0.5)
+  players = players.map((p) => (p.isBot && p.form === undefined ? { ...p, form: rollBotForm(botRng) } : p));
   const state = def.setup(players, rng, { practice: !!opts.practice });
   const max = opts.maxSeconds ?? def.duration + 120;
   let t = 0;

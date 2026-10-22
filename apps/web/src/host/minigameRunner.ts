@@ -2,7 +2,7 @@ import { BALANCE } from '@wb/shared/config';
 import type { Pending } from '@wb/shared/game/types';
 import { t } from '@wb/shared/i18n/index';
 import { getMinigame } from '@wb/shared/minigames/registry';
-import type { ControllerLayout, MgInput, MgPlayer, MinigameDef } from '@wb/shared/minigames/types';
+import { rollBotForm, type ControllerLayout, type MgInput, type MgPlayer, type MinigameDef } from '@wb/shared/minigames/types';
 import { Rng } from '@wb/shared/rng';
 import { Vector3 } from '@babylonjs/core';
 import { burst } from './render/mgFx';
@@ -56,12 +56,13 @@ export class MinigameRunner {
     private readonly hooks: RunnerHooks,
   ) {
     this.def = getMinigame(pending.game);
-    this.players = pending.players.map((gi, k) => {
-      const info = hooks.playerInfo(gi);
-      return { idx: k, gameIdx: gi, team: pending.teams[k], character: info.character, color: info.color, isBot: hooks.isBot(gi), botLevel: hooks.botLevel(gi) };
-    });
     this.rng = Rng.fromSeed(seed);
     this.botRng = Rng.fromSeed(seed ^ 0x5bd1e995);
+    this.players = pending.players.map((gi, k) => {
+      const info = hooks.playerInfo(gi);
+      const isBot = hooks.isBot(gi);
+      return { idx: k, gameIdx: gi, team: pending.teams[k], character: info.character, color: info.color, isBot, botLevel: hooks.botLevel(gi), form: isBot ? rollBotForm(this.botRng) : undefined };
+    });
     this.ready = this.players.map((p) => p.isBot);
     this.view = new MinigameView(stage, this.players);
     this.view.onSound = (sfx, pan, gain) => this.audio.mgSfx(sfx, pan, gain);
@@ -187,7 +188,10 @@ export class MinigameRunner {
       } else if (this.phase === 'play') {
         this.ui.mgHud(v.hud, this.players, `${t(`mg.${this.def.id}.name`)} · ${t(`format.${this.def.format}`)}`);
       }
-      // phones follow layout changes (e.g. role switch, locked choice)
+    }
+    // phones follow layout changes (role switch, new choices, active pads) on the same frame –
+    // bots see them at once, so humans must not wait for the HUD timer (v0.5)
+    if (this.phase === 'intro' || this.phase === 'play') {
       const layouts = this.players.map((p) => JSON.stringify(this.layoutFor(p.gameIdx)));
       if (layouts.some((l, i) => l !== this.lastLayouts[i])) {
         this.lastLayouts = layouts;
