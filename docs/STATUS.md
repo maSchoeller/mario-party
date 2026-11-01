@@ -111,7 +111,7 @@ Legende: ✅ umgesetzt & lokal getestet · 🟡 umgesetzt mit Platzhalter/Einsch
 | PERF-02 | ✅ | Host-Erstladen ~11 MB (inkl. Havok-WASM), Maps prozedural |
 | PERF-03/04 | ⛔ | Nur Chromium getestet |
 | PERF-05 | ✅ | „Server wird geweckt …“ mit automatischem Reconnect |
-| OPS-01..04 | 🟡 | Bicep lokal valide (build/lint ohne Warnung), Workflows vorbereitet, nicht deployt ⛔ |
+| OPS-01..04 | 🟡 | In Azure deployt (Container Apps, Table Storage, Budget), siehe [DEPLOYMENT.md](DEPLOYMENT.md); GitHub-Workflow noch nicht eingerichtet |
 | PRIV-01..03 | ✅ | Keine personenbezogenen Daten, anonyme Telemetrie ohne IDs/Cookies |
 | SEC-03 | 🟡 | Entwürfe Impressum/Datenschutz (`/impressum.html`, `/datenschutz.html`), Platzhalter ausfüllen |
 | SEC-01 | ✅ | Code/Token-Validierung, Rate-Limits (Nachrichten, Raumerstellung, Saves), Peers können nur den Host erreichen |

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { GAP_W, GAPS, gipfelsturm, JUMP_LEN, RUN_SPEED, TAPS, type GipfelsturmState } from '../../src/minigames/games/gipfelsturm';
+import { TAP_MIN_GAP } from '../../src/minigames/games/botLag';
 import { LIVES, memoDuell } from '../../src/minigames/games/memoDuell';
 import { schnickSchnack } from '../../src/minigames/games/schnickSchnack';
 import { makeMgPlayers, runMinigameHeadless } from '../../src/minigames/headless';
@@ -137,8 +138,12 @@ describe('gipfelsturm rules', () => {
     const rng = Rng.fromSeed(seed);
     return { rng, s: gipfelsturm.setup(humans('ffa'), rng, { practice: false }) };
   };
+  // taps are gated (max. 10/s), so each one needs its own moment on the clock
   const toStage2 = (s: GipfelsturmState) => {
-    for (let k = 0; k < TAPS; k++) gipfelsturm.input(s, 0, { type: 'tap' });
+    for (let k = 0; k < TAPS; k++) {
+      gipfelsturm.input(s, 0, { type: 'tap' });
+      s.t += TAP_MIN_GAP;
+    }
   };
 
   it('is the final minigame and never drawn randomly', () => {

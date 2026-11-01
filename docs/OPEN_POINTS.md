@@ -57,9 +57,9 @@ Stand 21.10.2026 (v0.5). Alles andere ist lokal lauffähig und getestet, siehe [
 |---|---|---|
 | **Nutzungsrechte Audio** | AUDIO-07 | ElevenLabs ✅ (v0.3.1): Alle Stimm- und SFX-Dateien sind im bezahlten Tarif erzeugt, kommerziell nutzbar. **Offen bleibt Suno:** Die Musik läuft über den inoffiziellen Drittanbieter sunoapi.org, die Rechtelage ist unklar. Vor öffentlicher Freigabe klären oder mit eigenem Suno-Pro-Konto neu erzeugen. Details: [ASSETS_LICENSES.md](ASSETS_LICENSES.md). |
 | **Moderator-Stimme** | AUDIO-03 | ✅ Erledigt: deutsche Bibliotheksstimme „DiMario“, nur ganze Sätze. Lizenz geprüft (kommerziell erlaubt, keine Namensnennung, Kündigungsfrist 730 Tage), siehe [ASSETS_LICENSES.md](ASSETS_LICENSES.md#elevenlabs-stimme-dimario-geprüft-am-20102026). |
-| **Azure-Deployment** | OPS-01..04, 12 | Subscription, Ressourcengruppe, Service Principal (OIDC), Budget-E-Mail. `infra/main.bicep` ist lokal valide, ein `what-if` gegen Azure steht aus. |
+| **Azure-Deployment** | OPS-01..04, 12 | ✅ Läuft seit 01.11.2026 als einzelner Container in Container Apps, siehe [DEPLOYMENT.md](DEPLOYMENT.md). Offen: GitHub-Workflow (Service Principal/OIDC) statt lokalem Skript. |
 | **GitHub Container Registry** | 12 | Push-Rechte/Package-Sichtbarkeit |
-| **Application Insights** | PRIV-02 | Connection-String (Weiterleitung ungetestet gegen Azure) |
+| **Application Insights** | PRIV-02 | In Azure angelegt und verbunden; ob die Telemetrie ankommt, ist noch ungeprüft |
 | **Blob Storage für Assets** | PERF-02 | Die Assets (~19 MB, davon Musik 15 MB gestreamt) liegen derzeit in `public/media` und werden mit der Static Web App ausgeliefert. Ein Umzug in den Blob-Container `assets` ist optional. |
 | **Impressum/Datenschutz** | SEC-03 | Platzhalter (Name, Anschrift, Region, Aufsichtsbehörde) ausfüllen und rechtlich prüfen lassen |
 | **Markenrecherche** | 15 | Amtliche Prüfung in DPMAregister / TMview / EUIPO (Klassen 9, 28, 41) |

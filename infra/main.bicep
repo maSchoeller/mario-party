@@ -1,7 +1,7 @@
-// Würfel-Bande – Azure infrastructure (OPS-01..04). Not deployed yet (see docs/OPEN_POINTS.md).
-// Static Web Apps (Free) for the clients, Container Apps (Consumption, 0–1 replica) for the
-// Node server, Storage (Blob for large assets, Table for save games), Application Insights
-// and a monthly budget alert at 10 €.
+// Würfel-Bande – Azure infrastructure (OPS-01..04), deployed via scripts/deploy-azure.ps1.
+// Container Apps (Consumption, at most 1 replica) for the Node server, which also serves the
+// built web client; optionally Static Web Apps (Free) for the clients. Storage (Blob for large
+// assets, Table for save games), Application Insights and a monthly budget alert at 10 €.
 targetScope = 'resourceGroup'
 
 @description('Name prefix for all resources')
@@ -9,14 +9,28 @@ targetScope = 'resourceGroup'
 @maxLength(12)
 param prefix string = 'wuerfelbande'
 param location string = resourceGroup().location
-@description('Container image, e.g. ghcr.io/<owner>/wuerfel-bande-server:latest')
+@description('Container image, e.g. <registry>.azurecr.io/wuerfel-bande-server:<tag>')
 param serverImage string
+@description('Azure Container Registry in this resource group that holds serverImage (empty: public image)')
+param registryName string = ''
+@description('1 keeps one replica warm (no cold start, for play sessions); 0 scales to zero when idle')
+@allowed([0, 1])
+param minReplicas int = 1
+@description('vCPU of the server container; memory is twice this in GiB')
+@allowed(['0.5', '1'])
+param serverCpu string = '1'
+@description('Also create a Static Web App for the clients (the server serves them itself otherwise)')
+param deployStaticWeb bool = false
 @description('E-mail for the budget alert (OPS-02)')
 param budgetEmail string
 param budgetStartDate string = '2026-11-01'
 
 // ≤ 24 chars, lowercase alphanumerics only: 9 (prefix) + 2 + 13 (uniqueString)
 var storageName = '${take(toLower(replace(prefix, '-', '')), 9)}st${uniqueString(resourceGroup().id)}'
+
+resource registry 'Microsoft.ContainerRegistry/registries@2023-07-01' existing = if (!empty(registryName)) {
+  name: empty(registryName) ? 'none' : registryName
+}
 
 resource logs 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
   name: '${prefix}-logs'
@@ -105,17 +119,22 @@ resource server 'Microsoft.App/containerApps@2024-03-01' = {
         transport: 'auto'
         allowInsecure: false
       }
-      secrets: [
+      registries: empty(registryName) ? [] : [
+        { server: registry!.properties.loginServer, username: registry!.listCredentials().username, passwordSecretRef: 'registry-pw' }
+      ]
+      secrets: concat([
         { name: 'storage-conn', value: 'DefaultEndpointsProtocol=https;AccountName=${storage.name};AccountKey=${storage.listKeys().keys[0].value};EndpointSuffix=${environment().suffixes.storage}' }
         { name: 'ai-conn', value: insights.properties.ConnectionString }
-      ]
+      ], empty(registryName) ? [] : [
+        { name: 'registry-pw', value: registry!.listCredentials().passwords[0].value }
+      ])
     }
     template: {
       containers: [
         {
           name: 'server'
           image: serverImage
-          resources: { cpu: json('0.25'), memory: '0.5Gi' }
+          resources: { cpu: json(serverCpu), memory: serverCpu == '1' ? '2Gi' : '1Gi' }
           env: [
             { name: 'PORT', value: '8080' }
             { name: 'AZURE_STORAGE_CONNECTION_STRING', secretRef: 'storage-conn' }
@@ -126,13 +145,13 @@ resource server 'Microsoft.App/containerApps@2024-03-01' = {
           ]
         }
       ]
-      // OPS-04: in-memory lobby registry -> exactly one replica at most; scale to zero when idle
-      scale: { minReplicas: 0, maxReplicas: 1, rules: [ { name: 'http', http: { metadata: { concurrentRequests: '200' } } } ] }
+      // OPS-04: in-memory lobby registry -> exactly one replica at most
+      scale: { minReplicas: minReplicas, maxReplicas: 1, rules: [ { name: 'http', http: { metadata: { concurrentRequests: '200' } } } ] }
     }
   }
 }
 
-resource web 'Microsoft.Web/staticSites@2023-12-01' = {
+resource web 'Microsoft.Web/staticSites@2023-12-01' = if (deployStaticWeb) {
   name: '${prefix}-web'
   location: 'westeurope'
   sku: { name: 'Free', tier: 'Free' }
@@ -166,5 +185,5 @@ resource budget 'Microsoft.Consumption/budgets@2023-11-01' = {
 }
 
 output serverUrl string = 'https://${server.properties.configuration.ingress.fqdn}'
-output webHostname string = web.properties.defaultHostname
+output webHostname string = deployStaticWeb ? web!.properties.defaultHostname : ''
 output assetsUrl string = '${storage.properties.primaryEndpoints.blob}assets'
