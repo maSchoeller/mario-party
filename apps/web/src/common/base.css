@@ -2,25 +2,64 @@
 @import '@fontsource/nunito/700.css';
 @import '@fontsource/nunito/800.css';
 @import '@fontsource/nunito/900.css';
+@import '@fontsource/lilita-one/400.css';
 
+/*
+ * Design tokens ("Spielkarton" look, v0.6): cream sticker panels with a dark plum outline and a
+ * hard offset edge instead of soft blurred glass cards. Spec: _bmad-output/planning-artifacts/
+ * ux-designs/ux-wuerfel-bande-2026-11-01/DESIGN.md
+ */
 :root {
   --font: 'Nunito', ui-rounded, 'SF Pro Rounded', system-ui, sans-serif;
-  --ink: #3d3a55;
-  --ink-soft: #6c6888;
-  --card: rgba(255, 255, 255, 0.86);
-  --card-solid: #ffffff;
-  --pill: rgba(110, 118, 175, 0.86);
-  --accent: #f4a259;
-  --good: #5cc08a;
-  --bad: #e8676b;
-  --blue: #5f8fe0;
-  --gold: #f0c04a;
+  --font-display: 'Lilita One', 'Nunito', ui-rounded, system-ui, sans-serif;
+
+  /* ink + surfaces */
+  --ink: #2b2346;
+  --ink-soft: #6b6384;
+  --line: #2b2346;
+  --paper: #fff8ea;
+  --paper-2: #f6ecd6;
+  --paper-3: #ecdfc3;
+  --night: #241c3d;
+  --night-2: #33295a;
+  --card: var(--paper);
+  --card-solid: var(--paper);
+  --pill: #3c3170;
+
+  /* signal colors */
+  --accent: #ff8a3d;
+  --good: #3cb371;
+  --good-edge: #23824f;
+  --bad: #e5484d;
+  --bad-edge: #a92d32;
+  --blue: #4a7fe0;
+  --blue-edge: #2f58a8;
+  --gold: #ffc23d;
+  --gold-edge: #c98a0c;
+  --star: #f2a900;
   --red-p: #e8676b;
   --blue-p: #5f8fe0;
   --green-p: #5cc08a;
   --yellow-p: #f0c04a;
-  --radius: 22px;
-  --shadow: 0 6px 24px rgba(40, 40, 80, 0.16);
+
+  /* spacing scale (4-pt) */
+  --s1: 4px;
+  --s2: 8px;
+  --s3: 12px;
+  --s4: 16px;
+  --s5: 24px;
+  --s6: 32px;
+  --s7: 48px;
+
+  /* shape */
+  --radius: 20px;
+  --radius-sm: 12px;
+  --stroke: 3px;
+  --edge: 5px;
+  --shadow: 0 var(--edge) 0 var(--line);
+  --shadow-soft: 0 10px 30px rgba(20, 12, 50, 0.28);
+  --glow-night: radial-gradient(120% 80% at 50% 0%, rgba(124, 92, 220, 0.45), transparent 60%);
+  --pattern-dice: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120' viewBox='0 0 120 120'%3E%3Cg fill='none' stroke='%23ffffff' stroke-opacity='.06' stroke-width='3'%3E%3Crect x='14' y='14' width='34' height='34' rx='9' transform='rotate(-12 31 31)'/%3E%3Crect x='72' y='70' width='34' height='34' rx='9' transform='rotate(14 89 87)'/%3E%3C/g%3E%3Cg fill='%23ffffff' fill-opacity='.07'%3E%3Ccircle cx='31' cy='31' r='4'/%3E%3Ccircle cx='82' cy='80' r='3.5'/%3E%3Ccircle cx='96' cy='94' r='3.5'/%3E%3C/g%3E%3C/svg%3E");
 }
 
 * {
@@ -35,26 +74,49 @@ body {
   color: var(--ink);
 }
 
+h1,
+h2,
+h3,
+.display {
+  font-family: var(--font-display);
+  font-weight: 400;
+  letter-spacing: 0.01em;
+}
+
 button {
   font-family: inherit;
   font-weight: 800;
-  border: none;
-  border-radius: 18px;
+  border: var(--stroke) solid var(--line);
+  border-radius: var(--radius-sm);
   cursor: pointer;
   min-height: 48px;
   min-width: 48px;
+  padding: 0 var(--s4);
   color: var(--ink);
-  background: var(--card-solid);
-  box-shadow: 0 3px 0 rgba(0, 0, 0, 0.12);
+  background: #fff;
+  box-shadow: 0 4px 0 var(--line);
+  transition: transform 0.08s ease, box-shadow 0.08s ease, filter 0.15s ease;
   -webkit-tap-highlight-color: transparent;
   touch-action: manipulation;
   user-select: none;
   -webkit-user-select: none;
 }
 
-button:active {
-  transform: translateY(2px);
-  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.12);
+button:hover:not(:disabled) {
+  filter: brightness(1.04);
+}
+
+button:active:not(:disabled) {
+  transform: translateY(3px);
+  box-shadow: 0 1px 0 var(--line);
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible {
+  outline: 3px solid var(--gold);
+  outline-offset: 3px;
 }
 
 button:disabled {
@@ -62,34 +124,97 @@ button:disabled {
   cursor: default;
 }
 
+/* chunky primary / secondary actions used on TV, phone and landing */
+button.primary {
+  background: var(--good);
+  color: #fff;
+  text-shadow: 0 2px 0 var(--good-edge);
+}
+button.secondary {
+  background: var(--paper-2);
+}
+button.danger {
+  background: var(--bad);
+  color: #fff;
+}
+
 input,
 select {
   font-family: inherit;
   font-size: 1.2rem;
-  border-radius: 14px;
-  border: 2px solid #d9d6ea;
+  font-weight: 700;
+  border-radius: var(--radius-sm);
+  border: var(--stroke) solid var(--line);
   padding: 0.6rem 0.8rem;
   min-height: 48px;
   color: var(--ink);
   background: #fff;
+  box-shadow: inset 0 3px 0 rgba(43, 35, 70, 0.08);
+}
+
+input::placeholder {
+  color: #b4abc4;
+}
+
+a {
+  color: inherit;
 }
 
 .card {
   background: var(--card);
+  border: var(--stroke) solid var(--line);
   border-radius: var(--radius);
   box-shadow: var(--shadow);
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
 }
 
 .pill {
   background: var(--pill);
   color: #fff;
+  border: var(--stroke) solid var(--line);
   border-radius: 999px;
-  font-weight: 900;
+  font-family: var(--font-display);
+  font-weight: 400;
+  letter-spacing: 0.02em;
+  box-shadow: 0 4px 0 var(--line);
 }
 
 .shape {
   display: inline-block;
   font-weight: 900;
+}
+
+/* star + coin tokens (shared by TV HUD and phone header) */
+.ico-star,
+.ico-coin {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  vertical-align: -0.14em;
+  flex: none;
+}
+.ico-star {
+  background: var(--star);
+  clip-path: polygon(50% 0, 61.8% 35%, 98% 35.5%, 69% 57.5%, 79.5% 92%, 50% 71.5%, 20.5% 92%, 31% 57.5%, 2% 35.5%, 38.2% 35%);
+}
+.ico-coin {
+  border-radius: 50%;
+  background: radial-gradient(circle at 50% 50%, #ffd76a 0 38%, #f2a900 40% 58%, #ffd76a 60%);
+  box-shadow: inset 0 0 0 0.09em #b97b00;
+}
+
+/* night backdrop with a faint dice pattern: landing, phone, TV start */
+.bg-night {
+  background-color: var(--night);
+  background-image: var(--glow-night), var(--pattern-dice);
+  background-attachment: fixed;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

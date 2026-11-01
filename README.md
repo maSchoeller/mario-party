@@ -25,6 +25,8 @@
 - 🧩 Minispiele bauen: [docs/MINIGAMES.md](docs/MINIGAMES.md)
 - 📜 Lizenz-Register (ASSET-05): [docs/ASSETS_LICENSES.md](docs/ASSETS_LICENSES.md)
 - ⚖️ Balancing & unabhängiger Review: [docs/BALANCING.md](docs/BALANCING.md)
+- 🎨 UI-Designsystem „Spielkarton“ (v0.6) und UX-Review: [_bmad-output/planning-artifacts/ux-designs/](_bmad-output/planning-artifacts/ux-designs/ux-wuerfel-bande-2026-11-01/DESIGN.md), Screenshots per `node scripts/ui-screenshots.mjs`
+- 🤖 BMAD Method + Game Dev Studio (BMGD) sind installiert: Skills unter `.claude/skills` (`bmad-help`, `gds-ux`, `gds-gdd` …), Konfiguration in `_bmad/`
 
 ## Schnellstart (lokal, ohne Azure)
 

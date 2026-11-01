@@ -3,6 +3,7 @@ import { t, type Params } from '@wb/shared/i18n/index';
 import type { MgHud, MgPlayer } from '@wb/shared/minigames/types';
 import type { VolumeKind } from '@wb/shared/net/protocol';
 import QRCode from 'qrcode';
+import { coinIcon, LOGO_URL, starIcon } from '../common/brand';
 import { CHAR_EMOJI, ITEM_EMOJI, WHEEL_EMOJI } from '../common/characters';
 import { clear, h } from '../common/dom';
 
@@ -50,10 +51,9 @@ export class HostUI {
 
   showStart(onCreate: () => void, onResume: (code: string) => void, error?: string): void {
     const code = h('input', { maxlength: 6, placeholder: 'ABC123', class: 'resume-code', autocapitalize: 'characters' });
-    const el = h(
+    const card = h(
       'div',
       { class: 'start card' },
-      h('h1', {}, '🎲 ', t('app.title')),
       h('p', { class: 'tagline' }, t('app.tagline')),
       h('button', { class: 'primary huge', id: 'create-lobby', onclick: onCreate }, t('host.createLobby')),
       h(
@@ -65,7 +65,7 @@ export class HostUI {
       ),
       h('a', { href: '/dev', class: 'dev-link' }, t('host.devPanel')),
     );
-    this.setOverlay(el);
+    this.setOverlay(h('div', { class: 'start-wrap' }, h('img', { class: 'logo', src: LOGO_URL, alt: t('app.title') }), card));
   }
 
   async showLobby(code: string, joinUrl: string, players: HudPlayer[], info: { mapKey?: string; modeKey?: string; saveCode?: string | null; resuming?: boolean }): Promise<void> {
@@ -92,7 +92,7 @@ export class HostUI {
         h('h2', {}, t('host.roomCode')),
         h('div', { class: 'code', id: 'room-code' }, code),
         qr,
-        h('p', { class: 'url' }, t('host.joinHint', { url: joinUrl.replace(/\?.*$/, '') })),
+        h('p', { class: 'url' }, t('host.joinHintShort'), h('br'), h('code', {}, joinUrl.replace(/\?.*$/, '').replace(/^https?:\/\//, ''))),
       ),
       h(
         'div',
@@ -136,7 +136,7 @@ export class HostUI {
           p.chief ? h('span', { class: 'tag' }, '👑') : null,
         ),
         mode === 'board'
-          ? h('div', { class: 'pstats' }, h('span', { class: 'stars' }, '★ ', String(p.stars)), h('span', { class: 'coins' }, '● ', String(p.coins)), itemIcons(p))
+          ? h('div', { class: 'pstats' }, h('span', { class: 'stars' }, starIcon(), String(p.stars)), h('span', { class: 'coins' }, coinIcon(), String(p.coins)), itemIcons(p))
           : h('div', { class: 'pstats' }, h('span', { class: 'stars' }, `${p.points ?? 0} ${t('stats.points')}`)),
       );
       this.cards[p.slot] = card;

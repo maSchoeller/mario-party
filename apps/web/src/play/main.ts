@@ -6,6 +6,7 @@ import { ClockSync } from '@wb/shared/net/clock';
 import type { HostToPhone, PhoneToHost, ViewEnvelope } from '@wb/shared/net/protocol';
 import { isNicknameAllowed, sanitizeNickname } from '@wb/shared/nickname';
 import { isValidCode, normalizeCode } from '@wb/shared/roomcode';
+import { LOGO_URL } from '../common/brand';
 import { clear, h } from '../common/dom';
 import type { LinkMode } from '../net/peerLink';
 import { PhoneNetwork } from '../net/phoneNetwork';
@@ -196,14 +197,13 @@ function joinScreen(): HTMLElement {
   const form = h(
     'form',
     { class: 'join card', onsubmit: (e: Event) => (e.preventDefault(), void join(codeInput.value, nameInput.value)) },
-    h('h1', {}, t('app.title')),
     h('label', {}, t('play.code'), codeInput),
     h('label', {}, t('play.nickname'), nameInput),
     errorKey ? h('p', { class: 'error' }, t(errorKey)) : null,
     btn,
     h('p', { class: 'hint' }, t('play.motionHint')),
   );
-  return h('div', { class: 'screen center' }, form);
+  return h('div', { class: 'screen center join-screen' }, h('h1', { class: 'logo' }, h('img', { src: LOGO_URL, alt: t('app.title') })), form);
 }
 
 function updateHeader() {
