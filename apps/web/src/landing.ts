@@ -1,26 +1,35 @@
 import './common/base.css';
+import './landing.css';
 import { t } from '@wb/shared/i18n/index';
+import { LOGO_URL } from './common/brand';
 import { h } from './common/dom';
 
 /** Landing page: host on the TV laptop, players on their phones. */
 const app = document.getElementById('app')!;
 document.title = t('app.title');
-document.body.style.cssText = 'min-height:100vh;display:flex;align-items:center;justify-content:center;background:linear-gradient(180deg,#9fd3ec,#e8f4fa);margin:0';
+document.body.classList.add('landing', 'bg-night');
 app.append(
   h(
-    'div',
-    { class: 'card', style: 'padding:2.5rem;text-align:center;display:flex;flex-direction:column;gap:1rem;max-width:520px;margin:1rem' },
-    h('h1', { style: 'margin:0;font-size:2.6rem' }, '🎲 ', t('app.title')),
-    h('p', { style: 'margin:0;color:var(--ink-soft)' }, t('app.tagline')),
-    h('a', { href: '/host' }, h('button', { class: 'primary', style: 'width:100%;font-size:1.3rem;background:#5cc08a;color:#fff' }, '📺 ', t('host.createLobby'))),
-    h('a', { href: '/play' }, h('button', { style: 'width:100%;font-size:1.3rem' }, '📱 ', t('play.join'))),
-    h('a', { href: '/dev', style: 'color:var(--ink-soft)' }, t('host.devPanel')),
+    'main',
+    { class: 'landing-wrap' },
+    h('h1', { class: 'logo' }, h('img', { src: LOGO_URL, alt: t('app.title') })),
     h(
-      'p',
-      { style: 'margin:0;font-size:.85rem' },
-      h('a', { href: '/impressum.html', style: 'color:var(--ink-soft)' }, t('legal.imprint')),
-      ' · ',
-      h('a', { href: '/datenschutz.html', style: 'color:var(--ink-soft)' }, t('legal.privacy')),
+      'div',
+      { class: 'card landing-card' },
+      h('p', { class: 'tagline' }, t('app.tagline')),
+      h(
+        'div',
+        { class: 'roles' },
+        h('a', { href: '/host', class: 'btn' }, h('button', { class: 'primary', tabindex: -1 }, '📺 ', t('host.createLobby'), h('span', { class: 'role-hint' }, t('landing.hostHint')))),
+        h('a', { href: '/play', class: 'btn' }, h('button', { class: 'secondary', tabindex: -1 }, '📱 ', t('play.join'), h('span', { class: 'role-hint' }, t('landing.playHint')))),
+      ),
+    ),
+    h(
+      'nav',
+      { class: 'landing-links' },
+      h('a', { href: '/dev' }, t('host.devPanel')),
+      h('a', { href: '/impressum.html' }, t('legal.imprint')),
+      h('a', { href: '/datenschutz.html' }, t('legal.privacy')),
     ),
   ),
 );

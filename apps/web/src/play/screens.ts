@@ -4,6 +4,7 @@ import { t } from '@wb/shared/i18n/index';
 import type { ControllerLayout } from '@wb/shared/minigames/types';
 import { EMOJIS, type ControllerView, type LobbySettings, type PhoneDecision, type ViewEnvelope, type VolumeKind } from '@wb/shared/net/protocol';
 import { DICE, type DiceId } from '@wb/shared/game/dice';
+import { coinIcon, starIcon } from '../common/brand';
 import { CHAR_EMOJI, ITEM_EMOJI, WHEEL_EMOJI } from '../common/characters';
 import { h } from '../common/dom';
 import type { PlayApp } from './main';
@@ -49,7 +50,7 @@ export function renderHeader(app: PlayApp, hostOnline: boolean): HTMLElement {
           h('span', { class: 'name' }, me.name),
         )
       : h('div', { class: 'who' }, t('app.title')),
-    me ? h('div', { class: 'stats' }, h('span', {}, `★ ${me.stars}`), h('span', {}, `● ${me.coins}`)) : null,
+    me ? h('div', { class: 'stats' }, h('span', {}, starIcon(), String(me.stars)), h('span', {}, coinIcon(), String(me.coins))) : null,
     // compact round counter: the name keeps its room on narrow phones
     env?.round ? h('div', { class: 'round', title: t('common.round', env.round) }, h('small', {}, t('play.roundLabel')), `${env.round.round}/${env.round.total}`) : null,
     h('div', { class: `link ${app.mode}`, title: app.mode === 'relay' ? t('play.relayMode') : app.mode }, !hostOnline ? '⏳' : app.mode === 'p2p' ? 'P2P' : app.mode === 'relay' ? t('host.connectionRelay') : '…'),
@@ -104,7 +105,7 @@ function inventorySheet(env: ViewEnvelope): HTMLElement {
   return h(
     'div',
     { class: 'sheet-body' },
-    h('div', { class: 'inv-stats' }, h('span', { class: 'stars' }, `★ ${me.stars}`), h('span', { class: 'coins' }, `● ${me.coins}`)),
+    h('div', { class: 'inv-stats' }, h('span', { class: 'stars' }, starIcon(), String(me.stars)), h('span', { class: 'coins' }, coinIcon(), String(me.coins))),
     h('h3', {}, t('play.itemsCount', { count: me.items.length, max: BALANCE.maxItems })),
     me.items.length
       ? h(
@@ -238,7 +239,15 @@ function lobby(app: PlayApp, env: ViewEnvelope, v: Extract<ControllerView, { scr
     { class: 'lobby' },
     h('section', { class: 'card pad' }, h('h2', {}, t('play.chooseCharacter')), chars),
     h('section', { class: 'card pad' }, h('h2', {}, t('play.players')), players),
-    env.chief ? settings(app, env, v) : h('section', { class: 'card pad muted' }, t('play.waitForChief')),
+    env.chief ? settings(app, env, v) : null,
+    // the start action stays in reach while the chief scrolls through characters and settings
+    h(
+      'div',
+      { class: 'action-bar' },
+      env.chief
+        ? h('button', { class: 'primary big', disabled: !v.canStart, onclick: () => app.send({ t: 'start' }) }, v.canStart ? t('play.start') : t('play.needPlayers'))
+        : h('p', { class: 'wait-chief' }, '👑 ', t('play.waitForChief')),
+    ),
   );
 }
 
@@ -303,7 +312,6 @@ function settings(app: PlayApp, env: ViewEnvelope, v: Extract<ControllerView, { 
     h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: s.noMotion, onchange: (e: Event) => patch({ noMotion: (e.target as HTMLInputElement).checked }) }), t('play.noMotion')),
     mgList,
     volumeButton(app, env, 'secondary wide', 'play.volumeTitle'),
-    h('button', { class: 'primary big', disabled: !v.canStart, onclick: () => app.send({ t: 'start' }) }, v.canStart ? t('play.start') : t('play.needPlayers')),
   );
 }
 
@@ -649,7 +657,7 @@ function over(app: PlayApp, env: ViewEnvelope, v: Extract<ControllerView, { scre
     h(
       'ol',
       { class: 'card pad ranking' },
-      v.ranking.map((r) => h('li', {}, h('strong', {}, r.name), v.mode === 'board' ? ` ★ ${r.stars} · ● ${r.coins}` : ` ${r.points} ${t('stats.points')}`)),
+      v.ranking.map((r) => h('li', {}, h('strong', {}, r.name), v.mode === 'board' ? h('span', { class: 'rk' }, starIcon(), String(r.stars), coinIcon(), String(r.coins)) : h('span', { class: 'rk' }, `${r.points} ${t('stats.points')}`))),
     ),
     v.saveCode ? h('p', { class: 'muted' }, t('play.saveCode', { code: v.saveCode })) : null,
     env.chief

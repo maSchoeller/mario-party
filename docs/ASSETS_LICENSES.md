@@ -30,6 +30,8 @@ Keine Rechtsberatung, sondern eine Zusammenfassung der Anbieterbedingungen. Für
 | Bestandteil | Quelle | Lizenz | Verwendung | Datum |
 |---|---|---|---|---|
 | Nunito (Schrift) | `@fontsource/nunito` (Google Fonts, Vernon Adams u. a.) | SIL Open Font License 1.1 | UI auf TV und Handy (ART-06) | 2026-10-20 |
+| Lilita One (Schrift) | `@fontsource/lilita-one` (Google Fonts, Juan Montoreano) | SIL Open Font License 1.1 | Überschriften, Zahlen und Buttons (v0.6) | 2026-11-01 |
+| Logo-Wortmarke `media/ui/logo.webp` | Mit ChatGPT-Bildgenerierung (OpenAI, Plus-Konto des Projektinhabers) erzeugt, auf Alpha-Kante beschnitten und als WebP gespeichert | Laut OpenAI-Nutzungsbedingungen gehören die Ausgaben dem Nutzer; vor einer Marken-Eintragung prüfen | Startseite, TV-Start, Handy-Beitritt (v0.6) | 2026-11-01 |
 | Babylon.js | `@babylonjs/core` | Apache-2.0 | 3D-Engine Host (TECH-01) | 2026-10-20 |
 | Babylon.js glTF-Loader | `@babylonjs/loaders` 9.31 | Apache-2.0 | GLB-Modelle laden (ASSET-03) | 2026-10-20 |
 | Havok Physics (Web) | `@babylonjs/havok` | MIT (Havok-Web-Build von Babylon.js) | Physik-Effekte Host | 2026-10-20 |
