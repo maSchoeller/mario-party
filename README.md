@@ -85,7 +85,7 @@ packages/shared   Spiel-Engine (Regeln, Maps, Items, Gimmicks, Bots, Bonus), 21 
 apps/server       Node.js: Lobby-Registry, WebRTC-Signaling, WS-Relay, Save-API, Telemetrie, Rate-Limits
 apps/web          /host  Babylon.js + Havok (TV, Spiel-Autorität)   /play  Controller ohne 3D-Engine
 e2e               Playwright-Tests mit echtem Browser für TV und Handys
-infra             Bicep (Azure), Dockerfile, GitHub-Actions-Workflows (noch nicht deployt)
+infra             Bicep (Azure), Dockerfile, GitHub-Actions-Workflows – Deployment: docs/DEPLOYMENT.md
 ```
 
 - **Host ist Autorität** (TECH-03): Regeln, Zufall, Minispiel-Simulation und Bots laufen im Host-Browser,
